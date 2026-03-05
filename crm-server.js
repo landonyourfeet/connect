@@ -496,6 +496,13 @@ app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
 async function initDB() {
   try {
     await pool.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+    // Drop old conflicting tables (old schema) in dependency order
+    await pool.query(`DROP TABLE IF EXISTS line_agents CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS activities CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS tasks CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS calls CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS call_lines CASCADE`);
+    // Create all tables fresh
     await pool.query(`CREATE TABLE IF NOT EXISTS agents (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT DEFAULT 'agent', phone TEXT, avatar_color TEXT DEFAULT '#6366f1', is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS people (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), first_name TEXT NOT NULL, last_name TEXT, phone TEXT, email TEXT, stage TEXT DEFAULT 'lead', source TEXT, background TEXT, tags TEXT[] DEFAULT '{}', custom_fields JSONB DEFAULT '{}', assigned_to UUID REFERENCES agents(id), created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS call_lines (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, twilio_number TEXT NOT NULL, description TEXT, is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW())`);
@@ -505,13 +512,11 @@ async function initDB() {
     await pool.query(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id UUID REFERENCES people(id) ON DELETE CASCADE, agent_id UUID REFERENCES agents(id), title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS smart_lists (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, filters JSONB DEFAULT '{}', sort_order INTEGER DEFAULT 0)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS custom_fields (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, field_type TEXT DEFAULT 'text', options TEXT[], sort_order INTEGER DEFAULT 0)`);
-    // Seed admin
-    await pool.query(`INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com','$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi','admin') ON CONFLICT (email) DO NOTHING`);
-    // Seed smart lists
+    // Seed admin user (password: OKCreal2026!)
+    const adminHash = await bcrypt.hash('OKCreal2026!', 10);
+    await pool.query(`INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com',$1,'admin') ON CONFLICT (email) DO UPDATE SET password_hash=$1`, [adminHash]);
     await pool.query(`INSERT INTO smart_lists (name,filters,sort_order) VALUES ('Delinquent Residents','{}',0),('Active Residents','{}',1),('Active Leads','{}',2),('Past Clients','{}',3) ON CONFLICT DO NOTHING`);
-    // Seed custom fields
     await pool.query(`INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES ('past_due_balance','Past Due Balance','number',0),('payment_commitment_date','Payment Commitment Date','date',1),('unit_number','Unit Number','text',2),('lease_end_date','Lease End Date','date',3) ON CONFLICT (key) DO NOTHING`);
-    // Seed call line
     await pool.query(`INSERT INTO call_lines (name,twilio_number,description) VALUES ('OKCREAL Connect Line','+14052562614','Main OKCREAL line') ON CONFLICT DO NOTHING`);
     console.log('✅ DB schema initialized');
   } catch(e) { console.error('DB init error:', e.message); }
