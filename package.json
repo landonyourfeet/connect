@@ -1,11 +1,9 @@
 {
   "name": "okcreal-connect",
-  "version": "1.0.0",
-  "description": "OKCREAL Connect",
+  "version": "2.0.0",
   "main": "crm-server.js",
   "scripts": {
-    "start": "node crm-server.js",
-    "dev": "nodemon crm-server.js"
+    "start": "node crm-server.js"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -16,9 +14,9 @@
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.0",
-    "pg": "^8.11.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "pg": "^8.11.0",
+    "twilio": "^5.0.0",
+    "@deepgram/sdk": "^3.0.0",
+    "openai": "^4.0.0"
   }
 }
