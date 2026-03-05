@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://sdk.twilio.com/js/client/v1.14/twilio.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -17,6 +18,7 @@
     --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.13);
     --magenta:#FF0058;--magenta2:#FF3380;--magenta-dim:rgba(255,0,88,0.12);--magenta-glow:rgba(255,0,88,0.35);
     --cyan:#00C8FF;--cyan2:#33D6FF;--cyan-dim:rgba(0,200,255,0.1);--cyan-glow:rgba(0,200,255,0.3);
+    --green:#00E676;--green-dim:rgba(0,230,118,0.1);
     --accent:#FF0058;--accent2:#FF3380;--white:#FFFFFF;--text:#EFEFEF;--muted:#666666;--muted2:#888888;
     --danger:#FF3B3B;--success:#00E676;--info:#00C8FF;--warn:#FFB800;
     --radius:6px;--radius-lg:10px;
@@ -55,7 +57,10 @@
   .btn-ghost{background:transparent;color:var(--muted2);border:1px solid var(--border2);}
   .btn-ghost:hover{color:var(--white);border-color:rgba(255,255,255,0.2);background:var(--surface);}
   .btn-danger{background:var(--danger);color:#fff;}.btn-danger:hover{background:#FF5555;}
+  .btn-success{background:var(--success);color:#000;}.btn-success:hover{filter:brightness(1.1);}
   .btn-sm{padding:5px 11px;font-size:12px;}.btn-icon{padding:6px;width:32px;height:32px;border-radius:var(--radius);justify-content:center;}
+  .btn-call{background:rgba(0,230,118,0.15);color:var(--success);border:1px solid rgba(0,230,118,0.3);padding:5px 9px;border-radius:var(--radius);font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:4px;transition:all 0.15s;}
+  .btn-call:hover{background:rgba(0,230,118,0.25);border-color:rgba(0,230,118,0.5);transform:scale(1.04);}
   .table-wrap{overflow:auto;flex:1;}
   table{width:100%;border-collapse:collapse;}
   thead th{background:var(--black);border-bottom:1px solid var(--border2);padding:10px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);white-space:nowrap;position:sticky;top:0;z-index:1;}
@@ -106,6 +111,15 @@
   .activity-time{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;}
   .activity-body{font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;}
   .activity-empty{text-align:center;color:var(--muted);padding:48px;font-size:13px;}
+  /* Call card inside timeline */
+  .call-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+  .call-card-header{padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);}
+  .call-card-body{padding:12px;}
+  .call-summary-block{background:rgba(255,0,88,0.06);border-left:3px solid var(--magenta);padding:10px 12px;border-radius:0 var(--radius) var(--radius) 0;margin-bottom:10px;font-size:13px;color:var(--text);line-height:1.6;}
+  .call-transcript-toggle{font-size:11px;font-weight:700;color:var(--muted2);cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 0;letter-spacing:0.05em;text-transform:uppercase;background:none;border:none;}
+  .call-transcript-toggle:hover{color:var(--cyan);}
+  .call-transcript{background:var(--black);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-top:8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted2);line-height:1.8;max-height:240px;overflow-y:auto;white-space:pre-wrap;}
+  .call-processing{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;padding:6px 0;}
   .detail-section{margin-bottom:22px;}
   .detail-section-title{font-size:9px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
   .detail-section-title::after{content:'';flex:1;height:1px;background:var(--border);}
@@ -142,8 +156,7 @@
   .login-glow2{position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(0,200,255,0.05) 0%,transparent 70%);bottom:-150px;right:-100px;pointer-events:none;}
   .login-card{background:var(--surface);border:1px solid transparent;border-radius:var(--radius-lg);padding:42px;width:400px;position:relative;z-index:1;animation:borderNeon 8s linear infinite;}
   .login-brand{text-align:center;margin-bottom:30px;}
-  .login-wings{display:block;width:260px;margin:0 auto 14px;}
-  .login-title{font-family:'Barlow Condensed',sans-serif;font-size:24px;font-weight:800;color:var(--white);letter-spacing:0.5px;line-height:1.1;margin-bottom:4px;}
+  .login-title{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:800;color:var(--white);letter-spacing:0.5px;line-height:1.1;margin-bottom:6px;}
   .login-title em{color:var(--magenta);font-style:normal;}
   .login-sub{font-size:10px;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase;font-weight:600;}
   .form-group{margin-bottom:16px;}
@@ -172,171 +185,417 @@
   .page-btn:hover{color:var(--white);border-color:rgba(255,255,255,0.2);}
   .page-btn.active{background:var(--magenta);border-color:var(--magenta);color:#fff;box-shadow:0 0 12px var(--magenta-glow);}
   .page-btn:disabled{opacity:0.3;cursor:default;pointer-events:none;}
-  /* Thin animated loading bar shown while background fetch runs */
   .drawer-loading-bar{height:2px;background:linear-gradient(90deg,var(--magenta),var(--cyan),var(--magenta));background-size:200% 100%;animation:loadBar 1.4s linear infinite;flex-shrink:0;}
   @keyframes loadBar{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  /* ── CALL MODAL ── */
+  .call-modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:28px;width:380px;max-width:95vw;box-shadow:0 0 80px rgba(0,0,0,0.9),0 0 40px rgba(0,230,118,0.08);animation:fadeIn 0.2s cubic-bezier(.16,1,.3,1);position:relative;overflow:hidden;}
+  .call-modal::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--success),var(--cyan));}
+  .call-contact-name{font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:800;color:var(--white);margin-bottom:2px;}
+  .call-contact-phone{font-family:'DM Mono',monospace;font-size:14px;color:var(--muted2);margin-bottom:20px;}
+  .call-timer{font-family:'DM Mono',monospace;font-size:32px;font-weight:500;color:var(--success);text-align:center;margin:20px 0;letter-spacing:0.1em;}
+  .call-status-badge{text-align:center;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:16px;}
+  .call-status-badge.connecting{color:var(--warn);}
+  .call-status-badge.connected{color:var(--success);}
+  .call-status-badge.ended{color:var(--muted);}
+  .call-status-badge.processing{color:var(--cyan);}
+  .call-btn-row{display:flex;gap:10px;justify-content:center;margin-top:16px;}
+  .call-big-btn{width:64px;height:64px;border-radius:50%;border:none;display:flex;align-items:center;justify-content:center;font-size:24px;transition:all 0.15s;flex-shrink:0;}
+  .call-big-btn.green{background:var(--success);color:#000;box-shadow:0 0 28px rgba(0,230,118,0.4);}
+  .call-big-btn.green:hover{transform:scale(1.08);box-shadow:0 0 40px rgba(0,230,118,0.6);}
+  .call-big-btn.red{background:var(--danger);color:#fff;box-shadow:0 0 28px rgba(255,59,59,0.3);}
+  .call-big-btn.red:hover{transform:scale(1.08);}
+  .call-big-btn.gray{background:var(--surface3);color:var(--muted2);}
+  .call-big-btn.gray:hover{background:var(--surface2);color:var(--white);}
+  .call-big-btn:disabled{opacity:0.4;cursor:default;pointer-events:none;}
+  .call-line-select{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);padding:9px 12px;font-size:13px;color:var(--text);outline:none;margin-bottom:4px;}
+  .call-line-select:focus{border-color:var(--success);}
+
+  /* ── ADMIN PAGE ── */
+  .admin-wrap{padding:24px;max-width:860px;}
+  .admin-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:24px;overflow:hidden;}
+  .admin-section-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+  .admin-section-title{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:800;color:var(--white);letter-spacing:0.3px;}
+  .admin-table{width:100%;border-collapse:collapse;}
+  .admin-table th{background:var(--black);border-bottom:1px solid var(--border2);padding:9px 16px;text-align:left;font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);}
+  .admin-table td{padding:11px 16px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text);}
+  .admin-table tr:last-child td{border-bottom:none;}
+  .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
+  .status-dot.active{background:var(--success);box-shadow:0 0 6px var(--success);}
+  .status-dot.inactive{background:var(--muted);}
+  .line-agent-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--surface3);border:1px solid var(--border2);border-radius:99px;font-size:11px;font-weight:600;color:var(--text);margin:2px;}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
-const API_BASE = '';
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── CONFIG ─────────────────────────────────────────────────────────────────
+// Change this to your Railway backend URL after deploying
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3000'
+  : '';  // same origin when hosted together
+
 let authToken = localStorage.getItem('crm_token') || '';
 
 async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` } };
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }
+  };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(API_BASE + path, opts);
-  if (res.status === 401) { authToken=''; localStorage.removeItem('crm_token'); window.location.reload(); }
-  const data = await res.json();
+  if (res.status === 401) {
+    authToken = ''; localStorage.removeItem('crm_token'); window.location.reload();
+  }
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'API error');
   return data;
 }
 
+// ── HELPERS ────────────────────────────────────────────────────────────────
 function initials(name) {
   if (!name) return '?';
   const p = name.trim().split(' ');
-  return (p[0]?.[0]||'') + (p[p.length-1]?.[0]||'');
+  return (p[0]?.[0] || '') + (p[p.length - 1]?.[0] || '');
 }
 function avatarColor(name) {
-  const c=['#D97706','#2563EB','#16A34A','#7C3AED','#DC2626','#0891B2','#DB2777','#059669'];
-  let h=0; for (let x of (name||'')) h=(h*31+x.charCodeAt(0))|0;
-  return c[Math.abs(h)%c.length];
+  const c = ['#D97706','#2563EB','#16A34A','#7C3AED','#DC2626','#0891B2','#DB2777','#059669'];
+  let h = 0; for (let x of (name || '')) h = (h * 31 + x.charCodeAt(0)) | 0;
+  return c[Math.abs(h) % c.length];
 }
 function formatDate(d) {
   if (!d) return '—';
-  const dt=new Date(d),now=new Date(),diff=now-dt;
-  if (diff<60000) return 'just now';
-  if (diff<3600000) return Math.floor(diff/60000)+'m ago';
-  if (diff<86400000) return Math.floor(diff/3600000)+'h ago';
-  if (diff<604800000) return Math.floor(diff/86400000)+'d ago';
-  return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const dt = new Date(d), now = new Date(), diff = now - dt;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function formatDuration(sec) {
+  if (!sec) return '0:00';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
 }
 function getTagColor(name) {
-  const n=name.toLowerCase();
-  if (n.includes('eviction')||n.includes('failed')||n.includes('danger')) return 'danger';
-  if (n.includes('completed')||n.includes('committed')||n.includes('payment plan')) return 'success';
-  if (n.includes('in progress')||n.includes('attempt')||n.includes('call now')) return 'info';
-  if (n.includes('human')||n.includes('manual')||n.includes('escalate')) return 'warn';
-  if (n.includes('robot')||n.includes('grok')||n.includes('pause')||n.includes('stop')) return 'purple';
+  const n = name.toLowerCase();
+  if (n.includes('eviction') || n.includes('failed') || n.includes('danger')) return 'danger';
+  if (n.includes('completed') || n.includes('committed') || n.includes('payment plan')) return 'success';
+  if (n.includes('in progress') || n.includes('attempt') || n.includes('call now')) return 'info';
+  if (n.includes('human') || n.includes('manual') || n.includes('escalate')) return 'warn';
+  if (n.includes('robot') || n.includes('grok') || n.includes('pause') || n.includes('stop')) return 'purple';
   return '';
 }
 function stageClass(stage) {
   if (!stage) return 'stage-default';
-  const s=stage.toLowerCase();
-  if (s==='delinquent') return 'stage-delinquent';
-  if (s==='resident') return 'stage-resident';
-  if (s==='lead') return 'stage-lead';
+  const s = stage.toLowerCase();
+  if (s === 'delinquent') return 'stage-delinquent';
+  if (s === 'resident') return 'stage-resident';
+  if (s === 'lead') return 'stage-lead';
   return 'stage-default';
 }
 
+// ── ICONS ──────────────────────────────────────────────────────────────────
 const Icons = {
-  Users: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-  Tasks: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
-  Search: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
-  Plus: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
-  X: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
-  Check: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>,
-  List: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
-  Refresh: ()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+  Users:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  Tasks:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
+  Search:  () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  Plus:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  X:       () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  Check:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>,
+  List:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
+  Refresh: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+  Phone:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.16 6.16l1.02-.87a2 2 0 0 1 2.09-.38c.91.339 1.853.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+  PhoneOff:() => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.5 16.5l1.4-1.4a2 2 0 0 1 2.1-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 24.5 17.42v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07M9.69 4.69A19.5 19.5 0 0 0 5 9a19.79 19.79 0 0 0-3.07 8.67A2 2 0 0 0 3.92 20h3a2 2 0 0 0 2-1.72 12.05 12.05 0 0 1 .7-2.81 2 2 0 0 0-.45-2.11L8.09 12.09"/><path d="M13.5 4.5l7 7"/></svg>,
+  Mic:     () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>,
+  MicOff:  () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>,
+  Play:    () => <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+  Settings:() => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M20 12h-1M5 12H4M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M12 20v-1M12 5V4"/></svg>,
+  ChevronDown: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>,
+  ChevronRight: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>,
 };
 
-// LOGIN
-function LoginPage({ onLogin }) {
-  const [email,setEmail]=useState(''); const [password,setPass]=useState('');
-  const [error,setError]=useState(''); const [loading,setLoading]=useState(false);
-  async function handleSubmit(e) {
-    e.preventDefault(); setError(''); setLoading(true);
-    try { const {token,user}=await api('POST','/api/auth/login',{email,password}); authToken=token; localStorage.setItem('crm_token',token); onLogin(user); }
-    catch(e){setError(e.message);}
-    setLoading(false);
+// ── CALL MODAL ─────────────────────────────────────────────────────────────
+function CallModal({ person, onClose, currentUser }) {
+  const [status, setStatus] = useState('idle'); // idle | connecting | connected | ended | processing
+  const [muted, setMuted] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [lines, setLines] = useState([]);
+  const [selectedLine, setSelectedLine] = useState('');
+  const [error, setError] = useState('');
+  const deviceRef = useRef(null);
+  const connRef = useRef(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    loadLines();
+    initTwilio();
+    return () => {
+      clearInterval(timerRef.current);
+      if (connRef.current) connRef.current.disconnect();
+      if (deviceRef.current) deviceRef.current.destroy();
+    };
+  }, []);
+
+  async function loadLines() {
+    try {
+      const r = await api('GET', '/api/twilio/lines');
+      setLines(r.lines || []);
+      if (r.lines?.[0]) setSelectedLine(r.lines[0].id);
+    } catch (e) {
+      setError('Could not load call lines: ' + e.message);
+    }
   }
+
+  async function initTwilio() {
+    try {
+      const r = await api('GET', '/api/twilio/token');
+      if (typeof Twilio === 'undefined') {
+        setError('Twilio SDK not loaded. Check your network connection.');
+        return;
+      }
+      const device = new Twilio.Device(r.token, { codecPreferences: ['opus', 'pcmu'] });
+      device.on('ready', () => console.log('Twilio device ready'));
+      device.on('error', (err) => setError('Twilio error: ' + err.message));
+      device.on('connect', (conn) => {
+        connRef.current = conn;
+        setStatus('connected');
+        timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+      });
+      device.on('disconnect', () => {
+        clearInterval(timerRef.current);
+        setStatus('processing');
+        setTimeout(() => setStatus('ended'), 3000);
+      });
+      device.on('incoming', (conn) => {
+        conn.accept();
+        connRef.current = conn;
+        setStatus('connected');
+        timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+      });
+      deviceRef.current = device;
+    } catch (e) {
+      setError('Could not initialize calling: ' + e.message);
+    }
+  }
+
+  function startCall() {
+    if (!deviceRef.current) { setError('Calling not ready. Refresh and try again.'); return; }
+    if (!person.phone) { setError('This contact has no phone number.'); return; }
+    setStatus('connecting');
+    setElapsed(0);
+    const line = lines.find(l => l.id === selectedLine);
+    try {
+      deviceRef.current.connect({
+        To: person.phone,
+        CallerId: line?.twilio_number || '',
+        lineId: selectedLine,
+        personId: person.id,
+        agentId: currentUser?.id || '',
+      });
+    } catch (e) {
+      setError('Call failed: ' + e.message);
+      setStatus('idle');
+    }
+  }
+
+  function hangUp() {
+    if (connRef.current) connRef.current.disconnect();
+    clearInterval(timerRef.current);
+  }
+
+  function toggleMute() {
+    if (!connRef.current) return;
+    const newMuted = !muted;
+    connRef.current.mute(newMuted);
+    setMuted(newMuted);
+  }
+
+  const statusLabel = {
+    idle: 'Ready to call',
+    connecting: 'Connecting…',
+    connected: 'Connected',
+    ended: 'Call ended',
+    processing: 'Saving call log & generating transcript…',
+  }[status];
+
+  const statusCls = {
+    idle: '', connecting: 'connecting', connected: 'connected',
+    ended: 'ended', processing: 'processing'
+  }[status];
+
   return (
-    <div className="login-wrap">
-      <div className="login-glow1"/><div className="login-glow2"/>
-      <div className="login-card">
-        <div className="login-brand">
-          <img src="wings.svg" alt="OKCREAL Wings" className="login-wings"/>
-          <div className="login-title">OKCREAL <em>Connect</em></div>
-          <div className="login-sub">Moving You Up · Property Platform</div>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && status !== 'connected' && onClose()}>
+      <div className="call-modal">
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div>
+            <div className="call-contact-name">{person.name}</div>
+            <div className="call-contact-phone">{person.phone || 'No phone number'}</div>
+          </div>
+          <button className="btn btn-icon btn-ghost" onClick={onClose}><Icons.X /></button>
         </div>
-        <form onSubmit={handleSubmit}>
-          <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@okcreal.com" autoFocus/></div>
-          <div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" value={password} onChange={e=>setPass(e.target.value)} placeholder="••••••••"/></div>
-          {error&&<div className="form-error">⚠ {error}</div>}
-          <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',marginTop:10,padding:'11px 16px',fontSize:14}} disabled={loading}>
-            {loading?<span className="spinner" style={{borderTopColor:'#fff'}}/>:'Sign In'}
-          </button>
-        </form>
+
+        {error && (
+          <div style={{ background: 'rgba(255,59,59,0.1)', border: '1px solid rgba(255,59,59,0.3)', borderRadius: 'var(--radius)', padding: '10px 14px', fontSize: 13, color: 'var(--danger)', marginBottom: 16 }}>
+            {error}
+          </div>
+        )}
+
+        {(status === 'idle' || status === 'connecting') && lines.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div className="form-label" style={{ marginBottom: 6 }}>Call From</div>
+            <select className="call-line-select" value={selectedLine} onChange={e => setSelectedLine(e.target.value)}>
+              {lines.map(l => (
+                <option key={l.id} value={l.id}>{l.name} — {l.twilio_number}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {status === 'connected' && (
+          <div className="call-timer">{formatDuration(elapsed)}</div>
+        )}
+
+        {status === 'processing' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div className="spinner" style={{ margin: '0 auto 12px' }} />
+            <div style={{ fontSize: 13, color: 'var(--cyan)' }}>Processing call…</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>Transcript & AI summary will appear in the contact timeline.</div>
+          </div>
+        )}
+
+        <div className={`call-status-badge ${statusCls}`}>{statusLabel}</div>
+
+        {status !== 'processing' && status !== 'ended' && (
+          <div className="call-btn-row">
+            {status === 'connected' ? (
+              <>
+                <button className={`call-big-btn ${muted ? 'red' : 'gray'}`} onClick={toggleMute} title={muted ? 'Unmute' : 'Mute'}>
+                  {muted ? <Icons.MicOff /> : <Icons.Mic />}
+                </button>
+                <button className="call-big-btn red" onClick={hangUp} title="Hang up">
+                  <Icons.PhoneOff />
+                </button>
+              </>
+            ) : (
+              <button
+                className="call-big-btn green"
+                onClick={startCall}
+                disabled={status === 'connecting' || !person.phone}
+                title="Call"
+              >
+                {status === 'connecting'
+                  ? <span className="spinner" style={{ borderTopColor: '#000' }} />
+                  : <Icons.Phone />}
+              </button>
+            )}
+          </div>
+        )}
+
+        {status === 'ended' && (
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <button className="btn btn-ghost" onClick={onClose}>Close</button>
+          </div>
+        )}
+
+        <div style={{ marginTop: 20, fontSize: 11, color: 'var(--muted)', textAlign: 'center' }}>
+          All calls are recorded for quality & training purposes.
+        </div>
       </div>
     </div>
   );
 }
 
-// ADD PERSON MODAL
-function AddPersonModal({ onClose, onSaved }) {
-  const [form,setForm]=useState({firstName:'',lastName:'',phone:'',email:'',stage:'Lead'});
-  const [loading,setLoading]=useState(false);
-  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  async function save(){
-    setLoading(true);
-    try{await api('POST','/api/people',form);onSaved();}catch(e){alert(e.message);}
-    setLoading(false);
-  }
+// ── CALL ACTIVITY CARD ─────────────────────────────────────────────────────
+function CallActivityCard({ activity }) {
+  const [showTranscript, setShowTranscript] = useState(false);
+  const isInbound = activity.direction === 'inbound';
+  const icon = activity.type === 'voicemail' ? '📬' : isInbound ? '📞' : '📱';
+  const dirLabel = activity.type === 'voicemail' ? 'Voicemail' : isInbound ? 'Inbound' : 'Outbound';
+  const duration = activity.duration ? formatDuration(activity.duration) : null;
+  const isProcessing = activity.body?.includes('processing') && !activity.summary;
+
   return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal">
-        <div className="modal-title">Add New Contact</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-          <div className="form-group" style={{margin:0}}><label className="form-label">First Name</label><input className="form-input" value={form.firstName} onChange={e=>set('firstName',e.target.value)} autoFocus/></div>
-          <div className="form-group" style={{margin:0}}><label className="form-label">Last Name</label><input className="form-input" value={form.lastName} onChange={e=>set('lastName',e.target.value)}/></div>
-        </div>
-        <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={form.phone} onChange={e=>set('phone',e.target.value)}/></div>
-        <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={form.email} onChange={e=>set('email',e.target.value)}/></div>
-        <div className="form-group"><label className="form-label">Stage</label>
-          <select className="form-input" value={form.stage} onChange={e=>set('stage',e.target.value)}>
-            <option>Lead</option><option>Resident</option><option>Delinquent</option><option>Past Client</option>
-          </select>
-        </div>
-        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={save} disabled={loading}>{loading?'Saving…':'Save Contact'}</button>
-        </div>
+    <div className="call-card">
+      <div className="call-card-header">
+        <span style={{ fontSize: 16 }}>{icon}</span>
+        <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--white)' }}>{dirLabel} Call</span>
+        {duration && <span className="tag">{duration}</span>}
+        {activity.line_name && <span className="tag info">{activity.line_name}</span>}
+        <span className="activity-time" style={{ marginLeft: 'auto' }}>{formatDate(activity.created_at)}</span>
+        {activity.created_by_name && (
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>by {activity.created_by_name}</span>
+        )}
+      </div>
+      <div className="call-card-body">
+        {isProcessing ? (
+          <div className="call-processing">
+            <div className="spinner" style={{ width: 14, height: 14 }} />
+            Transcript & summary processing…
+          </div>
+        ) : (
+          <>
+            {activity.summary && (
+              <div className="call-summary-block">
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--magenta)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>✨ AI Summary</div>
+                {activity.summary}
+              </div>
+            )}
+            {activity.recording_url && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                  ▶ Replay Recording
+                </div>
+                <audio controls src={activity.recording_url} style={{ width: '100%', height: 36 }} />
+              </div>
+            )}
+            {activity.transcript && (
+              <>
+                <button className="call-transcript-toggle" onClick={() => setShowTranscript(s => !s)}>
+                  {showTranscript ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
+                  {showTranscript ? 'Hide' : 'View'} Full Transcript
+                </button>
+                {showTranscript && (
+                  <div className="call-transcript">{activity.transcript}</div>
+                )}
+              </>
+            )}
+            {!activity.summary && !activity.recording_url && !activity.transcript && (
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{activity.body}</div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// ── PERSON DRAWER ─────────────────────────────────────────────────────────────
-// THE FIX: accepts initialPerson (the row data already in memory) so the drawer
-// renders instantly with name/stage/tags visible. API calls run in the background
-// and enrich the data. person state is NEVER null after a row click, so the
-// overlay click-to-close no longer dismisses an invisible drawer.
-function PersonDrawer({ personId, initialPerson, onClose, onUpdated }) {
-  const [person, setPerson]           = useState(initialPerson || null);
-  const [activities, setActivities]   = useState([]);
-  const [tasks, setTasks]             = useState([]);
-  const [tab, setTab]                 = useState('all');
-  const [noteText, setNoteText]       = useState('');
-  const [saving, setSaving]           = useState(false);
+// ── PERSON DRAWER ──────────────────────────────────────────────────────────
+function PersonDrawer({ personId, initialPerson, onClose, onUpdated, currentUser }) {
+  const [person, setPerson]         = useState(initialPerson || null);
+  const [activities, setActivities] = useState([]);
+  const [tasks, setTasks]           = useState([]);
+  const [tab, setTab]               = useState('all');
+  const [noteText, setNoteText]     = useState('');
+  const [saving, setSaving]         = useState(false);
   const [detailLoading, setDetailLoading] = useState(true);
+  const [showCallModal, setShowCallModal] = useState(false);
 
-  useEffect(()=>{load();},[personId]);
+  useEffect(() => { load(); }, [personId]);
 
   async function load() {
     setDetailLoading(true);
     try {
-      const [pR,aR,tR] = await Promise.allSettled([
-        api('GET',`/api/people/${personId}`),
-        api('GET',`/api/activities?personId=${personId}&limit=100`),
-        api('GET',`/api/tasks?personId=${personId}`),
+      const [pR, aR, tR] = await Promise.allSettled([
+        api('GET', `/api/people/${personId}`),
+        api('GET', `/api/activities?personId=${personId}&limit=100`),
+        api('GET', `/api/tasks?personId=${personId}`),
       ]);
-      // Update person only if API gave us something good; otherwise keep initialPerson
-      if (pR.status==='fulfilled' && pR.value?.person) {
+      if (pR.status === 'fulfilled' && pR.value?.person) {
         setPerson(pR.value.person);
       } else if (!person) {
-        // Last-resort fallback — drawer never stays blank or invisible
         setPerson({
           id: personId,
           name: initialPerson?.name || 'Unknown Contact',
@@ -346,11 +605,11 @@ function PersonDrawer({ personId, initialPerson, onClose, onUpdated }) {
           tags: initialPerson?.tags || [],
         });
       }
-      setActivities(aR.status==='fulfilled' ? (aR.value?.activities||[]) : []);
-      setTasks(tR.status==='fulfilled' ? (tR.value?.tasks||[]) : []);
-    } catch(e) {
-      console.error('PersonDrawer load error:',e);
-      if (!person) setPerson({id:personId,name:'Unknown Contact',phone:'',email:'',stage:'',tags:[]});
+      setActivities(aR.status === 'fulfilled' ? (aR.value?.activities || []) : []);
+      setTasks(tR.status === 'fulfilled' ? (tR.value?.tasks || []) : []);
+    } catch (e) {
+      console.error('PersonDrawer load error:', e);
+      if (!person) setPerson({ id: personId, name: 'Unknown Contact', phone: '', email: '', stage: '', tags: [] });
     }
     setDetailLoading(false);
   }
@@ -359,126 +618,160 @@ function PersonDrawer({ personId, initialPerson, onClose, onUpdated }) {
     if (!noteText.trim()) return;
     setSaving(true);
     try {
-      await api('POST','/api/activities',{personId,type:'note',body:noteText.trim()});
+      await api('POST', '/api/activities', { personId, type: 'note', body: noteText.trim() });
       setNoteText('');
-      const aR=await api('GET',`/api/activities?personId=${personId}&limit=100`);
-      setActivities(aR.activities||[]);
-    } catch(e){alert(e.message);}
+      const aR = await api('GET', `/api/activities?personId=${personId}&limit=100`);
+      setActivities(aR.activities || []);
+    } catch (e) { alert(e.message); }
     setSaving(false);
   }
 
-  async function updateField(key,value) {
+  async function updateField(key, value) {
     try {
-      await api('PUT',`/api/people/${personId}`,{[key]:value});
-      const pR=await api('GET',`/api/people/${personId}`);
+      await api('PUT', `/api/people/${personId}`, { [key]: value });
+      const pR = await api('GET', `/api/people/${personId}`);
       setPerson(pR.person);
       if (onUpdated) onUpdated();
-    } catch(e){alert(e.message);}
+    } catch (e) { alert(e.message); }
   }
 
-  async function completeTask(taskId,done) {
-    await api('PUT',`/api/tasks/${taskId}`,{completed:done});
-    const tR=await api('GET',`/api/tasks?personId=${personId}`);
-    setTasks(tR.tasks||[]);
+  async function completeTask(taskId, done) {
+    await api('PUT', `/api/tasks/${taskId}`, { completed: done });
+    const tR = await api('GET', `/api/tasks?personId=${personId}`);
+    setTasks(tR.tasks || []);
   }
 
-  const filtered = tab==='all' ? activities
-    : tab==='notes'  ? activities.filter(a=>a.type==='note')
-    : tab==='calls'  ? activities.filter(a=>a.type==='call'||a.type==='voicemail')
-    : tab==='texts'  ? activities.filter(a=>a.type==='text')
-    : tab==='emails' ? activities.filter(a=>a.type==='email')
+  const filtered = tab === 'all' ? activities
+    : tab === 'notes'  ? activities.filter(a => a.type === 'note')
+    : tab === 'calls'  ? activities.filter(a => a.type === 'call' || a.type === 'voicemail')
+    : tab === 'texts'  ? activities.filter(a => a.type === 'text')
+    : tab === 'emails' ? activities.filter(a => a.type === 'email')
     : activities;
 
-  function actIcon(type){return type==='call'?'📞':type==='voicemail'?'📭':type==='text'?'💬':type==='email'?'📧':'📝';}
+  function actIcon(type) {
+    return type === 'call' ? '📞' : type === 'voicemail' ? '📬' : type === 'text' ? '💬' : type === 'email' ? '📧' : '📝';
+  }
 
-  // Only show a loading shell if we truly have no data at all
   if (!person) return (
     <>
-      <div className="drawer-overlay" onClick={onClose}/>
+      <div className="drawer-overlay" onClick={onClose} />
       <div className="drawer">
-        <div className="drawer-header" style={{justifyContent:'space-between'}}>
-          <span style={{color:'var(--muted)',fontSize:13}}>Loading contact…</span>
-          <button className="btn btn-icon btn-ghost" onClick={onClose}><Icons.X/></button>
+        <div className="drawer-header" style={{ justifyContent: 'space-between' }}>
+          <span style={{ color: 'var(--muted)', fontSize: 13 }}>Loading contact…</span>
+          <button className="btn btn-icon btn-ghost" onClick={onClose}><Icons.X /></button>
         </div>
-        <div className="loading-wrap"><span className="spinner"/></div>
+        <div className="loading-wrap"><span className="spinner" /></div>
       </div>
     </>
   );
 
-  const balanceField = person.customFields?.['customPastDueBalance'];
-  const payDateField = person.customFields?.['customDebtPaymentDate'];
+  const balanceField = person.customFields?.customPastDueBalance;
+  const payDateField = person.customFields?.customDebtPaymentDate;
 
   return (
     <>
-      <div className="drawer-overlay" onClick={onClose}/>
+      <div className="drawer-overlay" onClick={onClose} />
       <div className="drawer">
-        {detailLoading && <div className="drawer-loading-bar"/>}
+        {detailLoading && <div className="drawer-loading-bar" />}
         <div className="drawer-header">
-          <div className="avatar" style={{background:avatarColor(person.name),width:46,height:46,fontSize:16}}>{initials(person.name)}</div>
-          <div style={{flex:1}}>
+          <div className="avatar" style={{ background: avatarColor(person.name), width: 46, height: 46, fontSize: 16 }}>
+            {initials(person.name)}
+          </div>
+          <div style={{ flex: 1 }}>
             <div className="person-name">{person.name}</div>
-            <div className="person-sub">{[person.phone,person.email].filter(Boolean).join(' · ')||'No contact info'}</div>
-            <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap',alignItems:'center'}}>
-              <span className={`stage ${stageClass(person.stage)}`}>{person.stage||'No Stage'}</span>
-              {balanceField&&<span className="tag danger">💰 ${parseFloat(balanceField).toLocaleString()} past due</span>}
-              {(person.tags||[]).slice(0,4).map(t=><span key={t} className={`tag ${getTagColor(t)}`}>{t}</span>)}
-              {(person.tags||[]).length>4&&<span className="tag">+{person.tags.length-4} more</span>}
+            <div className="person-sub">
+              {[person.phone, person.email].filter(Boolean).join(' · ') || 'No contact info'}
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className={`stage ${stageClass(person.stage)}`}>{person.stage || 'No Stage'}</span>
+              {balanceField && (
+                <span className="tag danger">💰 ${parseFloat(balanceField).toLocaleString()} past due</span>
+              )}
+              {(person.tags || []).slice(0, 4).map(t => (
+                <span key={t} className={`tag ${getTagColor(t)}`}>{t}</span>
+              ))}
+              {(person.tags || []).length > 4 && (
+                <span className="tag">+{person.tags.length - 4} more</span>
+              )}
             </div>
           </div>
-          <button className="btn btn-icon btn-ghost" onClick={onClose}><Icons.X/></button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {person.phone && (
+              <button className="btn-call" onClick={e => { e.stopPropagation(); setShowCallModal(true); }}>
+                <Icons.Phone /> Call
+              </button>
+            )}
+            <button className="btn btn-icon btn-ghost" onClick={onClose}><Icons.X /></button>
+          </div>
         </div>
 
         <div className="drawer-body">
           <div className="drawer-timeline">
             <div className="timeline-tabs">
-              {[['all','All'],['notes','Notes'],['calls','Calls'],['texts','Texts'],['emails','Emails']].map(([k,l])=>(
-                <button key={k} className={`timeline-tab ${tab===k?'active':''}`} onClick={()=>setTab(k)}>{l}</button>
+              {[['all','All'],['notes','Notes'],['calls','Calls'],['texts','Texts'],['emails','Emails']].map(([k,l]) => (
+                <button key={k} className={`timeline-tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{l}</button>
               ))}
-              <button className="timeline-tab" style={{marginLeft:'auto'}} onClick={load}><Icons.Refresh/></button>
+              <button className="timeline-tab" style={{ marginLeft: 'auto' }} onClick={load}><Icons.Refresh /></button>
             </div>
 
-            {(tab==='all'||tab==='notes')&&(
+            {(tab === 'all' || tab === 'notes') && (
               <div className="note-composer">
-                <textarea placeholder="Add a note…" value={noteText} onChange={e=>setNoteText(e.target.value)}
-                  onKeyDown={e=>e.key==='Enter'&&e.metaKey&&saveNote()}/>
+                <textarea
+                  placeholder="Add a note… (⌘+Enter to save)"
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && e.metaKey && saveNote()}
+                />
                 <div className="note-composer-actions">
-                  <button className="btn btn-ghost btn-sm" onClick={()=>setNoteText('')}>Clear</button>
-                  <button className="btn btn-primary btn-sm" onClick={saveNote} disabled={saving||!noteText.trim()}>{saving?'Saving…':'Save Note'}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setNoteText('')}>Clear</button>
+                  <button className="btn btn-primary btn-sm" onClick={saveNote} disabled={saving || !noteText.trim()}>
+                    {saving ? 'Saving…' : 'Save Note'}
+                  </button>
                 </div>
               </div>
             )}
 
-            {detailLoading&&activities.length===0 ? (
-              <div className="activity-empty"><span className="spinner" style={{margin:'0 auto'}}/></div>
-            ) : filtered.length===0 ? (
-              <div className="activity-empty">No {tab==='all'?'activity':tab} recorded yet.</div>
-            ) : filtered.map(a=>(
+            {detailLoading && activities.length === 0 ? (
+              <div className="activity-empty"><span className="spinner" style={{ margin: '0 auto' }} /></div>
+            ) : filtered.length === 0 ? (
+              <div className="activity-empty">No {tab === 'all' ? 'activity' : tab} recorded yet.</div>
+            ) : filtered.map(a => (
               <div className="activity-item" key={a.id}>
                 <div className={`activity-dot ${a.type}`}>{actIcon(a.type)}</div>
                 <div className="activity-content">
-                  <div className="activity-meta">
-                    <span className="activity-type">{a.type}</span>
-                    {a.duration?<span className="tag">{Math.floor(a.duration/60)}m {a.duration%60}s</span>:null}
-                    <span className="activity-time">{formatDate(a.created_at)}</span>
-                    {a.created_by_name&&<span className="text-muted text-sm">by {a.created_by_name}</span>}
-                  </div>
-                  {a.body&&<div className="activity-body">{a.body}</div>}
-                  {a.recording_url&&<div style={{marginTop:6}}><audio controls src={a.recording_url} style={{height:32,width:'100%'}}/></div>}
+                  {(a.type === 'call' || a.type === 'voicemail') ? (
+                    <CallActivityCard activity={a} />
+                  ) : (
+                    <>
+                      <div className="activity-meta">
+                        <span className="activity-type">{a.type}</span>
+                        <span className="activity-time">{formatDate(a.created_at)}</span>
+                        {a.created_by_name && (
+                          <span className="text-muted text-sm">by {a.created_by_name}</span>
+                        )}
+                      </div>
+                      {a.body && <div className="activity-body">{a.body}</div>}
+                    </>
+                  )}
                 </div>
               </div>
             ))}
 
-            {tab==='all'&&tasks.filter(t=>!t.completed).length>0&&(
+            {tab === 'all' && tasks.filter(t => !t.completed).length > 0 && (
               <>
-                <div className="divider"/>
-                <div style={{fontSize:11,fontWeight:700,letterSpacing:'0.06em',textTransform:'uppercase',color:'var(--muted)',marginBottom:8}}>Open Tasks</div>
-                {tasks.filter(t=>!t.completed).map(t=>(
-                  <div key={t.id} style={{display:'flex',gap:8,alignItems:'flex-start',marginBottom:8}}>
-                    <div className={`task-check ${t.completed?'done':''}`} onClick={()=>completeTask(t.id,!t.completed)}>{t.completed&&<Icons.Check/>}</div>
+                <div className="divider" />
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+                  Open Tasks
+                </div>
+                {tasks.filter(t => !t.completed).map(t => (
+                  <div key={t.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div className={`task-check ${t.completed ? 'done' : ''}`} onClick={() => completeTask(t.id, !t.completed)}>
+                      {t.completed && <Icons.Check />}
+                    </div>
                     <div>
-                      <div style={{fontSize:13,fontWeight:500}}>{t.title}</div>
-                      {t.note&&<div style={{fontSize:12,color:'var(--muted)',marginTop:2}}>{t.note}</div>}
-                      {t.due_date&&<div style={{fontSize:11,color:'var(--accent)',marginTop:2}}>Due {new Date(t.due_date).toLocaleDateString()}</div>}
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{t.title}</div>
+                      {t.note && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{t.note}</div>}
+                      {t.due_date && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>Due {new Date(t.due_date).toLocaleDateString()}</div>}
                     </div>
                   </div>
                 ))}
@@ -489,109 +782,176 @@ function PersonDrawer({ personId, initialPerson, onClose, onUpdated }) {
           <div className="drawer-details">
             <div className="detail-section">
               <div className="detail-section-title">Contact</div>
-              <div className="detail-row"><div className="detail-label">Phone</div><div className="detail-value font-mono">{person.phone||'—'}</div></div>
-              <div className="detail-row"><div className="detail-label">Email</div><div className="detail-value" style={{wordBreak:'break-all'}}>{person.email||'—'}</div></div>
+              <div className="detail-row">
+                <div className="detail-label">Phone</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div className="detail-value font-mono" style={{ flex: 1 }}>{person.phone || '—'}</div>
+                  {person.phone && (
+                    <button className="btn-call" style={{ padding: '3px 8px', fontSize: 10 }} onClick={() => setShowCallModal(true)}>
+                      <Icons.Phone /> Call
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="detail-row">
+                <div className="detail-label">Email</div>
+                <div className="detail-value" style={{ wordBreak: 'break-all' }}>{person.email || '—'}</div>
+              </div>
             </div>
             <div className="detail-section">
               <div className="detail-section-title">Details</div>
               <div className="detail-row">
                 <div className="detail-label">Stage</div>
-                <select className="detail-select" value={person.stage||'Lead'} onChange={e=>updateField('stage',e.target.value)}>
-                  {['Lead','Resident','Delinquent','Past Client','Prospect'].map(s=><option key={s}>{s}</option>)}
+                <select className="detail-select" value={person.stage || 'Lead'} onChange={e => updateField('stage', e.target.value)}>
+                  {['Lead', 'Resident', 'Delinquent', 'Past Client', 'Prospect'].map(s => (
+                    <option key={s}>{s}</option>
+                  ))}
                 </select>
               </div>
-              {balanceField&&<div className="detail-row"><div className="detail-label">Past Due Balance</div><div className="detail-value text-danger">${parseFloat(balanceField).toLocaleString()}</div></div>}
-              {payDateField&&<div className="detail-row"><div className="detail-label">Payment Commitment</div><div className="detail-value">{payDateField}</div></div>}
+              {balanceField && (
+                <div className="detail-row">
+                  <div className="detail-label">Past Due Balance</div>
+                  <div className="detail-value text-danger">${parseFloat(balanceField).toLocaleString()}</div>
+                </div>
+              )}
+              {payDateField && (
+                <div className="detail-row">
+                  <div className="detail-label">Payment Commitment</div>
+                  <div className="detail-value">{payDateField}</div>
+                </div>
+              )}
             </div>
             <div className="detail-section">
               <div className="detail-section-title">Background</div>
-              <textarea className="detail-input" style={{minHeight:72,resize:'vertical'}} placeholder="Add background notes…"
-                defaultValue={person.background||''} onBlur={e=>updateField('background',e.target.value)}/>
+              <textarea
+                className="detail-input"
+                style={{ minHeight: 72, resize: 'vertical' }}
+                placeholder="Add background notes…"
+                defaultValue={person.background || ''}
+                onBlur={e => updateField('background', e.target.value)}
+              />
             </div>
             <div className="detail-section">
-              <div className="detail-section-title">Tags ({(person.tags||[]).length})</div>
+              <div className="detail-section-title">Tags ({(person.tags || []).length})</div>
               <div className="tags-wrap">
-                {(person.tags||[]).map(t=><span key={t} className={`tag ${getTagColor(t)}`}>{t}</span>)}
-                {!(person.tags||[]).length&&<span className="text-muted text-sm">No tags</span>}
+                {(person.tags || []).map(t => <span key={t} className={`tag ${getTagColor(t)}`}>{t}</span>)}
+                {!(person.tags || []).length && <span className="text-muted text-sm">No tags</span>}
               </div>
-            </div>
-            <div className="detail-section">
-              <div className="detail-section-title">Activity</div>
-              {person.created&&<div className="detail-row"><div className="detail-label">Added</div><div className="detail-value">{new Date(person.created).toLocaleDateString()}</div></div>}
-              <div className="detail-row"><div className="detail-label">Last Updated</div><div className="detail-value">{formatDate(person.updated)}</div></div>
             </div>
           </div>
         </div>
       </div>
+
+      {showCallModal && (
+        <CallModal
+          person={person}
+          currentUser={currentUser}
+          onClose={() => { setShowCallModal(false); load(); }}
+        />
+      )}
     </>
   );
 }
 
-// PEOPLE PAGE
-function PeoplePage({ activeList, currentUser }) {
-  const [people,setPeople]     = useState([]);
-  const [total,setTotal]       = useState(0);
-  const [loading,setLoading]   = useState(true);
-  const [search,setSearch]     = useState('');
-  const [selected,setSelected] = useState(new Set());
-  // FIX: store full row object so PersonDrawer seeds instantly from it
-  const [openPerson,setOpenPerson] = useState(null);
-  const [showAdd,setShowAdd]   = useState(false);
-  const [page,setPage]         = useState(0);
-  const LIMIT=50;
+// ── ADD PERSON MODAL ───────────────────────────────────────────────────────
+function AddPersonModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', stage: 'Lead' });
+  const [loading, setLoading] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  async function save() {
+    setLoading(true);
+    try { await api('POST', '/api/people', form); onSaved(); } catch (e) { alert(e.message); }
+    setLoading(false);
+  }
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Add New Contact</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div className="form-group" style={{ margin: 0 }}><label className="form-label">First Name</label><input className="form-input" value={form.firstName} onChange={e => set('firstName', e.target.value)} autoFocus /></div>
+          <div className="form-group" style={{ margin: 0 }}><label className="form-label">Last Name</label><input className="form-input" value={form.lastName} onChange={e => set('lastName', e.target.value)} /></div>
+        </div>
+        <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={form.phone} onChange={e => set('phone', e.target.value)} /></div>
+        <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={form.email} onChange={e => set('email', e.target.value)} /></div>
+        <div className="form-group"><label className="form-label">Stage</label>
+          <select className="form-input" value={form.stage} onChange={e => set('stage', e.target.value)}>
+            <option>Lead</option><option>Resident</option><option>Delinquent</option><option>Past Client</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={loading}>{loading ? 'Saving…' : 'Save Contact'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  useEffect(()=>{setPage(0);setSelected(new Set());},[activeList,search]);
-  useEffect(()=>{load();},[activeList,search,page]);
+// ── PEOPLE PAGE ────────────────────────────────────────────────────────────
+function PeoplePage({ activeList, currentUser }) {
+  const [people, setPeople]       = useState([]);
+  const [total, setTotal]         = useState(0);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState('');
+  const [selected, setSelected]   = useState(new Set());
+  const [openPerson, setOpenPerson] = useState(null);
+  const [callPerson, setCallPerson] = useState(null);
+  const [showAdd, setShowAdd]     = useState(false);
+  const [page, setPage]           = useState(0);
+  const LIMIT = 50;
+
+  useEffect(() => { setPage(0); setSelected(new Set()); }, [activeList, search]);
+  useEffect(() => { load(); }, [activeList, search, page]);
 
   async function load() {
     setLoading(true);
     try {
-      let url=`/api/people?limit=${LIMIT}&offset=${page*LIMIT}`;
-      if (search) url+=`&search=${encodeURIComponent(search)}`;
-      if (activeList?.filters?.stage) url+=`&stage=${encodeURIComponent(activeList.filters.stage)}`;
-      if (activeList?.filters?.tags?.[0]) url+=`&tag=${encodeURIComponent(activeList.filters.tags[0])}`;
-      const r=await api('GET',url);
-      setPeople(r.people||[]); setTotal(r.total||0);
-    } catch(e){console.error(e);}
+      let url = `/api/people?limit=${LIMIT}&offset=${page * LIMIT}`;
+      if (search) url += `&search=${encodeURIComponent(search)}`;
+      if (activeList?.filters?.stage) url += `&stage=${encodeURIComponent(activeList.filters.stage)}`;
+      if (activeList?.filters?.tags?.[0]) url += `&tag=${encodeURIComponent(activeList.filters.tags[0])}`;
+      const r = await api('GET', url);
+      setPeople(r.people || []); setTotal(r.total || 0);
+    } catch (e) { console.error(e); }
     setLoading(false);
   }
 
-  function toggleSelect(id){const s=new Set(selected);s.has(id)?s.delete(id):s.add(id);setSelected(s);}
-  function toggleAll(){if(selected.size===people.length)setSelected(new Set());else setSelected(new Set(people.map(p=>p.id)));}
-  const pages=Math.ceil(total/LIMIT);
+  function toggleSelect(id) { const s = new Set(selected); s.has(id) ? s.delete(id) : s.add(id); setSelected(s); }
+  function toggleAll() { if (selected.size === people.length) setSelected(new Set()); else setSelected(new Set(people.map(p => p.id))); }
+  const pages = Math.ceil(total / LIMIT);
 
   return (
     <div className="page">
       <div className="topbar">
-        <div className="topbar-title">{activeList?activeList.name:'All People'}</div>
+        <div className="topbar-title">{activeList ? activeList.name : 'All People'}</div>
         <div className="topbar-search">
-          <span className="topbar-search-icon"><Icons.Search/></span>
-          <input placeholder="Search name, phone, email…" value={search} onChange={e=>setSearch(e.target.value)}/>
+          <span className="topbar-search-icon"><Icons.Search /></span>
+          <input placeholder="Search name, phone, email…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="topbar-actions">
-          <button className="btn btn-ghost btn-sm" onClick={load}><Icons.Refresh/></button>
-          <button className="btn btn-primary btn-sm" onClick={()=>setShowAdd(true)}><Icons.Plus/> Add Contact</button>
+          <button className="btn btn-ghost btn-sm" onClick={load}><Icons.Refresh /></button>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}><Icons.Plus /> Add Contact</button>
         </div>
       </div>
 
-      {selected.size>0&&(
-        <div className="toolbar" style={{background:'#FFFBEB',borderColor:'#FDE68A'}}>
-          <span className="toolbar-count" style={{color:'var(--accent)',fontWeight:600}}>{selected.size} selected</span>
+      {selected.size > 0 && (
+        <div className="toolbar" style={{ background: '#0A1A0A', borderColor: 'rgba(0,230,118,0.2)' }}>
+          <span className="toolbar-count" style={{ color: 'var(--success)', fontWeight: 600 }}>{selected.size} selected</span>
           <button className="btn btn-ghost btn-sm">Tag</button>
           <button className="btn btn-ghost btn-sm">Assign</button>
           <button className="btn btn-danger btn-sm">Delete</button>
-          <button className="btn btn-ghost btn-sm ml-auto" onClick={()=>setSelected(new Set())}>Clear</button>
+          <button className="btn btn-ghost btn-sm ml-auto" onClick={() => setSelected(new Set())}>Clear</button>
         </div>
       )}
 
       <div className="content">
         {loading ? (
-          <div className="loading-wrap"><span className="spinner"/></div>
-        ) : people.length===0 ? (
+          <div className="loading-wrap"><span className="spinner" /></div>
+        ) : people.length === 0 ? (
           <div className="empty-state">
-            <Icons.Users/>
+            <Icons.Users />
             <div className="empty-state-title">No contacts found</div>
-            <div className="empty-state-sub">{search?'Try a different search':'Add your first contact to get started'}</div>
+            <div className="empty-state-sub">{search ? 'Try a different search' : 'Add your first contact to get started'}</div>
           </div>
         ) : (
           <>
@@ -599,50 +959,58 @@ function PeoplePage({ activeList, currentUser }) {
               <table>
                 <thead>
                   <tr>
-                    <th style={{width:40,paddingLeft:16}}>
-                      <div className={`checkbox ${selected.size===people.length?'checked':''}`} onClick={toggleAll}>{selected.size===people.length&&<Icons.Check/>}</div>
+                    <th style={{ width: 40, paddingLeft: 16 }}>
+                      <div className={`checkbox ${selected.size === people.length ? 'checked' : ''}`} onClick={toggleAll}>
+                        {selected.size === people.length && <Icons.Check />}
+                      </div>
                     </th>
-                    <th>Name</th><th>Phone</th><th>Stage</th><th>Tags</th><th>Last Activity</th><th>Assigned</th>
+                    <th>Name</th><th>Phone</th><th>Stage</th><th>Tags</th><th>Last Activity</th><th>Assigned</th><th style={{ width: 80 }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {people.map(p=>(
-                    <tr key={p.id} className={selected.has(p.id)?'selected':''}
-                      onClick={()=>setOpenPerson(p)}>
-                      <td className="checkbox-cell" onClick={e=>{e.stopPropagation();toggleSelect(p.id);}}>
-                        <div className={`checkbox ${selected.has(p.id)?'checked':''}`}>{selected.has(p.id)&&<Icons.Check/>}</div>
+                  {people.map(p => (
+                    <tr key={p.id} className={selected.has(p.id) ? 'selected' : ''} onClick={() => setOpenPerson(p)}>
+                      <td className="checkbox-cell" onClick={e => { e.stopPropagation(); toggleSelect(p.id); }}>
+                        <div className={`checkbox ${selected.has(p.id) ? 'checked' : ''}`}>{selected.has(p.id) && <Icons.Check />}</div>
                       </td>
                       <td>
-                        <div style={{display:'flex',alignItems:'center',gap:9}}>
-                          <div className="avatar" style={{background:avatarColor(p.name)}}>{initials(p.name)}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                          <div className="avatar" style={{ background: avatarColor(p.name) }}>{initials(p.name)}</div>
                           <div>
-                            <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
-                            {p.email&&<div style={{fontSize:11,color:'var(--muted)'}}>{p.email}</div>}
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+                            {p.email && <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.email}</div>}
                           </div>
                         </div>
                       </td>
-                      <td><span className="font-mono" style={{fontSize:13,color:'var(--text)'}}>{p.phone||'—'}</span></td>
-                      <td><span className={`stage ${stageClass(p.stage)}`}>{p.stage||'No Stage'}</span></td>
+                      <td><span className="font-mono" style={{ fontSize: 13 }}>{p.phone || '—'}</span></td>
+                      <td><span className={`stage ${stageClass(p.stage)}`}>{p.stage || 'No Stage'}</span></td>
                       <td>
                         <div className="tags-wrap">
-                          {(p.tags||[]).slice(0,2).map(t=><span key={t} className={`tag ${getTagColor(t)}`}>{t}</span>)}
-                          {(p.tags||[]).length>2&&<span className="tag">+{p.tags.length-2}</span>}
+                          {(p.tags || []).slice(0, 2).map(t => <span key={t} className={`tag ${getTagColor(t)}`}>{t}</span>)}
+                          {(p.tags || []).length > 2 && <span className="tag">+{p.tags.length - 2}</span>}
                         </div>
                       </td>
-                      <td style={{color:'var(--muted)',fontSize:12}}>{formatDate(p.updated)}</td>
-                      <td style={{color:'var(--muted)',fontSize:12}}>{p.assignedName||'—'}</td>
+                      <td style={{ color: 'var(--muted)', fontSize: 12 }}>{formatDate(p.updated)}</td>
+                      <td style={{ color: 'var(--muted)', fontSize: 12 }}>{p.assignedName || '—'}</td>
+                      <td onClick={e => e.stopPropagation()}>
+                        {p.phone && (
+                          <button className="btn-call" onClick={() => setCallPerson(p)}>
+                            <Icons.Phone /> Call
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {pages>1&&(
+            {pages > 1 && (
               <div className="pagination">
                 <span className="text-muted text-sm">{total} contacts</span>
-                <div style={{marginLeft:'auto',display:'flex',gap:4}}>
-                  <button className="page-btn" onClick={()=>setPage(p=>p-1)} disabled={page===0}>← Prev</button>
-                  <span className="page-btn active">{page+1} / {pages}</span>
-                  <button className="page-btn" onClick={()=>setPage(p=>p+1)} disabled={page>=pages-1}>Next →</button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  <button className="page-btn" onClick={() => setPage(p => p - 1)} disabled={page === 0}>← Prev</button>
+                  <span className="page-btn active">{page + 1} / {pages}</span>
+                  <button className="page-btn" onClick={() => setPage(p => p + 1)} disabled={page >= pages - 1}>Next →</button>
                 </div>
               </div>
             )}
@@ -650,63 +1018,298 @@ function PeoplePage({ activeList, currentUser }) {
         )}
       </div>
 
-      {openPerson&&(
+      {openPerson && (
         <PersonDrawer
           personId={openPerson.id}
           initialPerson={openPerson}
-          onClose={()=>setOpenPerson(null)}
+          onClose={() => setOpenPerson(null)}
           onUpdated={load}
+          currentUser={currentUser}
         />
       )}
-      {showAdd&&<AddPersonModal onClose={()=>setShowAdd(false)} onSaved={()=>{setShowAdd(false);load();}}/>}
+      {callPerson && (
+        <CallModal
+          person={callPerson}
+          currentUser={currentUser}
+          onClose={() => setCallPerson(null)}
+        />
+      )}
+      {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
     </div>
   );
 }
 
-// TASKS PAGE
+// ── TASKS PAGE ─────────────────────────────────────────────────────────────
 function TasksPage() {
-  const [tasks,setTasks]=useState([]); const [loading,setLoading]=useState(true);
-  useEffect(()=>{load();},[]);
-  async function load(){setLoading(true);try{const r=await api('GET','/api/tasks?completed=false');setTasks(r.tasks||[]);}catch(e){console.error(e);}setLoading(false);}
-  async function complete(id){await api('PUT',`/api/tasks/${id}`,{completed:true});setTasks(t=>t.filter(x=>x.id!==id));}
-  const now=new Date();
-  const today=tasks.filter(t=>{const d=new Date(t.due_date);return d.toDateString()===now.toDateString();});
-  const overdue=tasks.filter(t=>{const d=new Date(t.due_date);return d<now&&d.toDateString()!==now.toDateString();});
-  const future=tasks.filter(t=>!t.due_date||(new Date(t.due_date)>now&&new Date(t.due_date).toDateString()!==now.toDateString()));
-  function TaskGroup({title,items,accent}){
+  const [tasks, setTasks] = useState([]); const [loading, setLoading] = useState(true);
+  useEffect(() => { load(); }, []);
+  async function load() { setLoading(true); try { const r = await api('GET', '/api/tasks?completed=false'); setTasks(r.tasks || []); } catch (e) { console.error(e); } setLoading(false); }
+  async function complete(id) { await api('PUT', `/api/tasks/${id}`, { completed: true }); setTasks(t => t.filter(x => x.id !== id)); }
+  const now = new Date();
+  const today = tasks.filter(t => { const d = new Date(t.due_date); return d.toDateString() === now.toDateString(); });
+  const overdue = tasks.filter(t => { const d = new Date(t.due_date); return d < now && d.toDateString() !== now.toDateString(); });
+  const future = tasks.filter(t => !t.due_date || (new Date(t.due_date) > now && new Date(t.due_date).toDateString() !== now.toDateString()));
+  function TaskGroup({ title, items, accent }) {
     if (!items.length) return null;
-    return(<>
-      <div className="task-group-title" style={accent?{color:accent}:{}}>{title} ({items.length})</div>
-      {items.map(t=>(
+    return (<>
+      <div className="task-group-title" style={accent ? { color: accent } : {}}>{title} ({items.length})</div>
+      {items.map(t => (
         <div className="task-item" key={t.id}>
-          <div className={`task-check ${t.completed?'done':''}`} onClick={()=>complete(t.id)}>{t.completed&&<Icons.Check/>}</div>
+          <div className={`task-check ${t.completed ? 'done' : ''}`} onClick={() => complete(t.id)}>{t.completed && <Icons.Check />}</div>
           <div className="task-info">
             <div className="task-title">{t.title}</div>
             <div className="task-meta">
-              {t.first_name&&<span>{t.first_name} {t.last_name}</span>}
-              {t.assigned_name&&<span> · {t.assigned_name}</span>}
-              {t.note&&<span style={{display:'block',marginTop:2,color:'var(--muted)'}}>{t.note}</span>}
+              {t.first_name && <span>{t.first_name} {t.last_name}</span>}
+              {t.assigned_name && <span> · {t.assigned_name}</span>}
+              {t.note && <span style={{ display: 'block', marginTop: 2, color: 'var(--muted)' }}>{t.note}</span>}
             </div>
           </div>
-          {t.due_date&&<div className={`task-due ${new Date(t.due_date)<now?'overdue':'today'}`}>{new Date(t.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>}
+          {t.due_date && <div className={`task-due ${new Date(t.due_date) < now ? 'overdue' : 'today'}`}>{new Date(t.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>}
         </div>
       ))}
     </>);
   }
-  return(
+  return (
     <div className="page">
-      <div className="topbar"><div className="topbar-title">Tasks</div><div className="topbar-actions"><button className="btn btn-ghost btn-sm" onClick={load}><Icons.Refresh/></button></div></div>
+      <div className="topbar"><div className="topbar-title">Tasks</div><div className="topbar-actions"><button className="btn btn-ghost btn-sm" onClick={load}><Icons.Refresh /></button></div></div>
       <div className="page-body">
-        {loading?(<div className="loading-wrap"><span className="spinner"/></div>)
-        :tasks.length===0?(<div className="empty-state"><Icons.Tasks/><div className="empty-state-title">All caught up!</div><div className="empty-state-sub">No open tasks right now.</div></div>)
-        :(<><TaskGroup title="Overdue" items={overdue} accent="var(--danger)"/><TaskGroup title="Today" items={today} accent="var(--accent)"/><TaskGroup title="Upcoming" items={future}/></>)}
+        {loading ? (<div className="loading-wrap"><span className="spinner" /></div>)
+          : tasks.length === 0 ? (<div className="empty-state"><Icons.Tasks /><div className="empty-state-title">All caught up!</div><div className="empty-state-sub">No open tasks right now.</div></div>)
+          : (<><TaskGroup title="Overdue" items={overdue} accent="var(--danger)" /><TaskGroup title="Today" items={today} accent="var(--accent)" /><TaskGroup title="Upcoming" items={future} /></>)}
       </div>
     </div>
   );
 }
 
-// SIDEBAR
-function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList }) {
+// ── ADMIN PAGE ─────────────────────────────────────────────────────────────
+function AdminPage() {
+  const [agents, setAgents]   = useState([]);
+  const [lines, setLines]     = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddAgent, setShowAddAgent] = useState(false);
+  const [newAgent, setNewAgent] = useState({ name: '', email: '', password: '', role: 'agent' });
+  const [saving, setSaving]   = useState(false);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [aR, lR] = await Promise.allSettled([
+        api('GET', '/api/admin/agents'),
+        api('GET', '/api/admin/lines'),
+      ]);
+      if (aR.status === 'fulfilled') setAgents(aR.value.agents || []);
+      if (lR.status === 'fulfilled') setLines(lR.value.lines || []);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  }
+
+  async function toggleAgent(id, isActive) {
+    await api('PUT', `/api/admin/agents/${id}`, { isActive: !isActive });
+    load();
+  }
+
+  async function saveNewAgent() {
+    if (!newAgent.name || !newAgent.email || !newAgent.password) return;
+    setSaving(true);
+    try {
+      await api('POST', '/api/admin/agents', newAgent);
+      setShowAddAgent(false);
+      setNewAgent({ name: '', email: '', password: '', role: 'agent' });
+      load();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  }
+
+  async function updateLineAgents(lineId, agentIds) {
+    try { await api('PUT', `/api/admin/lines/${lineId}/agents`, { agentIds }); load(); }
+    catch (e) { alert(e.message); }
+  }
+
+  if (loading) return <div className="loading-wrap"><span className="spinner" /></div>;
+
+  return (
+    <div className="page">
+      <div className="topbar">
+        <div className="topbar-title">Admin</div>
+        <div className="topbar-actions">
+          <button className="btn btn-ghost btn-sm" onClick={load}><Icons.Refresh /></button>
+        </div>
+      </div>
+      <div className="page-body">
+        <div className="admin-wrap">
+
+          {/* Agents */}
+          <div className="admin-section">
+            <div className="admin-section-header">
+              <div className="admin-section-title">Agents & Users</div>
+              <button className="btn btn-primary btn-sm ml-auto" onClick={() => setShowAddAgent(true)}>
+                <Icons.Plus /> Add Agent
+              </button>
+            </div>
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map(a => (
+                  <tr key={a.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="avatar" style={{ background: a.avatar_color || avatarColor(a.name), width: 28, height: 28, fontSize: 10 }}>
+                          {initials(a.name)}
+                        </div>
+                        {a.name}
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--muted)', fontFamily: 'DM Mono, monospace', fontSize: 12 }}>{a.email}</td>
+                    <td>
+                      <span className={`tag ${a.role === 'admin' ? 'magenta' : ''}`}>{a.role}</span>
+                    </td>
+                    <td>
+                      <span className="status-dot" style={{ background: a.is_active ? 'var(--success)' : 'var(--muted)', boxShadow: a.is_active ? '0 0 6px var(--success)' : 'none' }} />
+                      {a.is_active ? 'Active' : 'Inactive'}
+                    </td>
+                    <td>
+                      <button className={`btn btn-sm ${a.is_active ? 'btn-ghost' : 'btn-success'}`} onClick={() => toggleAgent(a.id, a.is_active)}>
+                        {a.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Call Lines */}
+          <div className="admin-section">
+            <div className="admin-section-header">
+              <div className="admin-section-title">Call Lines & Routing</div>
+              <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 8 }}>
+                Select which agents receive inbound calls on each line
+              </span>
+            </div>
+            {lines.map(line => (
+              <div key={line.id} style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <div style={{ fontSize: 16 }}>📞</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--white)' }}>{line.name}</div>
+                    <div style={{ fontFamily: 'DM Mono, monospace', fontSize: 12, color: 'var(--muted)' }}>{line.twilio_number}</div>
+                  </div>
+                  <span className={`tag ${line.is_active ? 'success' : ''}`} style={{ marginLeft: 'auto' }}>
+                    {line.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+                  Assigned Agents (receives inbound calls)
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {agents.filter(a => a.is_active).map(a => {
+                    const assigned = (line.assigned_agents || []).some(la => la.id === a.id);
+                    return (
+                      <button
+                        key={a.id}
+                        onClick={() => {
+                          const current = (line.assigned_agents || []).map(la => la.id);
+                          const updated = assigned ? current.filter(id => id !== a.id) : [...current, a.id];
+                          updateLineAgents(line.id, updated);
+                        }}
+                        style={{
+                          padding: '4px 12px',
+                          borderRadius: 99,
+                          border: `1px solid ${assigned ? 'rgba(0,230,118,0.4)' : 'var(--border2)'}`,
+                          background: assigned ? 'rgba(0,230,118,0.1)' : 'var(--surface3)',
+                          color: assigned ? 'var(--success)' : 'var(--muted2)',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}
+                      >
+                        {assigned && '✓ '}{a.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+
+      {showAddAgent && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAddAgent(false)}>
+          <div className="modal">
+            <div className="modal-title">Add Agent</div>
+            <div className="form-group"><label className="form-label">Full Name</label><input className="form-input" value={newAgent.name} onChange={e => setNewAgent(a => ({ ...a, name: e.target.value }))} autoFocus /></div>
+            <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={newAgent.email} onChange={e => setNewAgent(a => ({ ...a, email: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">Temporary Password</label><input className="form-input" type="password" value={newAgent.password} onChange={e => setNewAgent(a => ({ ...a, password: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">Role</label>
+              <select className="form-input" value={newAgent.role} onChange={e => setNewAgent(a => ({ ...a, role: e.target.value }))}>
+                <option value="agent">Agent</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={() => setShowAddAgent(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveNewAgent} disabled={saving}>{saving ? 'Saving…' : 'Create Agent'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── LOGIN ──────────────────────────────────────────────────────────────────
+function LoginPage({ onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPass] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault(); setError(''); setLoading(true);
+    try {
+      const { token, user } = await api('POST', '/api/auth/login', { email, password });
+      authToken = token; localStorage.setItem('crm_token', token); onLogin(user);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }
+  return (
+    <div className="login-wrap">
+      <div className="login-glow1" /><div className="login-glow2" />
+      <div className="login-card">
+        <div className="login-brand">
+          <div className="login-title">OKCREAL <em>Connect</em></div>
+          <div className="login-sub">Property Management Platform</div>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@okcreal.com" autoFocus /></div>
+          <div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" value={password} onChange={e => setPass(e.target.value)} placeholder="••••••••" /></div>
+          {error && <div className="form-error">⚠ {error}</div>}
+          <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 10, padding: '11px 16px', fontSize: 14 }} disabled={loading}>
+            {loading ? <span className="spinner" style={{ borderTopColor: '#fff' }} /> : 'Sign In'}
+          </button>
+        </form>
+        <div style={{ marginTop: 20, fontSize: 11, color: 'var(--muted)', textAlign: 'center' }}>
+          Default: admin@okcreal.com / Admin1234!
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SIDEBAR ────────────────────────────────────────────────────────────────
+function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList, currentUser }) {
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
@@ -715,50 +1318,75 @@ function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList }
       </div>
       <div className="sidebar-section">
         <div className="sidebar-section-label">Workspace</div>
-        <button className={`sidebar-item ${currentPage==='people'&&!activeList?'active':''}`} onClick={()=>{setPage('people');setActiveList(null);}}>
-          <span className="icon"><Icons.Users/></span> All People
+        <button className={`sidebar-item ${currentPage === 'people' && !activeList ? 'active' : ''}`} onClick={() => { setPage('people'); setActiveList(null); }}>
+          <span className="icon"><Icons.Users /></span> All People
         </button>
-        <button className={`sidebar-item ${currentPage==='tasks'?'active':''}`} onClick={()=>setPage('tasks')}>
-          <span className="icon"><Icons.Tasks/></span> Tasks
+        <button className={`sidebar-item ${currentPage === 'tasks' ? 'active' : ''}`} onClick={() => setPage('tasks')}>
+          <span className="icon"><Icons.Tasks /></span> Tasks
         </button>
+        {currentUser?.role === 'admin' && (
+          <button className={`sidebar-item ${currentPage === 'admin' ? 'active' : ''}`} onClick={() => setPage('admin')}>
+            <span className="icon"><Icons.Settings /></span> Admin
+          </button>
+        )}
       </div>
-      {smartLists.length>0&&(
-        <div className="sidebar-section" style={{flex:1,overflow:'auto'}}>
+      {smartLists.length > 0 && (
+        <div className="sidebar-section" style={{ flex: 1, overflow: 'auto' }}>
           <div className="sidebar-section-label">Smart Lists</div>
-          {smartLists.map(sl=>(
-            <button key={sl.id} className={`sidebar-item ${activeList?.id===sl.id?'active':''}`} onClick={()=>{setPage('people');setActiveList(sl);}}>
-              <span className="icon"><Icons.List/></span>
-              <span style={{flex:1,textAlign:'left'}}>{sl.name}</span>
+          {smartLists.map(sl => (
+            <button key={sl.id} className={`sidebar-item ${activeList?.id === sl.id ? 'active' : ''}`} onClick={() => { setPage('people'); setActiveList(sl); }}>
+              <span className="icon"><Icons.List /></span>
+              <span style={{ flex: 1, textAlign: 'left' }}>{sl.name}</span>
             </button>
           ))}
         </div>
       )}
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', marginTop: 'auto' }}>
+        <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>{currentUser?.name}</div>
+        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{currentUser?.role}</div>
+      </div>
     </div>
   );
 }
 
-// APP
+// ── APP ────────────────────────────────────────────────────────────────────
 function App() {
-  const [user,setUser]=useState(null); const [page,setPage]=useState('people');
-  const [smartLists,setLists]=useState([]); const [activeList,setActiveList]=useState(null);
-  const [checkingAuth,setCheck]=useState(true);
-  useEffect(()=>{checkAuth();},[]);
-  useEffect(()=>{if(user)loadSmartLists();},[user]);
-  async function checkAuth(){
-    if (!authToken){setCheck(false);return;}
-    try{const u=await api('GET','/api/auth/me');setUser(u);}
-    catch{authToken='';localStorage.removeItem('crm_token');}
+  const [user, setUser]             = useState(null);
+  const [page, setPage]             = useState('people');
+  const [smartLists, setLists]      = useState([]);
+  const [activeList, setActiveList] = useState(null);
+  const [checkingAuth, setCheck]    = useState(true);
+
+  useEffect(() => { checkAuth(); }, []);
+  useEffect(() => { if (user) loadSmartLists(); }, [user]);
+
+  async function checkAuth() {
+    if (!authToken) { setCheck(false); return; }
+    try { const u = await api('GET', '/api/auth/me'); setUser(u); }
+    catch { authToken = ''; localStorage.removeItem('crm_token'); }
     setCheck(false);
   }
-  async function loadSmartLists(){try{const r=await api('GET','/api/smart-lists');setLists(r.smartLists||[]);}catch{}}
-  if (checkingAuth) return <div className="loading-wrap" style={{minHeight:'100vh'}}><span className="spinner"/></div>;
-  if (!user) return <LoginPage onLogin={setUser}/>;
+  async function loadSmartLists() {
+    try { const r = await api('GET', '/api/smart-lists'); setLists(r.smartLists || []); } catch {}
+  }
+
+  if (checkingAuth) return <div className="loading-wrap" style={{ minHeight: '100vh' }}><span className="spinner" /></div>;
+  if (!user) return <LoginPage onLogin={setUser} />;
+
   return (
     <div className="layout">
-      <Sidebar currentPage={page} setPage={setPage} smartLists={smartLists} activeList={activeList} setActiveList={setActiveList}/>
+      <Sidebar
+        currentPage={page}
+        setPage={setPage}
+        smartLists={smartLists}
+        activeList={activeList}
+        setActiveList={setActiveList}
+        currentUser={user}
+      />
       <div className="main">
-        {page==='people'&&<PeoplePage activeList={activeList} currentUser={user}/>}
-        {page==='tasks' &&<TasksPage/>}
+        {page === 'people' && <PeoplePage activeList={activeList} currentUser={user} />}
+        {page === 'tasks'  && <TasksPage />}
+        {page === 'admin'  && <AdminPage />}
       </div>
     </div>
   );
