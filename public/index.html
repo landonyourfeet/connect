@@ -4153,6 +4153,51 @@ function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList, 
 }
 
 // ── APP ────────────────────────────────────────────────────────────────────
+
+// ── APP ────────────────────────────────────────────────────────────────────
 function App() {
   const [user, setUser]             = useState(null);
-  const [pag
+  const [page, setPage]             = useState('people');
+  const [smartLists, setLists]      = useState([]);
+  const [activeList, setActiveList] = useState(null);
+  const [checkingAuth, setCheck]    = useState(true);
+
+  useEffect(() => { checkAuth(); }, []);
+  useEffect(() => { if (user) loadSmartLists(); }, [user]);
+
+  async function checkAuth() {
+    if (!authToken) { setCheck(false); return; }
+    try { const u = await api('GET', '/api/auth/me'); setUser(u); }
+    catch { authToken = ''; localStorage.removeItem('crm_token'); }
+    setCheck(false);
+  }
+  async function loadSmartLists() {
+    try { const r = await api('GET', '/api/smart-lists'); setLists(r.smartLists || []); } catch {}
+  }
+
+  if (checkingAuth) return <div className="loading-wrap" style={{ minHeight: '100vh' }}><span className="spinner" /></div>;
+  if (!user) return <LoginPage onLogin={setUser} />;
+
+  return (
+    <div className="layout">
+      <Sidebar
+        currentPage={page}
+        setPage={setPage}
+        smartLists={smartLists}
+        activeList={activeList}
+        setActiveList={setActiveList}
+        currentUser={user}
+      />
+      <div className="main">
+        {page === 'people' && <PeoplePage activeList={activeList} currentUser={user} />}
+        {page === 'tasks'  && <TasksPage />}
+        {page === 'admin'  && <AdminPage />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
