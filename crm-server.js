@@ -659,4 +659,4 @@ async function start() {
   try {
     await runMigrations();
     const server = app.listen(PORT, () => {
-      console.log(`\\n⚡ OKCREAL Connect running on port ${PORT}`
+console.log(`\\n⚡ OKCREAL Connect running on port ${PORT}`);
