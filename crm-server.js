@@ -11,7 +11,7 @@ const jwt        = require('jsonwebtoken');
 const { Pool }   = require('pg');
 const fs         = require('fs');
 const path       = require('path');
-const multer     = require('multer');
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
