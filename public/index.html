@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,157 +9,250 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg:       #F8FAFC;
-    --sidebar:  #111827;
-    --sidebar2: #1F2937;
-    --border:   #E2E8F0;
-    --text:     #1E293B;
-    --muted:    #64748B;
-    --accent:   #D97706;
-    --accent2:  #F59E0B;
-    --danger:   #DC2626;
-    --success:  #16A34A;
-    --info:     #2563EB;
+    --black:    #000000;
+    --bg:       #0A0A0A;
+    --surface:  #111111;
+    --surface2: #181818;
+    --surface3: #222222;
+    --border:   rgba(255,255,255,0.07);
+    --border2:  rgba(255,255,255,0.13);
+    --magenta:  #FF0058;
+    --magenta2: #FF3380;
+    --magenta-dim: rgba(255,0,88,0.12);
+    --magenta-glow: rgba(255,0,88,0.35);
+    --cyan:     #00C8FF;
+    --cyan2:    #33D6FF;
+    --cyan-dim: rgba(0,200,255,0.1);
+    --cyan-glow: rgba(0,200,255,0.3);
+    --accent:   #FF0058;
+    --accent2:  #FF3380;
     --white:    #FFFFFF;
-    --card:     #FFFFFF;
-    --radius:   8px;
-    --shadow:   0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+    --text:     #EFEFEF;
+    --muted:    #666666;
+    --muted2:   #888888;
+    --danger:   #FF3B3B;
+    --success:  #00E676;
+    --info:     #00C8FF;
+    --warn:     #FFB800;
+    --card:     #111111;
+    --sidebar:  #000000;
+    --sidebar2: #111111;
+    --radius:   6px;
+    --radius-lg: 10px;
+    --shadow:   0 1px 3px rgba(0,0,0,0.3);
+    --shadow-lg: 0 10px 30px rgba(0,0,0,0.5);
   }
-  html, body, #root { height: 100%; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+  html, body, #root { height: 100%; font-family: 'Barlow', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; -webkit-font-smoothing: antialiased; }
   button { cursor: pointer; font-family: inherit; }
   input, textarea, select { font-family: inherit; }
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--magenta); }
+
+  /* Layout */
   .layout { display: flex; height: 100vh; overflow: hidden; }
-  .sidebar { width: 220px; min-width: 220px; background: var(--sidebar); display: flex; flex-direction: column; overflow: hidden; }
-  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  .sidebar-logo { padding: 20px 16px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-  .sidebar-logo-text { font-size: 16px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
-  .sidebar-logo-sub { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 1px; }
-  .sidebar-section { padding: 16px 8px 8px; }
-  .sidebar-section-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.3); padding: 0 8px; margin-bottom: 4px; }
-  .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; border: none; background: none; width: 100%; text-align: left; }
-  .sidebar-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .sidebar-item.active { background: rgba(217,119,6,0.2); color: var(--accent2); }
-  .sidebar-item .icon { width: 16px; height: 16px; opacity: 0.7; flex-shrink: 0; }
-  .sidebar-item.active .icon { opacity: 1; }
+  .sidebar { width: 228px; min-width: 228px; background: var(--black); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  .sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 180px; background: radial-gradient(ellipse at -20% 0%, rgba(255,0,88,0.1) 0%, transparent 70%); pointer-events: none; }
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+
+  /* Sidebar */
+  .sidebar-logo { padding: 20px 16px 16px; border-bottom: 1px solid var(--border); position: relative; }
+  .sidebar-logo-text { font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 800; letter-spacing: 0.3px; line-height: 1; }
+  .sidebar-logo-text b { color: var(--white); }
+  .sidebar-logo-text span { color: var(--magenta); }
+  .sidebar-logo-sub { font-size: 9px; font-weight: 600; color: var(--muted); letter-spacing: 0.18em; text-transform: uppercase; margin-top: 3px; }
+  .sidebar-section { padding: 14px 8px 4px; }
+  .sidebar-section-label { font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 5px; }
+  .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--radius); color: var(--muted2); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; background: none; width: 100%; text-align: left; position: relative; }
+  .sidebar-item:hover { color: var(--white); background: rgba(255,255,255,0.04); }
+  .sidebar-item.active { color: var(--white); background: var(--magenta-dim); border-color: rgba(255,0,88,0.2); }
+  .sidebar-item.active::before { content: ''; position: absolute; left: 0; top: 25%; bottom: 25%; width: 2px; background: var(--magenta); border-radius: 0 2px 2px 0; box-shadow: 0 0 8px var(--magenta); }
+  .sidebar-item .icon { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.5; }
+  .sidebar-item:hover .icon, .sidebar-item.active .icon { opacity: 1; }
+  .sidebar-item.active .icon { color: var(--magenta); }
   .sidebar-badge { margin-left: auto; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 99px; min-width: 18px; text-align: center; }
-  .sidebar-count { margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.3); font-family: 'DM Mono', monospace; }
-  .topbar { height: 52px; background: var(--white); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 20px; flex-shrink: 0; }
-  .topbar-title { font-size: 15px; font-weight: 600; color: var(--text); }
-  .topbar-search { flex: 1; max-width: 360px; position: relative; }
-  .topbar-search input { width: 100%; background: var(--bg); border: 1.5px solid var(--border); border-radius: 6px; padding: 6px 12px 6px 32px; font-size: 13px; color: var(--text); outline: none; transition: border-color 0.15s; }
-  .topbar-search input:focus { border-color: var(--accent); }
-  .topbar-search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); width: 14px; }
-  .topbar-actions { margin-left: auto; display: flex; gap: 6px; }
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 500; border: none; transition: all 0.15s; white-space: nowrap; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover { background: #B45309; }
-  .btn-ghost { background: transparent; color: var(--text); border: 1.5px solid var(--border); }
-  .btn-ghost:hover { background: var(--bg); border-color: #CBD5E1; }
+  .sidebar-count { margin-left: auto; font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace; background: var(--surface3); padding: 1px 6px; border-radius: 99px; }
+
+  /* Top bar */
+  .topbar { height: 52px; background: var(--black); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 20px; flex-shrink: 0; }
+  .topbar-title { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; color: var(--white); letter-spacing: 0.3px; }
+  .topbar-search { flex: 1; max-width: 340px; position: relative; }
+  .topbar-search input { width: 100%; background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius); padding: 7px 12px 7px 33px; font-size: 13px; color: var(--text); outline: none; transition: all 0.2s; }
+  .topbar-search input::placeholder { color: var(--muted); }
+  .topbar-search input:focus { border-color: var(--magenta); box-shadow: 0 0 0 3px var(--magenta-dim); background: var(--surface2); }
+  .topbar-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); width: 14px; }
+  .topbar-actions { margin-left: auto; display: flex; gap: 7px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 15px; border-radius: var(--radius); font-size: 13px; font-weight: 600; border: none; transition: all 0.15s; white-space: nowrap; font-family: 'Barlow', sans-serif; letter-spacing: 0.02em; }
+  .btn-primary { background: var(--magenta); color: #fff; box-shadow: 0 0 20px var(--magenta-glow); }
+  .btn-primary:hover { background: var(--magenta2); box-shadow: 0 0 28px var(--magenta-glow); transform: translateY(-1px); }
+  .btn-ghost { background: transparent; color: var(--muted2); border: 1px solid var(--border2); }
+  .btn-ghost:hover { color: var(--white); border-color: rgba(255,255,255,0.2); background: var(--surface); }
   .btn-danger { background: var(--danger); color: #fff; }
-  .btn-danger:hover { background: #B91C1C; }
-  .btn-sm { padding: 4px 10px; font-size: 12px; }
-  .btn-icon { padding: 6px; width: 32px; height: 32px; border-radius: 6px; justify-content: center; }
+  .btn-danger:hover { background: #FF5555; }
+  .btn-sm { padding: 5px 11px; font-size: 12px; }
+  .btn-icon { padding: 6px; width: 32px; height: 32px; border-radius: var(--radius); justify-content: center; }
+
+  /* Table */
   .table-wrap { overflow: auto; flex: 1; }
   table { width: 100%; border-collapse: collapse; }
-  thead th { background: var(--bg); border-bottom: 1.5px solid var(--border); padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+  thead th { background: var(--black); border-bottom: 1px solid var(--border2); padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
   tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; cursor: pointer; }
-  tbody tr:hover { background: #FAFBFC; }
-  tbody tr.selected { background: #FFFBEB; }
-  td { padding: 10px 14px; vertical-align: middle; }
-  td.checkbox-cell { width: 40px; padding-left: 16px; }
-  .avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; }
-  .tag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; background: #F1F5F9; color: var(--muted); white-space: nowrap; }
-  .tag.danger  { background: #FEF2F2; color: #DC2626; }
-  .tag.success { background: #F0FDF4; color: #16A34A; }
-  .tag.info    { background: #EFF6FF; color: #2563EB; }
-  .tag.warn    { background: #FFFBEB; color: #D97706; }
-  .tag.purple  { background: #F5F3FF; color: #7C3AED; }
+  tbody tr:hover { background: rgba(255,255,255,0.025); }
+  tbody tr.selected { background: var(--magenta-dim); }
+  td { padding: 11px 14px; vertical-align: middle; }
+  td.checkbox-cell { width: 44px; padding-left: 16px; }
+
+  /* Avatar */
+  .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; color: #fff; flex-shrink: 0; font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.5px; }
+
+  /* Tags */
+  .tag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 600; font-family: 'Barlow', sans-serif; letter-spacing: 0.02em; white-space: nowrap; background: var(--surface3); color: var(--muted2); border: 1px solid var(--border2); }
+  .tag.danger  { background: rgba(255,59,59,0.1); color: #FF6B6B; border-color: rgba(255,59,59,0.25); }
+  .tag.success { background: rgba(0,230,118,0.08); color: #00E676; border-color: rgba(0,230,118,0.25); }
+  .tag.info    { background: var(--cyan-dim); color: var(--cyan); border-color: rgba(0,200,255,0.25); }
+  .tag.warn    { background: rgba(255,184,0,0.08); color: var(--warn); border-color: rgba(255,184,0,0.25); }
+  .tag.magenta { background: var(--magenta-dim); color: var(--magenta2); border-color: rgba(255,0,88,0.25); }
+  .tag.purple  { background: rgba(200,0,255,0.08); color: #DD66FF; border-color: rgba(200,0,255,0.25); }
   .tags-wrap { display: flex; flex-wrap: wrap; gap: 3px; }
-  .stage { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-  .stage-delinquent { background: #FEF2F2; color: #DC2626; }
-  .stage-resident   { background: #F0FDF4; color: #16A34A; }
-  .stage-lead       { background: #EFF6FF; color: #2563EB; }
-  .stage-default    { background: #F1F5F9; color: #64748B; }
-  .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100; backdrop-filter: blur(2px); }
-  .drawer { position: fixed; right: 0; top: 0; bottom: 0; width: 720px; max-width: 95vw; background: var(--white); z-index: 101; display: flex; flex-direction: column; box-shadow: -8px 0 24px rgba(0,0,0,0.12); overflow: hidden; animation: slideIn 0.2s ease; }
+
+  /* Stage pill */
+  .stage { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 99px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; font-family: 'Barlow Condensed', sans-serif; }
+  .stage-delinquent { background: rgba(255,59,59,0.1); color: #FF6B6B; border: 1px solid rgba(255,59,59,0.25); }
+  .stage-resident   { background: rgba(0,230,118,0.08); color: #00E676; border: 1px solid rgba(0,230,118,0.2); }
+  .stage-lead       { background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(0,200,255,0.2); }
+  .stage-default    { background: var(--surface3); color: var(--muted2); border: 1px solid var(--border2); }
+
+  /* Drawer */
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; backdrop-filter: blur(4px); }
+  .drawer { position: fixed; right: 0; top: 0; bottom: 0; width: 740px; max-width: 96vw; background: var(--surface); border-left: 1px solid var(--border2); z-index: 101; display: flex; flex-direction: column; overflow: hidden; animation: slideIn 0.22s cubic-bezier(.16,1,.3,1); }
   @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-  .drawer-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 14px; flex-shrink: 0; }
+  .drawer-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 14px; flex-shrink: 0; background: var(--black); position: relative; overflow: hidden; }
+  .drawer-header::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, var(--magenta), var(--cyan) 40%, transparent 75%); }
   .drawer-body { display: flex; flex: 1; overflow: hidden; }
-  .drawer-timeline { flex: 1; overflow-y: auto; padding: 16px 20px; }
-  .drawer-details { width: 240px; border-left: 1px solid var(--border); overflow-y: auto; padding: 16px; }
-  .timeline-tabs { display: flex; gap: 2px; padding: 0 0 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
-  .timeline-tab { padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--muted); cursor: pointer; border: none; background: none; transition: all 0.15s; }
-  .timeline-tab.active { background: var(--accent); color: #fff; }
-  .timeline-tab:hover:not(.active) { background: var(--bg); color: var(--text); }
-  .note-composer { background: var(--bg); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; border: 1.5px solid var(--border); }
-  .note-composer textarea { width: 100%; background: none; border: none; outline: none; resize: none; font-size: 13px; color: var(--text); min-height: 60px; line-height: 1.5; }
+  .drawer-timeline { flex: 1; overflow-y: auto; padding: 16px 20px; background: var(--surface); }
+  .drawer-details { width: 240px; border-left: 1px solid var(--border); overflow-y: auto; padding: 16px; background: var(--black); }
+
+  /* Timeline */
+  .timeline-tabs { display: flex; gap: 4px; padding: 0 0 13px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+  .timeline-tab { padding: 5px 13px; border-radius: var(--radius); font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; border: 1px solid transparent; background: none; transition: all 0.15s; font-family: 'Barlow', sans-serif; }
+  .timeline-tab.active { background: var(--magenta-dim); color: var(--magenta2); border-color: rgba(255,0,88,0.2); }
+  .timeline-tab:hover:not(.active) { background: var(--surface3); color: var(--text); }
+  .note-composer { background: var(--surface2); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; border: 1px solid var(--border2); transition: border-color 0.2s; }
+  .note-composer:focus-within { border-color: var(--magenta); box-shadow: 0 0 0 2px var(--magenta-dim); }
+  .note-composer textarea { width: 100%; background: none; border: none; outline: none; resize: none; font-size: 13px; color: var(--text); min-height: 64px; line-height: 1.6; }
+  .note-composer textarea::placeholder { color: var(--muted); }
   .note-composer-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
   .activity-item { display: flex; gap: 10px; margin-bottom: 14px; }
-  .activity-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 12px; }
-  .activity-dot.note      { background: #EFF6FF; color: #2563EB; }
-  .activity-dot.call      { background: #F0FDF4; color: #16A34A; }
-  .activity-dot.voicemail { background: #FEF3C7; color: #D97706; }
-  .activity-dot.text      { background: #F5F3FF; color: #7C3AED; }
-  .activity-dot.email     { background: #FFF1F2; color: #E11D48; }
-  .activity-content { flex: 1; }
-  .activity-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-  .activity-type { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .activity-time { font-size: 11px; color: var(--muted); }
-  .activity-body { font-size: 13px; color: var(--text); line-height: 1.55; white-space: pre-wrap; background: var(--bg); border-radius: 6px; padding: 8px 10px; }
-  .activity-empty { text-align: center; color: var(--muted); padding: 40px; font-size: 13px; }
-  .detail-section { margin-bottom: 20px; }
-  .detail-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .activity-dot { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 13px; border: 1px solid var(--border2); background: var(--surface2); }
+  .activity-dot.note      { border-color: rgba(0,200,255,0.25); background: var(--cyan-dim); }
+  .activity-dot.call      { border-color: rgba(0,230,118,0.25); background: rgba(0,230,118,0.07); }
+  .activity-dot.voicemail { border-color: rgba(255,184,0,0.25); background: rgba(255,184,0,0.07); }
+  .activity-dot.text      { border-color: rgba(255,0,88,0.25); background: var(--magenta-dim); }
+  .activity-dot.email     { border-color: rgba(255,0,88,0.15); background: rgba(255,0,88,0.05); }
+  .activity-content { flex: 1; min-width: 0; }
+  .activity-meta { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; flex-wrap: wrap; }
+  .activity-type { font-size: 10px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: 0.08em; font-family: 'Barlow Condensed', sans-serif; }
+  .activity-time { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .activity-body { font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  .activity-empty { text-align: center; color: var(--muted); padding: 48px; font-size: 13px; }
+
+  /* Details panel */
+  .detail-section { margin-bottom: 22px; }
+  .detail-section-title { font-size: 9px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .detail-section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
   .detail-row { margin-bottom: 10px; }
-  .detail-label { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .detail-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
   .detail-value { font-size: 13px; color: var(--text); font-weight: 500; }
-  .detail-input { width: 100%; border: 1.5px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; color: var(--text); outline: none; background: var(--white); font-family: inherit; }
-  .detail-input:focus { border-color: var(--accent); }
-  .detail-select { width: 100%; border: 1.5px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; color: var(--text); outline: none; background: var(--white); font-family: inherit; appearance: none; }
-  .detail-select:focus { border-color: var(--accent); }
-  .person-name { font-size: 18px; font-weight: 700; color: var(--text); line-height: 1.2; }
-  .person-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
-  .task-group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 16px 20px 8px; }
-  .task-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--border); transition: background 0.1s; }
-  .task-item:hover { background: #FAFBFC; }
-  .task-check { width: 16px; height: 16px; border-radius: 4px; border: 2px solid var(--border); flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-top: 1px; transition: all 0.15s; }
+  .detail-input { width: 100%; border: 1px solid var(--border2); border-radius: var(--radius); padding: 7px 9px; font-size: 13px; color: var(--text); outline: none; background: var(--surface2); font-family: 'Barlow', sans-serif; transition: border-color 0.15s; }
+  .detail-input:focus { border-color: var(--magenta); box-shadow: 0 0 0 2px var(--magenta-dim); }
+  .detail-select { width: 100%; border: 1px solid var(--border2); border-radius: var(--radius); padding: 7px 9px; font-size: 13px; color: var(--text); outline: none; background: var(--surface2); font-family: 'Barlow', sans-serif; appearance: none; transition: border-color 0.15s; }
+  .detail-select:focus { border-color: var(--magenta); }
+
+  /* Person header */
+  .person-name { font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 800; color: var(--white); line-height: 1.1; letter-spacing: 0.3px; }
+  .person-sub { font-size: 12px; color: var(--muted2); margin-top: 3px; font-family: 'DM Mono', monospace; }
+  .person-contact-links { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+  /* Tasks */
+  .task-group-title { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 16px 20px 8px; border-bottom: 1px solid var(--border); }
+  .task-item { display: flex; align-items: flex-start; gap: 11px; padding: 12px 20px; border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  .task-item:hover { background: rgba(255,255,255,0.02); }
+  .task-check { width: 17px; height: 17px; border-radius: 4px; border: 1.5px solid var(--border2); flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-top: 1px; transition: all 0.15s; }
+  .task-check:hover { border-color: var(--magenta); }
   .task-check.done { background: var(--success); border-color: var(--success); }
   .task-info { flex: 1; }
-  .task-title { font-size: 13px; font-weight: 500; color: var(--text); }
+  .task-title { font-size: 13px; font-weight: 600; color: var(--text); }
   .task-title.done { text-decoration: line-through; color: var(--muted); }
   .task-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .task-due { font-size: 11px; font-weight: 600; }
+  .task-due { font-size: 11px; font-weight: 700; font-family: 'DM Mono', monospace; white-space: nowrap; }
   .task-due.overdue { color: var(--danger); }
-  .task-due.today   { color: var(--accent); }
+  .task-due.today   { color: var(--magenta); }
   .task-due.future  { color: var(--muted); }
+
+  /* Content area */
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .page { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .page-body { flex: 1; overflow: auto; }
-  .toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--white); flex-shrink: 0; }
-  .toolbar-count { font-size: 12px; color: var(--muted); }
-  .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--sidebar); }
-  .login-card { background: var(--white); border-radius: 12px; padding: 40px; width: 360px; box-shadow: var(--shadow-lg); }
-  .login-logo { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-  .login-sub { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+
+  /* Toolbar */
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--border); background: var(--black); flex-shrink: 0; }
+  .toolbar-count { font-size: 12px; color: var(--muted2); }
+
+  /* Login */
+  @keyframes borderNeon {
+    0%   { box-shadow: 0 0 0 1.5px rgba(255,0,88,0.6),   0 0 24px 4px rgba(255,0,88,0.25),   0 24px 60px rgba(0,0,0,0.6); }
+    14%  { box-shadow: 0 0 0 1.5px rgba(255,0,200,0.6),  0 0 24px 4px rgba(255,0,200,0.25),  0 24px 60px rgba(0,0,0,0.6); }
+    28%  { box-shadow: 0 0 0 1.5px rgba(100,0,255,0.6),  0 0 24px 4px rgba(100,0,255,0.25),  0 24px 60px rgba(0,0,0,0.6); }
+    42%  { box-shadow: 0 0 0 1.5px rgba(0,200,255,0.6),  0 0 24px 4px rgba(0,200,255,0.25),  0 24px 60px rgba(0,0,0,0.6); }
+    57%  { box-shadow: 0 0 0 1.5px rgba(0,255,180,0.6),  0 0 24px 4px rgba(0,255,180,0.25),  0 24px 60px rgba(0,0,0,0.6); }
+    71%  { box-shadow: 0 0 0 1.5px rgba(255,200,0,0.6),  0 0 24px 4px rgba(255,200,0,0.25),  0 24px 60px rgba(0,0,0,0.6); }
+    85%  { box-shadow: 0 0 0 1.5px rgba(255,80,0,0.6),   0 0 24px 4px rgba(255,80,0,0.25),   0 24px 60px rgba(0,0,0,0.6); }
+    100% { box-shadow: 0 0 0 1.5px rgba(255,0,88,0.6),   0 0 24px 4px rgba(255,0,88,0.25),   0 24px 60px rgba(0,0,0,0.6); }
+  }
+  @keyframes wingsGlow {
+    0%   { filter: drop-shadow(0 0 10px rgba(255,0,88,0.8))   drop-shadow(0 0 3px rgba(255,0,88,0.5)); }
+    14%  { filter: drop-shadow(0 0 10px rgba(255,0,200,0.8))  drop-shadow(0 0 3px rgba(255,0,200,0.5)); }
+    28%  { filter: drop-shadow(0 0 10px rgba(100,0,255,0.8))  drop-shadow(0 0 3px rgba(100,0,255,0.5)); }
+    42%  { filter: drop-shadow(0 0 10px rgba(0,200,255,0.8))  drop-shadow(0 0 3px rgba(0,200,255,0.5)); }
+    57%  { filter: drop-shadow(0 0 10px rgba(0,255,180,0.8))  drop-shadow(0 0 3px rgba(0,255,180,0.5)); }
+    71%  { filter: drop-shadow(0 0 10px rgba(255,200,0,0.8))  drop-shadow(0 0 3px rgba(255,200,0,0.5)); }
+    85%  { filter: drop-shadow(0 0 10px rgba(255,80,0,0.8))   drop-shadow(0 0 3px rgba(255,80,0,0.5)); }
+    100% { filter: drop-shadow(0 0 10px rgba(255,0,88,0.8))   drop-shadow(0 0 3px rgba(255,0,88,0.5)); }
+  }
+  .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--black); position: relative; overflow: hidden; }
+  .login-glow1 { position: absolute; width: 600px; height: 600px; border-radius: 50%; background: radial-gradient(circle, rgba(255,0,88,0.07) 0%, transparent 70%); top: -200px; left: -150px; pointer-events: none; }
+  .login-glow2 { position: absolute; width: 500px; height: 500px; border-radius: 50%; background: radial-gradient(circle, rgba(0,200,255,0.05) 0%, transparent 70%); bottom: -150px; right: -100px; pointer-events: none; }
+  .login-card { background: var(--surface); border: 1px solid transparent; border-radius: var(--radius-lg); padding: 42px; width: 400px; position: relative; z-index: 1; animation: borderNeon 8s linear infinite; }
+  .login-brand { text-align: center; margin-bottom: 30px; }
+  .login-wings { display: block; width: 260px; margin: 0 auto 14px; animation: wingsGlow 8s linear infinite; }
+  .login-title { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 800; color: var(--white); letter-spacing: 0.5px; line-height: 1.1; margin-bottom: 4px; }
+  .login-title em { color: var(--magenta); font-style: normal; }
+  .login-sub { font-size: 10px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; font-weight: 600; }
   .form-group { margin-bottom: 16px; }
-  .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
-  .form-input { width: 100%; border: 1.5px solid var(--border); border-radius: 6px; padding: 9px 12px; font-size: 14px; color: var(--text); outline: none; font-family: inherit; transition: border-color 0.15s; }
-  .form-input:focus { border-color: var(--accent); }
-  .form-error { color: var(--danger); font-size: 12px; margin-top: 4px; }
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; }
-  .modal { background: var(--white); border-radius: 10px; padding: 24px; width: 480px; max-width: 95vw; box-shadow: var(--shadow-lg); animation: fadeIn 0.15s ease; }
-  @keyframes fadeIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
-  .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
-  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 8px; padding: 60px; }
-  .empty-state-title { font-size: 15px; font-weight: 600; color: var(--text); }
+  .form-label { display: block; font-size: 10px; font-weight: 700; color: var(--muted2); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.07em; }
+  .form-input { width: 100%; border: 1px solid var(--border2); border-radius: var(--radius); padding: 10px 13px; font-size: 14px; color: var(--white); outline: none; font-family: 'Barlow', sans-serif; background: var(--surface2); transition: all 0.15s; }
+  .form-input:focus { border-color: var(--magenta); box-shadow: 0 0 0 3px var(--magenta-dim); }
+  .form-input::placeholder { color: var(--muted); }
+  .form-error { color: var(--danger); font-size: 12px; margin-top: 6px; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 200; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+  .modal { background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius-lg); padding: 26px; width: 480px; max-width: 95vw; box-shadow: 0 0 60px rgba(0,0,0,0.7); animation: fadeIn 0.18s cubic-bezier(.16,1,.3,1); position: relative; overflow: hidden; }
+  .modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--magenta), var(--cyan)); }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  .modal-title { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 800; color: var(--white); margin-bottom: 20px; letter-spacing: 0.3px; }
+
+  /* Empty state */
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); gap: 10px; padding: 60px; }
+  .empty-state-title { font-size: 15px; font-weight: 700; color: var(--muted2); font-family: 'Barlow Condensed', sans-serif; }
   .empty-state-sub { font-size: 13px; text-align: center; max-width: 280px; }
+
+  /* Misc */
   .divider { height: 1px; background: var(--border); margin: 12px 0; }
   .flex { display: flex; }
   .flex-center { display: flex; align-items: center; justify-content: center; }
@@ -168,16 +262,19 @@
   .text-danger { color: var(--danger); }
   .text-sm { font-size: 12px; }
   .font-mono { font-family: 'DM Mono', monospace; }
-  .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  .spinner { width: 20px; height: 20px; border: 2px solid var(--surface3); border-top-color: var(--magenta); border-radius: 50%; animation: spin 0.55s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
-  .checkbox { width: 15px; height: 15px; border-radius: 3px; border: 2px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: center; }
-  .checkbox.checked { background: var(--accent); border-color: var(--accent); }
-  .pagination { display: flex; align-items: center; gap: 6px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--white); }
-  .page-btn { padding: 4px 10px; border: 1.5px solid var(--border); border-radius: 5px; font-size: 12px; background: var(--white); color: var(--text); cursor: pointer; }
-  .page-btn:hover { background: var(--bg); }
-  .page-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .page-btn:disabled { opacity: 0.4; cursor: default; }
+  .checkbox { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border2); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
+  .checkbox:hover { border-color: var(--magenta); }
+  .checkbox.checked { background: var(--magenta); border-color: var(--magenta); box-shadow: 0 0 8px var(--magenta-glow); }
+
+  /* Pagination */
+  .pagination { display: flex; align-items: center; gap: 6px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--black); }
+  .page-btn { padding: 4px 11px; border: 1px solid var(--border2); border-radius: var(--radius); font-size: 12px; font-weight: 600; background: var(--surface); color: var(--muted2); cursor: pointer; transition: all 0.15s; font-family: 'Barlow', sans-serif; }
+  .page-btn:hover { color: var(--white); border-color: rgba(255,255,255,0.2); }
+  .page-btn.active { background: var(--magenta); border-color: var(--magenta); color: #fff; box-shadow: 0 0 12px var(--magenta-glow); }
+  .page-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -185,6 +282,7 @@
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
 
+// ── API ───────────────────────────────────────────────────────────────────────
 const API_BASE = '';
 let authToken = localStorage.getItem('crm_token') || '';
 
@@ -201,6 +299,7 @@ async function api(method, path, body) {
   return data;
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function initials(name) {
   if (!name) return '?';
   const parts = name.trim().split(' ');
@@ -245,6 +344,7 @@ function stageClass(stage) {
   return 'stage-default';
 }
 
+// SVG icons
 const Icons = {
   Users:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
   Tasks:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
@@ -265,6 +365,7 @@ const Icons = {
   Refresh:  () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
 };
 
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
   const [email, setEmail]     = useState('');
   const [password, setPass]   = useState('');
@@ -285,21 +386,25 @@ function LoginPage({ onLogin }) {
 
   return (
     <div className="login-wrap">
+      <div className="login-glow1" /><div className="login-glow2" />
       <div className="login-card">
-        <div className="login-logo">OKCREAL Connect</div>
-        <div className="login-sub">Property Management Platform</div>
+        <div className="login-brand">
+          <img src="wings.svg" alt="OKCREAL Wings" className="login-wings" />
+          <div className="login-title">OKCREAL <em>Connect</em></div>
+          <div className="login-sub">Moving You Up · Property Platform</div>
+        </div>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label className="form-label">Email</label>
-            <input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} autoFocus />
+            <input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@okcreal.com" autoFocus />
           </div>
           <div className="form-group">
             <label className="form-label">Password</label>
-            <input className="form-input" type="password" value={password} onChange={e => setPass(e.target.value)} />
+            <input className="form-input" type="password" value={password} onChange={e => setPass(e.target.value)} placeholder="••••••••" />
           </div>
-          {error && <div className="form-error">{error}</div>}
-          <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',marginTop:8}} disabled={loading}>
-            {loading ? <span className="spinner" style={{borderColor:'rgba(255,255,255,0.3)',borderTopColor:'#fff'}} /> : 'Sign In'}
+          {error && <div className="form-error">⚠ {error}</div>}
+          <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',marginTop:10, padding:'11px 16px', fontSize:14}} disabled={loading}>
+            {loading ? <span className="spinner" style={{borderTopColor:'#fff'}} /> : 'Sign In'}
           </button>
         </form>
       </div>
@@ -307,6 +412,7 @@ function LoginPage({ onLogin }) {
   );
 }
 
+// ── ADD PERSON MODAL ──────────────────────────────────────────────────────────
 function AddPersonModal({ onClose, onSaved }) {
   const [form, setForm] = useState({ firstName:'', lastName:'', phone:'', email:'', stage:'Lead' });
   const [loading, setLoading] = useState(false);
@@ -354,14 +460,16 @@ function AddPersonModal({ onClose, onSaved }) {
   );
 }
 
+// ── PERSON DRAWER ─────────────────────────────────────────────────────────────
 function PersonDrawer({ personId, onClose, onUpdated }) {
-  const [person, setPerson]         = useState(null);
+  const [person, setPerson]       = useState(null);
   const [activities, setActivities] = useState([]);
-  const [tasks, setTasks]           = useState([]);
-  const [tab, setTab]               = useState('all');
-  const [noteText, setNoteText]     = useState('');
-  const [saving, setSaving]         = useState(false);
-  const [customFields, setCF]       = useState({});
+  const [tasks, setTasks]         = useState([]);
+  const [tab, setTab]             = useState('all');
+  const [noteText, setNoteText]   = useState('');
+  const [saving, setSaving]       = useState(false);
+  const [editStage, setEditStage] = useState(false);
+  const [customFields, setCF]     = useState({});
 
   useEffect(() => { load(); }, [personId]);
 
@@ -407,12 +515,12 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
     setTasks(tR.tasks || []);
   }
 
-  const filtered = tab === 'all'    ? activities
-    : tab === 'notes'  ? activities.filter(a => a.type === 'note')
-    : tab === 'calls'  ? activities.filter(a => a.type === 'call' || a.type === 'voicemail')
-    : tab === 'texts'  ? activities.filter(a => a.type === 'text')
-    : tab === 'emails' ? activities.filter(a => a.type === 'email')
-    : activities;
+  const filtered = tab === 'all'       ? activities
+                 : tab === 'notes'     ? activities.filter(a => a.type === 'note')
+                 : tab === 'calls'     ? activities.filter(a => a.type === 'call' || a.type === 'voicemail')
+                 : tab === 'texts'     ? activities.filter(a => a.type === 'text')
+                 : tab === 'emails'    ? activities.filter(a => a.type === 'email')
+                 : activities;
 
   function activityIcon(type) {
     if (type === 'call')      return '📞';
@@ -436,6 +544,7 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
     <>
       <div className="drawer-overlay" onClick={onClose} />
       <div className="drawer">
+        {/* Header */}
         <div className="drawer-header">
           <div className="avatar" style={{background: avatarColor(person.name), width:46,height:46,fontSize:16}}>
             {initials(person.name)}
@@ -461,7 +570,9 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
           <button className="btn btn-icon btn-ghost" onClick={onClose}><Icons.X /></button>
         </div>
 
+        {/* Body */}
         <div className="drawer-body">
+          {/* Timeline */}
           <div className="drawer-timeline">
             <div className="timeline-tabs">
               {[['all','All'],['notes','Notes'],['calls','Calls'],['texts','Texts'],['emails','Emails']].map(([k,l]) => (
@@ -470,7 +581,8 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
               <button className="timeline-tab" style={{marginLeft:'auto'}} onClick={load}><Icons.Refresh /></button>
             </div>
 
-            {(tab === 'all' || tab === 'notes') && (
+            {/* Note composer */}
+            {tab === 'all' || tab === 'notes' ? (
               <div className="note-composer">
                 <textarea
                   placeholder="Add a note…"
@@ -485,8 +597,9 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
 
+            {/* Activity feed */}
             {filtered.length === 0 ? (
               <div className="activity-empty">No {tab === 'all' ? 'activity' : tab} recorded yet.</div>
             ) : filtered.map(a => (
@@ -509,7 +622,8 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
               </div>
             ))}
 
-            {tab === 'all' && tasks.filter(t=>!t.completed).length > 0 && (
+            {/* Tasks in timeline */}
+            {tab === 'all' && tasks.length > 0 && (
               <>
                 <div className="divider" />
                 <div style={{fontSize:11,fontWeight:700,letterSpacing:'0.06em',textTransform:'uppercase',color:'var(--muted)',marginBottom:8}}>Open Tasks</div>
@@ -529,6 +643,7 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
             )}
           </div>
 
+          {/* Details sidebar */}
           <div className="drawer-details">
             <div className="detail-section">
               <div className="detail-section-title">Contact</div>
@@ -541,18 +656,25 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
                 <div className="detail-value" style={{wordBreak:'break-all'}}>{person.email || '—'}</div>
               </div>
             </div>
+
             <div className="detail-section">
               <div className="detail-section-title">Details</div>
               <div className="detail-row">
                 <div className="detail-label">Stage</div>
-                <select className="detail-select" value={person.stage || 'Lead'} onChange={e => updateField('stage', e.target.value)}>
+                <select
+                  className="detail-select"
+                  value={person.stage || 'Lead'}
+                  onChange={e => updateField('stage', e.target.value)}
+                >
                   {['Lead','Resident','Delinquent','Past Client','Prospect'].map(s => <option key={s}>{s}</option>)}
                 </select>
               </div>
               {balanceField && (
                 <div className="detail-row">
                   <div className="detail-label">Past Due Balance</div>
-                  <div className="detail-value text-danger">${parseFloat(balanceField).toLocaleString()}</div>
+                  <div className="detail-value text-danger">
+                    ${parseFloat(balanceField).toLocaleString()}
+                  </div>
                 </div>
               )}
               {payDateField && (
@@ -562,6 +684,7 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
                 </div>
               )}
             </div>
+
             <div className="detail-section">
               <div className="detail-section-title">Background</div>
               <textarea
@@ -572,6 +695,7 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
                 onBlur={e => updateField('background', e.target.value)}
               />
             </div>
+
             <div className="detail-section">
               <div className="detail-section-title">Tags ({(person.tags||[]).length})</div>
               <div className="tags-wrap">
@@ -581,6 +705,7 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
                 {!(person.tags||[]).length && <span className="text-muted text-sm">No tags</span>}
               </div>
             </div>
+
             <div className="detail-section">
               <div className="detail-section-title">Activity</div>
               <div className="detail-row">
@@ -599,16 +724,19 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
   );
 }
 
+// ── PEOPLE PAGE ───────────────────────────────────────────────────────────────
 function PeoplePage({ activeList, currentUser }) {
-  const [people, setPeople]     = useState([]);
-  const [total, setTotal]       = useState(0);
-  const [loading, setLoading]   = useState(true);
-  const [search, setSearch]     = useState('');
-  const [selected, setSelected] = useState(new Set());
-  const [openId, setOpenId]     = useState(null);
-  const [showAdd, setShowAdd]   = useState(false);
-  const [page, setPage]         = useState(0);
+  const [people, setPeople]       = useState([]);
+  const [total, setTotal]         = useState(0);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState('');
+  const [selected, setSelected]   = useState(new Set());
+  const [openId, setOpenId]       = useState(null);
+  const [showAdd, setShowAdd]     = useState(false);
+  const [page, setPage]           = useState(0);
   const LIMIT = 50;
+  const searchRef = useRef(null);
+  const searchTimer = useRef(null);
 
   useEffect(() => { setPage(0); setSelected(new Set()); }, [activeList, search]);
   useEffect(() => { load(); }, [activeList, search, page]);
@@ -617,7 +745,7 @@ function PeoplePage({ activeList, currentUser }) {
     setLoading(true);
     try {
       let url = `/api/people?limit=${LIMIT}&offset=${page * LIMIT}`;
-      if (search) url += `&search=${encodeURIComponent(search)}`;
+      if (search)                    url += `&search=${encodeURIComponent(search)}`;
       if (activeList?.filters?.stage) url += `&stage=${encodeURIComponent(activeList.filters.stage)}`;
       if (activeList?.filters?.tags?.[0]) url += `&tag=${encodeURIComponent(activeList.filters.tags[0])}`;
       const r = await api('GET', url);
@@ -646,7 +774,12 @@ function PeoplePage({ activeList, currentUser }) {
         <div className="topbar-title">{activeList ? activeList.name : 'All People'}</div>
         <div className="topbar-search">
           <span className="topbar-search-icon"><Icons.Search /></span>
-          <input placeholder="Search name, phone, email…" value={search} onChange={e => setSearch(e.target.value)} />
+          <input
+            ref={searchRef}
+            placeholder="Search name, phone, email…"
+            value={search}
+            onChange={e => { setSearch(e.target.value); }}
+          />
         </div>
         <div className="topbar-actions">
           <button className="btn btn-ghost btn-sm" onClick={load}><Icons.Refresh /></button>
@@ -704,14 +837,18 @@ function PeoplePage({ activeList, currentUser }) {
                       </td>
                       <td>
                         <div style={{display:'flex',alignItems:'center',gap:9}}>
-                          <div className="avatar" style={{background:avatarColor(p.name)}}>{initials(p.name)}</div>
+                          <div className="avatar" style={{background:avatarColor(p.name)}}>
+                            {initials(p.name)}
+                          </div>
                           <div>
                             <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
                             {p.email && <div style={{fontSize:11,color:'var(--muted)'}}>{p.email}</div>}
                           </div>
                         </div>
                       </td>
-                      <td><span className="font-mono" style={{fontSize:13}}>{p.phone || '—'}</span></td>
+                      <td>
+                        <span className="font-mono" style={{fontSize:13,color:'var(--text)'}}>{p.phone || '—'}</span>
+                      </td>
                       <td><span className={`stage ${stageClass(p.stage)}`}>{p.stage || 'No Stage'}</span></td>
                       <td>
                         <div className="tags-wrap">
@@ -742,14 +879,26 @@ function PeoplePage({ activeList, currentUser }) {
         )}
       </div>
 
-      {openId && <PersonDrawer personId={openId} onClose={() => setOpenId(null)} onUpdated={load} />}
-      {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
+      {openId && (
+        <PersonDrawer
+          personId={openId}
+          onClose={() => setOpenId(null)}
+          onUpdated={load}
+        />
+      )}
+      {showAdd && (
+        <AddPersonModal
+          onClose={() => setShowAdd(false)}
+          onSaved={() => { setShowAdd(false); load(); }}
+        />
+      )}
     </div>
   );
 }
 
+// ── TASKS PAGE ────────────────────────────────────────────────────────────────
 function TasksPage() {
-  const [tasks, setTasks]     = useState([]);
+  const [tasks, setTasks]   = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { load(); }, []);
@@ -768,16 +917,18 @@ function TasksPage() {
     setTasks(t => t.filter(x => x.id !== id));
   }
 
-  const now     = new Date();
-  const overdue = tasks.filter(t => t.due_date && new Date(t.due_date) < now && new Date(t.due_date).toDateString() !== now.toDateString());
-  const today   = tasks.filter(t => t.due_date && new Date(t.due_date).toDateString() === now.toDateString());
-  const future  = tasks.filter(t => !t.due_date || new Date(t.due_date) > now && new Date(t.due_date).toDateString() !== now.toDateString());
+  const now = new Date();
+  const today    = tasks.filter(t => { const d = new Date(t.due_date); return d.toDateString() === now.toDateString(); });
+  const overdue  = tasks.filter(t => { const d = new Date(t.due_date); return d < now && d.toDateString() !== now.toDateString(); });
+  const future   = tasks.filter(t => !t.due_date || new Date(t.due_date) > now && new Date(t.due_date).toDateString() !== now.toDateString());
 
   function TaskGroup({ title, items, accent }) {
     if (!items.length) return null;
     return (
       <>
-        <div className="task-group-title" style={accent ? {color:accent} : {}}>{title} ({items.length})</div>
+        <div className="task-group-title" style={accent ? {color:accent} : {}}>
+          {title} ({items.length})
+        </div>
         {items.map(t => (
           <div className="task-item" key={t.id}>
             <div className={`task-check ${t.completed?'done':''}`} onClick={() => complete(t.id)}>
@@ -788,7 +939,7 @@ function TasksPage() {
               <div className="task-meta">
                 {t.first_name && <span>{t.first_name} {t.last_name}</span>}
                 {t.assigned_name && <span> · {t.assigned_name}</span>}
-                {t.note && <span style={{display:'block',marginTop:2}}>{t.note}</span>}
+                {t.note && <span style={{display:'block',marginTop:2,color:'var(--muted)'}}>{t.note}</span>}
               </div>
             </div>
             {t.due_date && (
@@ -821,8 +972,8 @@ function TasksPage() {
           </div>
         ) : (
           <>
-            <TaskGroup title="Overdue"  items={overdue} accent="var(--danger)" />
-            <TaskGroup title="Today"    items={today}   accent="var(--accent)" />
+            <TaskGroup title="Overdue" items={overdue} accent="var(--danger)" />
+            <TaskGroup title="Today"   items={today}   accent="var(--accent)" />
             <TaskGroup title="Upcoming" items={future} />
           </>
         )}
@@ -831,13 +982,15 @@ function TasksPage() {
   );
 }
 
+// ── SIDEBAR ───────────────────────────────────────────────────────────────────
 function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList }) {
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
-        <div className="sidebar-logo-text">OKCREAL Connect</div>
+        <div className="sidebar-logo-text"><b>OKCREAL</b> <span>Connect</span></div>
         <div className="sidebar-logo-sub">Property Management</div>
       </div>
+
       <div className="sidebar-section">
         <div className="sidebar-section-label">Workspace</div>
         <button className={`sidebar-item ${currentPage==='people'&&!activeList?'active':''}`}
@@ -849,12 +1002,16 @@ function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList }
           <span className="icon"><Icons.Tasks /></span> Tasks
         </button>
       </div>
+
       {smartLists.length > 0 && (
         <div className="sidebar-section" style={{flex:1,overflow:'auto'}}>
           <div className="sidebar-section-label">Smart Lists</div>
           {smartLists.map(sl => (
-            <button key={sl.id} className={`sidebar-item ${activeList?.id===sl.id?'active':''}`}
-              onClick={() => { setPage('people'); setActiveList(sl); }}>
+            <button
+              key={sl.id}
+              className={`sidebar-item ${activeList?.id===sl.id?'active':''}`}
+              onClick={() => { setPage('people'); setActiveList(sl); }}
+            >
               <span className="icon"><Icons.List /></span>
               <span style={{flex:1,textAlign:'left'}}>{sl.name}</span>
             </button>
@@ -865,12 +1022,13 @@ function Sidebar({ currentPage, setPage, smartLists, activeList, setActiveList }
   );
 }
 
+// ── APP ───────────────────────────────────────────────────────────────────────
 function App() {
-  const [user, setUser]             = useState(null);
-  const [page, setPage]             = useState('people');
-  const [smartLists, setLists]      = useState([]);
+  const [user, setUser]           = useState(null);
+  const [page, setPage]           = useState('people');
+  const [smartLists, setLists]    = useState([]);
   const [activeList, setActiveList] = useState(null);
-  const [checkingAuth, setCheck]    = useState(true);
+  const [checkingAuth, setCheck]  = useState(true);
 
   useEffect(() => { checkAuth(); }, []);
   useEffect(() => { if (user) loadSmartLists(); }, [user]);
@@ -891,12 +1049,22 @@ function App() {
     } catch {}
   }
 
+  function logout() {
+    authToken = ''; localStorage.removeItem('crm_token'); setUser(null);
+  }
+
   if (checkingAuth) return <div className="loading-wrap" style={{minHeight:'100vh'}}><span className="spinner" /></div>;
   if (!user) return <LoginPage onLogin={setUser} />;
 
   return (
     <div className="layout">
-      <Sidebar currentPage={page} setPage={setPage} smartLists={smartLists} activeList={activeList} setActiveList={setActiveList} />
+      <Sidebar
+        currentPage={page}
+        setPage={setPage}
+        smartLists={smartLists}
+        activeList={activeList}
+        setActiveList={setActiveList}
+      />
       <div className="main">
         {page === 'people' && <PeoplePage activeList={activeList} currentUser={user} />}
         {page === 'tasks'  && <TasksPage />}
