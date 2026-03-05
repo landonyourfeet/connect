@@ -475,17 +475,20 @@ function PersonDrawer({ personId, onClose, onUpdated }) {
 
   async function load() {
     try {
-      const [pR, aR, tR, cfR] = await Promise.all([
+      const [pR, aR, tR, cfR] = await Promise.allSettled([
         api('GET', `/api/people/${personId}`),
         api('GET', `/api/activities?personId=${personId}&limit=100`),
         api('GET', `/api/tasks?personId=${personId}`),
         api('GET', '/api/custom-fields'),
       ]);
-      setPerson(pR.person);
-      setCF(cfR.customFields || []);
-      setActivities(aR.activities || []);
-      setTasks(tR.tasks || []);
-    } catch(e) { console.error(e); }
+      setPerson(pR.status === 'fulfilled' ? (pR.value?.person || null) : null);
+      setCF(cfR.status === 'fulfilled' ? (cfR.value?.customFields || []) : []);
+      setActivities(aR.status === 'fulfilled' ? (aR.value?.activities || []) : []);
+      setTasks(tR.status === 'fulfilled' ? (tR.value?.tasks || []) : []);
+    } catch(e) {
+      console.error(e);
+      setPerson({ id: personId, first_name: 'Unknown', last_name: '', stage: '', source: '' });
+    }
   }
 
   async function saveNote() {
