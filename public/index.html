@@ -9,7 +9,7 @@ CHUNK_0:<html lang="en"><head>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://sdk.twilio.com/js/client/v2.x/twilio.min.js"></script>
+<script src="https://unpkg.com/@twilio/voice-sdk@latest/dist/twilio.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&amp;family=Barlow+Condensed:wght@600;700;800;900&amp;family=DM+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
 <style>
@@ -3115,12 +3115,15 @@ function CallModal({ person, onClose, currentUser, onBannerChange }) {
   async function initTwilio() {
     try {
       const r = await api('GET', '/api/twilio/token');
-      if (typeof Twilio === 'undefined') {
+      const TwilioSDK = (typeof Twilio !== 'undefined') ? Twilio
+                      : (typeof TwilioVoice !== 'undefined') ? TwilioVoice
+                      : null;
+      if (!TwilioSDK) {
         setError('Twilio SDK not loaded. Check your network connection.');
         return;
       }
       // Twilio Voice SDK v2
-      const device = new Twilio.Device(r.token, {
+      const device = new TwilioSDK.Device(r.token, {
         codecPreferences: ['opus', 'pcmu'],
         enableImprovedSignalingErrorPrecision: true,
       });
