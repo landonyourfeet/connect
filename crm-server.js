@@ -496,13 +496,19 @@ app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
 async function initDB() {
   try {
     await pool.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
-    // Drop old conflicting tables (old schema) in dependency order
+    // Drop old conflicting tables (old schema) in dependency order - NOT people (has data)
     await pool.query(`DROP TABLE IF EXISTS line_agents CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS activities CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS tasks CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS calls CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS call_lines CASCADE`);
-    // Create all tables fresh
+    // Handle old schema differences - add missing columns without dropping data
+    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES agents(id)`);
+    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS background TEXT`);
+    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`);
+    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`);
+    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+    // Create new tables if missing
     await pool.query(`CREATE TABLE IF NOT EXISTS agents (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT DEFAULT 'agent', phone TEXT, avatar_color TEXT DEFAULT '#6366f1', is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS people (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), first_name TEXT NOT NULL, last_name TEXT, phone TEXT, email TEXT, stage TEXT DEFAULT 'lead', source TEXT, background TEXT, tags TEXT[] DEFAULT '{}', custom_fields JSONB DEFAULT '{}', assigned_to UUID REFERENCES agents(id), created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS call_lines (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, twilio_number TEXT NOT NULL, description TEXT, is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW())`);
