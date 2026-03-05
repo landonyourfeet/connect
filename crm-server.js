@@ -18,12 +18,12 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false }));
 const {
   DATABASE_URL,
-  JWT_SECRET       = 'okcreal-connect-secret-change-me',
-  CRM_API_KEY      = 'crm-robot-key',   // used by the Grok robot instead of FUB key
-  PORT             = 4000,
-  ADMIN_EMAIL      = 'admin@okcreal.com',
-  ADMIN_PASSWORD   = 'OKCReal2024!',
-  ADMIN_NAME       = 'Admin',
+  JWT_SECRET     = 'okcreal-connect-secret-change-me',
+  CRM_API_KEY    = 'crm-robot-key',
+  PORT           = 4000,
+  ADMIN_EMAIL    = 'admin@okcreal.com',
+  ADMIN_PASSWORD = 'OKCReal2024!',
+  ADMIN_NAME     = 'Admin',
 } = process.env;
 // ── Database ──────────────────────────────────────────────────────────────────
 const pool = new Pool({
@@ -85,7 +85,7 @@ async function getPersonTags(personId) {
     'SELECT t.name FROM tags t JOIN people_tags pt ON pt.tag_id = t.id WHERE pt.person_id = $1 ORDER BY t.name',
     [personId]
   );
-  return r.rows.map(r => r.name);
+  return r.rows.map(row => row.name);
 }
 async function getPersonCustomFields(personId) {
   const r = await query(
@@ -103,35 +103,33 @@ async function getPersonPhones(personId) {
   );
   return r.rows;
 }
-// Format a person row into a FUB-compatible shape + CRM shape
 async function formatPerson(p, { includeTags = true, includeCustom = false, includePhones = true } = {}) {
   const [tags, customFields, phones] = await Promise.all([
-    includeTags   ? getPersonTags(p.id)            : [],
-    includeCustom ? getPersonCustomFields(p.id)     : {},
-    includePhones ? getPersonPhones(p.id)           : [],
+    includeTags   ? getPersonTags(p.id)        : [],
+    includeCustom ? getPersonCustomFields(p.id) : {},
+    includePhones ? getPersonPhones(p.id)       : [],
   ]);
-  // Merge primary phones list (FUB-style array)
   const allPhones = [];
   if (p.phone) allPhones.push({ value: p.phone, type: 'mobile' });
   phones.forEach(ph => {
     if (!allPhones.find(x => x.value === ph.phone)) allPhones.push({ value: ph.phone, type: ph.type });
   });
   return {
-    id:           p.id,
-    name:         personName(p),
-    firstName:    p.first_name,
-    lastName:     p.last_name,
-    email:        p.email,
-    phone:        p.phone,
-    phones:       allPhones,
-    stage:        p.stage,
-    source:       p.source,
+    id:             p.id,
+    name:           personName(p),
+    firstName:      p.first_name,
+    lastName:       p.last_name,
+    email:          p.email,
+    phone:          p.phone,
+    phones:         allPhones,
+    stage:          p.stage,
+    source:         p.source,
     assignedUserId: p.assigned_user_id,
-    background:   p.background,
+    background:     p.background,
     tags,
     customFields,
-    created:      p.created_at,
-    updated:      p.updated_at,
+    created:        p.created_at,
+    updated:        p.updated_at,
   };
 }
 // =============================================================================
@@ -163,10 +161,7 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
 // ── PEOPLE ROUTES ─────────────────────────────────────────────────────────────
 // =============================================================================
 app.get('/api/people', authRequired, async (req, res) => {
-  const {
-    search, stage, tag, assignedTo,
-    limit = 50, offset = 0, sort = '-updated',
-  } = req.query;
+  const { search, stage, tag, assignedTo, limit = 50, offset = 0, sort = '-updated' } = req.query;
   try {
     const conditions = ['1=1'];
     const params = [];
@@ -180,14 +175,14 @@ app.get('/api/people', authRequired, async (req, res) => {
       )`);
       params.push(`%${search}%`); idx++;
     }
-    if (stage)      { conditions.push(`p.stage = $${idx}`);           params.push(stage);      idx++; }
+    if (stage)      { conditions.push(`p.stage = $${idx}`);            params.push(stage);      idx++; }
     if (assignedTo) { conditions.push(`p.assigned_user_id = $${idx}`); params.push(assignedTo); idx++; }
     if (tag) {
       tagJoin = `JOIN people_tags pt ON pt.person_id = p.id
                  JOIN tags tg ON tg.id = pt.tag_id AND tg.name = $${idx}`;
       params.push(tag); idx++;
     }
-    const where = `WHERE ${conditions.join(' AND ')}`;
+    const where   = `WHERE ${conditions.join(' AND ')}`;
     const orderBy = sort === '-updated' ? 'p.updated_at DESC'
                   : sort === 'name'     ? 'p.last_name ASC, p.first_name ASC'
                   : 'p.created_at DESC';
@@ -201,20 +196,17 @@ app.get('/api/people', authRequired, async (req, res) => {
       LEFT JOIN users u ON u.id = p.assigned_user_id
       ${where}
       ORDER BY ${orderBy}
-      LIMIT $${idx} OFFSET $${idx+1}
+      LIMIT $${idx} OFFSET $${idx + 1}
     `;
     const [countR, dataR] = await Promise.all([
       query(countSql, params),
-      query(dataSql,  [...params, parseInt(limit), parseInt(offset)]),
+      query(dataSql, [...params, parseInt(limit), parseInt(offset)]),
     ]);
-    // Fetch tags for all people in batch
     const ids = dataR.rows.map(p => p.id);
     const tagMap = {};
     if (ids.length) {
       const tR = await query(
-        `SELECT pt.person_id, t.name, t.color
-         FROM people_tags pt JOIN tags t ON t.id = pt.tag_id
-         WHERE pt.person_id = ANY($1)`,
+        `SELECT pt.person_id, t.name FROM people_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.person_id = ANY($1)`,
         [ids]
       );
       tR.rows.forEach(r => {
@@ -223,19 +215,19 @@ app.get('/api/people', authRequired, async (req, res) => {
       });
     }
     const people = dataR.rows.map(p => ({
-      id:           p.id,
-      name:         personName(p),
-      firstName:    p.first_name,
-      lastName:     p.last_name,
-      email:        p.email,
-      phone:        p.phone,
-      stage:        p.stage,
-      source:       p.source,
-      assignedName: p.assigned_name,
+      id:            p.id,
+      name:          personName(p),
+      firstName:     p.first_name,
+      lastName:      p.last_name,
+      email:         p.email,
+      phone:         p.phone,
+      stage:         p.stage,
+      source:        p.source,
+      assignedName:  p.assigned_name,
       activityCount: parseInt(p.activity_count),
-      tags:         tagMap[p.id] || [],
-      updated:      p.updated_at,
-      created:      p.created_at,
+      tags:          tagMap[p.id] || [],
+      updated:       p.updated_at,
+      created:       p.created_at,
     }));
     res.json({ people, total: parseInt(countR.rows[0].total) });
   } catch(e) { console.error('[People GET]', e.message); res.status(500).json({ error: e.message }); }
@@ -263,34 +255,27 @@ app.post('/api/people', authRequired, async (req, res) => {
 app.put('/api/people/:id', authRequired, async (req, res) => {
   const { firstName, lastName, email, phone, stage, source, assignedUserId, background, tags, customFields } = req.body;
   try {
-    // Update core fields
-    const sets = [];
-    const params = [];
-    let idx = 1;
-    if (firstName      !== undefined) { sets.push(`first_name=$${idx++}`);        params.push(firstName); }
-    if (lastName       !== undefined) { sets.push(`last_name=$${idx++}`);         params.push(lastName); }
-    if (email          !== undefined) { sets.push(`email=$${idx++}`);             params.push(email); }
-    if (phone          !== undefined) { sets.push(`phone=$${idx++}`);             params.push(phone); }
-    if (stage          !== undefined) { sets.push(`stage=$${idx++}`);             params.push(stage); }
-    if (source         !== undefined) { sets.push(`source=$${idx++}`);            params.push(source); }
-    if (assignedUserId !== undefined) { sets.push(`assigned_user_id=$${idx++}`);  params.push(assignedUserId); }
-    if (background     !== undefined) { sets.push(`background=$${idx++}`);        params.push(background); }
+    const sets = []; const params = []; let idx = 1;
+    if (firstName      !== undefined) { sets.push(`first_name=$${idx++}`);       params.push(firstName); }
+    if (lastName       !== undefined) { sets.push(`last_name=$${idx++}`);        params.push(lastName); }
+    if (email          !== undefined) { sets.push(`email=$${idx++}`);            params.push(email); }
+    if (phone          !== undefined) { sets.push(`phone=$${idx++}`);            params.push(phone); }
+    if (stage          !== undefined) { sets.push(`stage=$${idx++}`);            params.push(stage); }
+    if (source         !== undefined) { sets.push(`source=$${idx++}`);           params.push(source); }
+    if (assignedUserId !== undefined) { sets.push(`assigned_user_id=$${idx++}`); params.push(assignedUserId); }
+    if (background     !== undefined) { sets.push(`background=$${idx++}`);       params.push(background); }
     if (sets.length) {
       params.push(req.params.id);
       await query(`UPDATE people SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${idx}`, params);
     }
-    // Update tags if provided
     if (Array.isArray(tags)) {
       await query('DELETE FROM people_tags WHERE person_id=$1', [req.params.id]);
       for (const tagName of tags) {
         let tR = await query('SELECT id FROM tags WHERE name=$1', [tagName]);
-        if (!tR.rows.length) {
-          tR = await query('INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]);
-        }
+        if (!tR.rows.length) tR = await query('INSERT INTO tags (name) VALUES ($1) RETURNING id', [tagName]);
         await query('INSERT INTO people_tags (person_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.params.id, tR.rows[0].id]);
       }
     }
-    // Update custom fields if provided
     if (customFields && typeof customFields === 'object') {
       for (const [fieldName, value] of Object.entries(customFields)) {
         if (value === null || value === undefined || value === '') {
@@ -316,15 +301,13 @@ app.delete('/api/people/:id', authRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // =============================================================================
-// ── ACTIVITIES (timeline) ─────────────────────────────────────────────────────
+// ── ACTIVITIES ────────────────────────────────────────────────────────────────
 // =============================================================================
 app.get('/api/activities', authRequired, async (req, res) => {
   const { personId, type, limit = 50, offset = 0 } = req.query;
   if (!personId) return res.status(400).json({ error: 'personId required' });
   try {
-    const cond = ['a.person_id = $1'];
-    const params = [personId];
-    let idx = 2;
+    const cond = ['a.person_id = $1']; const params = [personId]; let idx = 2;
     if (type) { cond.push(`a.type = $${idx++}`); params.push(type); }
     params.push(parseInt(limit), parseInt(offset));
     const r = await query(
@@ -332,7 +315,7 @@ app.get('/api/activities', authRequired, async (req, res) => {
        FROM activities a LEFT JOIN users u ON u.id = a.created_by
        WHERE ${cond.join(' AND ')}
        ORDER BY a.created_at DESC
-       LIMIT $${idx} OFFSET $${idx+1}`,
+       LIMIT $${idx} OFFSET $${idx + 1}`,
       params
     );
     res.json({ activities: r.rows });
@@ -347,7 +330,6 @@ app.post('/api/activities', authRequired, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [personId, type, body, subject, direction, duration, recordingUrl, transcript, twilioSid, fromNumber, toNumber, status, req.isRobot ? null : req.user?.id]
     );
-    // Update person's updated_at
     await query('UPDATE people SET updated_at=NOW() WHERE id=$1', [personId]);
     res.status(201).json({ activity: r.rows[0] });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -372,8 +354,8 @@ app.get('/api/tasks', authRequired, async (req, res) => {
   const { personId, completed } = req.query;
   try {
     const cond = ['1=1']; const params = []; let idx = 1;
-    if (personId)  { cond.push(`t.person_id=$${idx++}`);  params.push(personId); }
-    if (completed !== undefined) { cond.push(`t.completed=$${idx++}`); params.push(completed === 'true'); }
+    if (personId  !== undefined) { cond.push(`t.person_id=$${idx++}`);  params.push(personId); }
+    if (completed !== undefined) { cond.push(`t.completed=$${idx++}`);  params.push(completed === 'true'); }
     const r = await query(
       `SELECT t.*, p.first_name, p.last_name, u.name AS assigned_name
        FROM tasks t
@@ -423,7 +405,10 @@ app.get('/api/tags', authRequired, async (req, res) => {
 app.post('/api/tags', authRequired, async (req, res) => {
   const { name, color } = req.body;
   try {
-    const r = await query('INSERT INTO tags (name, color) VALUES ($1,$2) ON CONFLICT (name) DO UPDATE SET color=$2 RETURNING *', [name, color]);
+    const r = await query(
+      'INSERT INTO tags (name, color) VALUES ($1,$2) ON CONFLICT (name) DO UPDATE SET color=$2 RETURNING *',
+      [name, color]
+    );
     res.json({ tag: r.rows[0] });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -463,7 +448,7 @@ app.get('/api/custom-fields', authRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // =============================================================================
-// ── USERS (team) ──────────────────────────────────────────────────────────────
+// ── USERS ─────────────────────────────────────────────────────────────────────
 // =============================================================================
 app.get('/api/users', authRequired, async (req, res) => {
   try {
@@ -473,7 +458,7 @@ app.get('/api/users', authRequired, async (req, res) => {
 });
 app.post('/api/users', authRequired, async (req, res) => {
   const { name, email, password, role = 'agent' } = req.body;
-  const avatarColor = '#' + Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0');
+  const avatarColor = '#' + Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
   try {
     const hash = await bcrypt.hash(password, 10);
     const r = await query(
@@ -484,9 +469,8 @@ app.post('/api/users', authRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // =============================================================================
-// ── FUB-COMPATIBLE ROUTES (for Grok debt robot — zero changes to server.js) ──
+// ── FUB-COMPATIBLE ROUTES (for Grok debt robot) ───────────────────────────────
 // =============================================================================
-// Basic auth middleware for FUB-compatible routes
 function fubAuth(req, res, next) {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Basic ')) {
@@ -498,14 +482,11 @@ function fubAuth(req, res, next) {
   }
   res.status(401).json({ error: 'Unauthorized' });
 }
-// GET /v1/people — search by phone, tag, stage (used by robot for lookups)
+// GET /v1/people
 app.get('/v1/people', fubAuth, async (req, res) => {
   const { phone, tag, stage, limit = 100 } = req.query;
   try {
-    const conditions = ['1=1'];
-    const params = [];
-    let idx = 1;
-    let tagJoin = '';
+    const conditions = ['1=1']; const params = []; let idx = 1; let tagJoin = '';
     if (phone) {
       const digits = phone.replace(/\\D/g, '');
       conditions.push(`(
@@ -518,7 +499,7 @@ app.get('/v1/people', fubAuth, async (req, res) => {
       )`);
       params.push(`%${digits}`); idx++;
     }
-    if (stage) { conditions.push(`p.stage = $${idx++}`); params.push(stage); }
+    if (stage) { conditions.push(`p.stage = $${idx}`); params.push(stage); idx++; }
     if (tag) {
       tagJoin = `JOIN people_tags pt ON pt.person_id = p.id JOIN tags tg ON tg.id = pt.tag_id AND tg.name = $${idx}`;
       params.push(tag); idx++;
@@ -526,8 +507,7 @@ app.get('/v1/people', fubAuth, async (req, res) => {
     const where = `WHERE ${conditions.join(' AND ')}`;
     params.push(parseInt(limit));
     const r = await query(
-      `SELECT DISTINCT p.* FROM people p ${tagJoin} ${where}
-       ORDER BY p.updated_at DESC LIMIT $${idx}`,
+      `SELECT DISTINCT p.* FROM people p ${tagJoin} ${where} ORDER BY p.updated_at DESC LIMIT $${idx}`,
       params
     );
     const people = await Promise.all(r.rows.map(p => formatPerson(p, { includeCustom: true })));
@@ -543,14 +523,15 @@ app.get('/v1/people/:id', fubAuth, async (req, res) => {
     res.json(person);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-// PUT /v1/people/:id — update stage, tags, custom fields (robot uses this heavily)
+// PUT /v1/people/:id
 app.put('/v1/people/:id', fubAuth, async (req, res) => {
   const { stage, tags, ...rest } = req.body;
   try {
     const sets = []; const params = []; let idx = 1;
     if (stage !== undefined) { sets.push(`stage=$${idx++}`); params.push(stage); }
-    // Handle custom fields passed at root level (FUB sends them as top-level keys)
-    const customFieldNames = Object.keys(rest).filter(k => k.startsWith('custom') || k.toLowerCase().includes('balance') || k.toLowerCase().includes('date'));
+    const customFieldNames = Object.keys(rest).filter(k =>
+      k.startsWith('custom') || k.toLowerCase().includes('balance') || k.toLowerCase().includes('date')
+    );
     for (const key of customFieldNames) {
       if (req.body[key] !== undefined) {
         const val = req.body[key];
@@ -582,7 +563,7 @@ app.put('/v1/people/:id', fubAuth, async (req, res) => {
     res.json(person);
   } catch(e) { console.error('[FUB PUT /v1/people/:id]', e.message); res.status(500).json({ error: e.message }); }
 });
-// POST /v1/notes — robot posts call notes here
+// POST /v1/notes
 app.post('/v1/notes', fubAuth, async (req, res) => {
   const { personId, body } = req.body;
   if (!personId) return res.status(400).json({ error: 'personId required' });
@@ -595,27 +576,26 @@ app.post('/v1/notes', fubAuth, async (req, res) => {
     res.status(201).json({ note: { id: r.rows[0].id, personId, body, created: r.rows[0].created_at } });
   } catch(e) { console.error('[FUB POST /v1/notes]', e.message); res.status(500).json({ error: e.message }); }
 });
-// GET /v1/notes — robot fetches prior notes for context
+// GET /v1/notes
 app.get('/v1/notes', fubAuth, async (req, res) => {
   const { personId, limit = 10 } = req.query;
   if (!personId) return res.status(400).json({ error: 'personId required' });
   try {
     const r = await query(
-      `SELECT * FROM activities WHERE person_id = $1 AND type = 'note'
-       ORDER BY created_at DESC LIMIT $2`,
+      `SELECT * FROM activities WHERE person_id = $1 AND type = 'note' ORDER BY created_at DESC LIMIT $2`,
       [personId, parseInt(limit)]
     );
     const notes = r.rows.map(row => ({
-      id:        row.id,
-      personId:  row.person_id,
-      body:      row.body,
-      created:   row.created_at,
+      id:            row.id,
+      personId:      row.person_id,
+      body:          row.body,
+      created:       row.created_at,
       createdByName: 'Grok AI',
     }));
     res.json({ notes, total: notes.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-// POST /v1/tasks — robot creates escalation tasks
+// POST /v1/tasks
 app.post('/v1/tasks', fubAuth, async (req, res) => {
   const { personId, note, assignedUserId, dueDate, isCompleted = false } = req.body;
   try {
@@ -627,7 +607,7 @@ app.post('/v1/tasks', fubAuth, async (req, res) => {
     res.status(201).json({ task: r.rows[0] });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-// GET /v1/customfields — robot fetches field names on startup
+// GET /v1/customfields
 app.get('/v1/customfields', fubAuth, async (req, res) => {
   try {
     const r = await query('SELECT * FROM custom_field_definitions ORDER BY label', []);
@@ -635,7 +615,7 @@ app.get('/v1/customfields', fubAuth, async (req, res) => {
     res.json({ customFields, total: customFields.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-// GET /v1/emails — robot calls this, return empty (no email system yet)
+// GET /v1/emails
 app.get('/v1/emails', fubAuth, async (req, res) => {
   res.json({ emails: [], total: 0 });
 });
@@ -645,7 +625,6 @@ app.get('/v1/emails', fubAuth, async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'OKCREAL Connect', ts: new Date().toISOString() });
 });
-// Serve React frontend
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
@@ -658,5 +637,15 @@ app.get('*', (req, res) => {
 async function start() {
   try {
     await runMigrations();
-    const server = app.listen(PORT, () => {
-console.log(`\\n⚡ OKCREAL Connect running on port ${PORT}`);
+    app.listen(PORT, () => {
+      console.log(`\\n⚡ OKCREAL Connect running on port ${PORT}`);
+      console.log(`   Admin: ${ADMIN_EMAIL}`);
+      console.log(`   Robot API Key: ${CRM_API_KEY}`);
+      console.log(`   FUB-compatible base URL: http://localhost:${PORT}\\n`);
+    });
+  } catch(e) {
+    console.error('[Startup Error]', e.message);
+    process.exit(1);
+  }
+}
+start();
