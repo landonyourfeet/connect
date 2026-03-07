@@ -71,7 +71,7 @@ app.get('/api/people', auth, async (req, res) => {
     const countR = await pool.query(`SELECT COUNT(*) FROM people p WHERE ${where.join(' AND ')}`, params);
     params.push(limit, offset);
     const r = await pool.query(
-      `SELECT p.*, a.name as assigned_name FROM people p LEFT JOIN agents a ON a.id=p.assigned_to WHERE ${where.join(' AND ')} ORDER BY p.updated_at DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
+      `SELECT p.* FROM people p WHERE ${where.join(' AND ')} ORDER BY p.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
       params
     );
     res.json({ people: r.rows, total: parseInt(countR.rows[0].count) });
@@ -80,7 +80,7 @@ app.get('/api/people', auth, async (req, res) => {
 
 app.get('/api/people/:id', auth, async (req, res) => {
   try {
-    const r = await pool.query('SELECT p.*, a.name as assigned_name FROM people p LEFT JOIN agents a ON a.id=p.assigned_to WHERE p.id=$1', [req.params.id]);
+    const r = await pool.query('SELECT * FROM people WHERE id=$1', [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -91,7 +91,7 @@ app.post('/api/people', auth, async (req, res) => {
     const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo } = req.body;
     const r = await pool.query(
       'INSERT INTO people (first_name,last_name,phone,email,stage,source,background,tags,custom_fields,assigned_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',
-      [firstName, lastName, phone, email, stage||'lead', source, background, tags||[], JSON.stringify(customFields||{}), assignedTo||null]
+      [firstName, lastName, phone, email, stage||'lead', source||null, background||null, tags||[], JSON.stringify(customFields||{}), assignedTo||null]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -103,14 +103,14 @@ app.put('/api/people/:id', auth, async (req, res) => {
     const r = await pool.query(
       `UPDATE people SET
         first_name=COALESCE($1,first_name), last_name=COALESCE($2,last_name),
-        phone=COALESCE($3,phone), email=COALESCE($4,email), stage=COALESCE($5,stage),
-        source=COALESCE($6,source), background=COALESCE($7,background),
-        tags=COALESCE($8,tags), custom_fields=custom_fields||COALESCE($9,'{}'),
-        assigned_to=COALESCE($10,assigned_to), updated_at=NOW()
-       WHERE id=$11 RETURNING *`,
+        phone=COALESCE($3,phone), email=COALESCE($4,email),
+        stage=COALESCE($5,stage), source=COALESCE($6,source),
+        background=COALESCE($7,background), tags=COALESCE($8,tags),
+        custom_fields=custom_fields||COALESCE($9,'{}')
+       WHERE id=$10 RETURNING *`,
       [firstName||null, lastName||null, phone||null, email||null, stage||null,
        source||null, background||null, tags||null,
-       customFields ? JSON.stringify(customFields) : '{}', assignedTo||null, req.params.id]
+       customFields ? JSON.stringify(customFields) : '{}', req.params.id]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -132,13 +132,9 @@ app.get('/api/activities', auth, async (req, res) => {
     if (type) { params.push(type); where.push(`a.type=$${params.length}`); }
     params.push(limit);
     const r = await pool.query(
-      `SELECT a.*, ag.name as agent_name,
-              c.transcript, c.summary, c.direction, c.duration_seconds,
-              c.recording_url as call_recording_url, cl.name as line_name
+      `SELECT a.*, ag.name as agent_name
        FROM activities a
-       LEFT JOIN agents ag ON ag.id=a.agent_id
-       LEFT JOIN calls c ON c.id=a.call_id
-       LEFT JOIN call_lines cl ON cl.id=c.line_id
+       LEFT JOIN agents ag ON ag.id::text=a.agent_id::text
        WHERE ${where.join(' AND ')} ORDER BY a.created_at DESC LIMIT $${params.length}`,
       params
     );
@@ -151,9 +147,8 @@ app.post('/api/activities', auth, async (req, res) => {
     const { personId, type, body, duration, recordingUrl, callId } = req.body;
     const r = await pool.query(
       'INSERT INTO activities (person_id,agent_id,type,body,duration,recording_url,call_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-      [personId, req.agent.id, type, body, duration||null, recordingUrl||null, callId||null]
+      [personId, req.agent.id, type||'note', body||null, duration||null, recordingUrl||null, callId||null]
     );
-    await pool.query('UPDATE people SET updated_at=NOW() WHERE id=$1', [personId]);
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -166,10 +161,9 @@ app.get('/api/tasks', auth, async (req, res) => {
     if (personId) { params.push(personId); where.push(`t.person_id=$${params.length}`); }
     if (completed !== undefined) { params.push(completed === 'true'); where.push(`t.completed=$${params.length}`); }
     const r = await pool.query(
-      `SELECT t.*, p.first_name||' '||COALESCE(p.last_name,'') as person_name, a.name as agent_name
+      `SELECT t.*, ag.name as agent_name
        FROM tasks t
-       LEFT JOIN people p ON p.id=t.person_id
-       LEFT JOIN agents a ON a.id=t.agent_id
+       LEFT JOIN agents ag ON ag.id::text=t.agent_id::text
        WHERE ${where.join(' AND ')} ORDER BY t.due_date ASC NULLS LAST`,
       params
     );
@@ -190,15 +184,14 @@ app.post('/api/tasks', auth, async (req, res) => {
 
 app.put('/api/tasks/:id', auth, async (req, res) => {
   try {
-    const { title, note, dueDate, completed, assignedTo } = req.body;
+    const { title, note, dueDate, completed } = req.body;
     const r = await pool.query(
       `UPDATE tasks SET
-        title=COALESCE($1,title), note=COALESCE($2,note), due_date=COALESCE($3,due_date),
-        completed=COALESCE($4,completed),
-        completed_at=CASE WHEN $4=true THEN NOW() WHEN $4=false THEN NULL ELSE completed_at END,
-        agent_id=COALESCE($5,agent_id)
-       WHERE id=$6 RETURNING *`,
-      [title||null, note||null, dueDate||null, completed!=null?completed:null, assignedTo||null, req.params.id]
+        title=COALESCE($1,title), note=COALESCE($2,note),
+        due_date=COALESCE($3,due_date), completed=COALESCE($4,completed),
+        completed_at=CASE WHEN $4=true THEN NOW() WHEN $4=false THEN NULL ELSE completed_at END
+       WHERE id=$5 RETURNING *`,
+      [title||null, note||null, dueDate||null, completed!=null?completed:null, req.params.id]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -277,7 +270,7 @@ app.post('/api/twilio/voice', async (req, res) => {
     dial.number({ statusCallbackEvent: 'completed', statusCallback: `${process.env.APP_URL}/api/twilio/status` }, To);
     if (personId && agentId) {
       pool.query(
-        'INSERT INTO calls (twilio_call_sid,person_id,agent_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING',
+        'INSERT INTO calls (twilio_call_sid,person_id,agent_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (twilio_call_sid) DO NOTHING',
         [req.body.CallSid, personId, agentId, lineId||null, 'outbound', 'initiated', CallerId||process.env.TWILIO_RESIDENT_NUMBER, To]
       ).catch(() => {});
     }
@@ -300,7 +293,7 @@ app.post('/api/twilio/inbound', async (req, res) => {
     );
     let agents = [];
     if (line) {
-      const aR = await pool.query('SELECT a.* FROM agents a JOIN line_agents la ON la.agent_id=a.id WHERE la.line_id=$1 AND a.is_active=true', [line.id]);
+      const aR = await pool.query('SELECT a.* FROM agents a JOIN line_agents la ON la.agent_id::text=a.id::text WHERE la.line_id=$1 AND a.is_active=true', [line.id]);
       agents = aR.rows;
     }
     if (agents.length === 0) {
@@ -365,7 +358,7 @@ app.post('/api/twilio/recording', async (req, res) => {
     if (grok && transcript.length > 20) {
       try {
         const personR = call.person_id ? await pool.query('SELECT first_name,last_name FROM people WHERE id=$1', [call.person_id]) : null;
-        const agentR = call.agent_id ? await pool.query('SELECT name FROM agents WHERE id=$1', [call.agent_id]) : null;
+        const agentR = call.agent_id ? await pool.query('SELECT name FROM agents WHERE id::text=$1', [call.agent_id]) : null;
         const contactName = personR?.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'Unknown';
         const agentName = agentR?.rows[0]?.name || 'Agent';
         const completion = await grok.chat.completions.create({
@@ -417,7 +410,7 @@ app.post('/api/admin/agents', auth, adminOnly, async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const r = await pool.query(
       'INSERT INTO agents (name,email,password_hash,role,phone,avatar_color) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,name,email,role,phone,avatar_color,is_active',
-      [name, email, hash, role||'agent', phone, avatarColor||'#6366f1']
+      [name, email, hash, role||'agent', phone||null, avatarColor||'#6366f1']
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -442,7 +435,7 @@ app.get('/api/admin/lines', auth, adminOnly, async (req, res) => {
       SELECT cl.*, COALESCE(json_agg(json_build_object('id',a.id,'name',a.name)) FILTER (WHERE a.id IS NOT NULL),'[]') as agents
       FROM call_lines cl
       LEFT JOIN line_agents la ON la.line_id=cl.id
-      LEFT JOIN agents a ON a.id=la.agent_id
+      LEFT JOIN agents a ON a.id::text=la.agent_id::text
       GROUP BY cl.id ORDER BY cl.name`);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -472,170 +465,188 @@ app.put('/api/admin/lines/:id/agents', auth, adminOnly, async (req, res) => {
 app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
   try {
     const stages = await pool.query('SELECT stage, COUNT(*) FROM people GROUP BY stage');
-    const calls = await pool.query("SELECT direction, COUNT(*) FROM calls WHERE started_at > NOW()-INTERVAL '30 days' GROUP BY direction");
     const tasks = await pool.query('SELECT COUNT(*) FROM tasks WHERE completed=false');
-    res.json({ stages: stages.rows, calls: calls.rows, openTasks: tasks.rows[0].count });
+    res.json({ stages: stages.rows, openTasks: tasks.rows[0].count });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── DB INIT ──────────────────────────────────────────────────────────────────
-// Creates all tables in dependency order, then adds any missing columns.
-// Uses IF NOT EXISTS / ON CONFLICT DO NOTHING everywhere so it is safe to run
-// on every boot against an existing database without touching live data.
+// Each statement is wrapped in its own try/catch so a failure on one table
+// never prevents the others from being created. No foreign key constraints
+// are used — the existing `people` table uses integer PKs from a prior schema
+// and FK type mismatches would cause the whole block to abort.
 async function initDB() {
+  const run = async (sql, label) => {
+    try { await pool.query(sql); }
+    catch (e) { console.error(`[DB] ${label}: ${e.message}`); }
+  };
+
+  await run(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`, 'uuid-ossp');
+
+  // agents — must exist before app boots (login depends on it)
+  await run(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name          TEXT NOT NULL,
+      email         TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role          TEXT DEFAULT 'agent',
+      phone         TEXT,
+      avatar_color  TEXT DEFAULT '#6366f1',
+      is_active     BOOLEAN DEFAULT true,
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create agents');
+
+  // people — may already exist with integer PKs; CREATE IF NOT EXISTS is safe
+  await run(`
+    CREATE TABLE IF NOT EXISTS people (
+      id            SERIAL PRIMARY KEY,
+      first_name    TEXT NOT NULL,
+      last_name     TEXT,
+      phone         TEXT,
+      email         TEXT,
+      stage         TEXT DEFAULT 'lead',
+      source        TEXT,
+      background    TEXT,
+      tags          TEXT[] DEFAULT '{}',
+      custom_fields JSONB DEFAULT '{}',
+      assigned_to   TEXT,
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create people');
+
+  // add any missing columns to existing people table
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS background TEXT`, 'people.background');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`, 'people.tags');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`, 'people.custom_fields');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`, 'people.updated_at');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to TEXT`, 'people.assigned_to');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
+
+  // call_lines
+  await run(`
+    CREATE TABLE IF NOT EXISTS call_lines (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name          TEXT NOT NULL,
+      twilio_number TEXT NOT NULL,
+      description   TEXT,
+      is_active     BOOLEAN DEFAULT true,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create call_lines');
+
+  // line_agents — no FK constraints to avoid type issues
+  await run(`
+    CREATE TABLE IF NOT EXISTS line_agents (
+      line_id  TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      PRIMARY KEY (line_id, agent_id)
+    )
+  `, 'create line_agents');
+
+  // smart_lists
+  await run(`
+    CREATE TABLE IF NOT EXISTS smart_lists (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      name       TEXT NOT NULL,
+      filters    JSONB DEFAULT '{}',
+      sort_order INTEGER DEFAULT 0
+    )
+  `, 'create smart_lists');
+
+  // custom_fields
+  await run(`
+    CREATE TABLE IF NOT EXISTS custom_fields (
+      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      key        TEXT UNIQUE NOT NULL,
+      label      TEXT NOT NULL,
+      field_type TEXT DEFAULT 'text',
+      options    TEXT[],
+      sort_order INTEGER DEFAULT 0
+    )
+  `, 'create custom_fields');
+
+  // calls — NO foreign keys (avoids integer/UUID type mismatch with old people table)
+  await run(`
+    CREATE TABLE IF NOT EXISTS calls (
+      id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      twilio_call_sid  TEXT UNIQUE,
+      person_id        TEXT,
+      agent_id         TEXT,
+      line_id          TEXT,
+      direction        TEXT,
+      status           TEXT,
+      duration_seconds INTEGER,
+      from_number      TEXT,
+      to_number        TEXT,
+      recording_url    TEXT,
+      recording_sid    TEXT,
+      transcript       TEXT,
+      summary          TEXT,
+      started_at       TIMESTAMPTZ DEFAULT NOW(),
+      ended_at         TIMESTAMPTZ
+    )
+  `, 'create calls');
+
+  // activities — NO foreign keys
+  await run(`
+    CREATE TABLE IF NOT EXISTS activities (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      person_id     TEXT,
+      agent_id      TEXT,
+      call_id       TEXT,
+      type          TEXT NOT NULL DEFAULT 'note',
+      body          TEXT,
+      duration      INTEGER,
+      recording_url TEXT,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create activities');
+
+  // tasks — NO foreign keys
+  await run(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      person_id    TEXT,
+      agent_id     TEXT,
+      title        TEXT NOT NULL,
+      note         TEXT,
+      due_date     DATE,
+      completed    BOOLEAN DEFAULT false,
+      completed_at TIMESTAMPTZ,
+      created_at   TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create tasks');
+
+  // seed admin — only if agents table was just created (email won't exist yet)
   try {
-    await pool.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+    const exists = await pool.query(`SELECT 1 FROM agents WHERE email='admin@okcreal.com'`);
+    if (exists.rows.length === 0) {
+      const hash = await bcrypt.hash('password', 10);
+      await pool.query(
+        `INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com',$1,'admin')`,
+        [hash]
+      );
+      console.log('[DB] Admin seeded');
+    }
+  } catch (e) { console.error('[DB] seed admin:', e.message); }
 
-    // Step 1: tables with no foreign-key dependencies
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS agents (
-        id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        name         TEXT NOT NULL,
-        email        TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role         TEXT DEFAULT 'agent',
-        phone        TEXT,
-        avatar_color TEXT DEFAULT '#6366f1',
-        is_active    BOOLEAN DEFAULT true,
-        created_at   TIMESTAMPTZ DEFAULT NOW(),
-        updated_at   TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS people (
-        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        first_name    TEXT NOT NULL,
-        last_name     TEXT,
-        phone         TEXT,
-        email         TEXT,
-        stage         TEXT DEFAULT 'lead',
-        source        TEXT,
-        background    TEXT,
-        tags          TEXT[] DEFAULT '{}',
-        custom_fields JSONB DEFAULT '{}',
-        assigned_to   UUID REFERENCES agents(id),
-        created_at    TIMESTAMPTZ DEFAULT NOW(),
-        updated_at    TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS call_lines (
-        id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        name           TEXT NOT NULL,
-        twilio_number  TEXT NOT NULL,
-        description    TEXT,
-        is_active      BOOLEAN DEFAULT true,
-        created_at     TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS smart_lists (
-        id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        name       TEXT NOT NULL,
-        filters    JSONB DEFAULT '{}',
-        sort_order INTEGER DEFAULT 0
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS custom_fields (
-        id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        key        TEXT UNIQUE NOT NULL,
-        label      TEXT NOT NULL,
-        field_type TEXT DEFAULT 'text',
-        options    TEXT[],
-        sort_order INTEGER DEFAULT 0
-      )
-    `);
-
-    // Step 2: tables that depend on agents / people / call_lines
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS line_agents (
-        line_id  UUID REFERENCES call_lines(id) ON DELETE CASCADE,
-        agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
-        PRIMARY KEY (line_id, agent_id)
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS calls (
-        id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        twilio_call_sid TEXT UNIQUE,
-        person_id       UUID REFERENCES people(id),
-        agent_id        UUID REFERENCES agents(id),
-        line_id         UUID REFERENCES call_lines(id),
-        direction       TEXT,
-        status          TEXT,
-        duration_seconds INTEGER,
-        from_number     TEXT,
-        to_number       TEXT,
-        recording_url   TEXT,
-        recording_sid   TEXT,
-        transcript      TEXT,
-        summary         TEXT,
-        started_at      TIMESTAMPTZ DEFAULT NOW(),
-        ended_at        TIMESTAMPTZ
-      )
-    `);
-
-    // Step 3: tables that depend on calls
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS activities (
-        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        person_id     UUID REFERENCES people(id) ON DELETE CASCADE,
-        agent_id      UUID REFERENCES agents(id),
-        call_id       UUID REFERENCES calls(id),
-        type          TEXT NOT NULL,
-        body          TEXT,
-        duration      INTEGER,
-        recording_url TEXT,
-        created_at    TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        person_id    UUID REFERENCES people(id) ON DELETE CASCADE,
-        agent_id     UUID REFERENCES agents(id),
-        title        TEXT NOT NULL,
-        note         TEXT,
-        due_date     DATE,
-        completed    BOOLEAN DEFAULT false,
-        completed_at TIMESTAMPTZ,
-        created_at   TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
-    // Step 4: safe column additions for any old-schema databases
-    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS background TEXT`);
-    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`);
-    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`);
-    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
-    await pool.query(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES agents(id)`);
-    await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS body TEXT`);
-    await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS call_id UUID REFERENCES calls(id)`);
-    await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS title TEXT`);
-    await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note TEXT`);
-    await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
-
-    // Step 5: seed default data — DO NOTHING means existing data is never touched
-    const adminHash = await bcrypt.hash('password', 10);
-    await pool.query(
-      `INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com',$1,'admin') ON CONFLICT (email) DO NOTHING`,
-      [adminHash]
-    );
-
+  // seed smart lists
+  try {
     await pool.query(`
       INSERT INTO smart_lists (name,filters,sort_order) VALUES
         ('Delinquent Residents','{}',0),('Active Residents','{}',1),
         ('Active Leads','{}',2),('Past Clients','{}',3)
       ON CONFLICT DO NOTHING
     `);
+  } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
 
+  // seed custom fields
+  try {
     await pool.query(`
       INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES
         ('past_due_balance','Past Due Balance','number',0),
@@ -644,18 +655,18 @@ async function initDB() {
         ('lease_end_date','Lease End Date','date',3)
       ON CONFLICT (key) DO NOTHING
     `);
+  } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
 
+  // seed call line
+  try {
     await pool.query(`
       INSERT INTO call_lines (name,twilio_number,description)
       VALUES ('OKCREAL Connect Line','+14052562614','Main OKCREAL line')
       ON CONFLICT DO NOTHING
     `);
+  } catch (e) { console.error('[DB] seed call_lines:', e.message); }
 
-    console.log('✅ DB ready');
-  } catch (e) {
-    console.error('DB init error:', e.message);
-    // Log but don't crash — partial schema is better than no server
-  }
+  console.log('[DB] Init complete');
 }
 
 initDB().then(() => {
