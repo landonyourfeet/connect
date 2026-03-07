@@ -144,10 +144,10 @@ app.get('/api/activities', auth, async (req, res) => {
 
 app.post('/api/activities', auth, async (req, res) => {
   try {
-    const { personId, type, body, duration, recordingUrl, callId } = req.body;
+    const { personId, type, body, duration, recordingUrl, callId, direction } = req.body;
     const r = await pool.query(
-      'INSERT INTO activities (person_id,agent_id,type,body,duration,recording_url,call_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-      [personId, req.agent.id, type||'note', body||null, duration||null, recordingUrl||null, callId||null]
+      'INSERT INTO activities (person_id,agent_id,type,body,duration,recording_url,call_id,direction) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+      [personId, req.agent.id, type||'note', body||null, duration||null, recordingUrl||null, callId||null, direction||'outbound']
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -212,12 +212,17 @@ app.get('/api/custom-fields', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── TWILIO ───────────────────────────────────────────────────────────────────
+// ─── TWILIO HELPERS ───────────────────────────────────────────────────────────
 const initTwilio = () => {
   if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_API_KEY_SID) return null;
   return require('twilio')(process.env.TWILIO_API_KEY_SID, process.env.TWILIO_API_KEY_SECRET, {
     accountSid: process.env.TWILIO_ACCOUNT_SID
   });
+};
+
+const initTwilioFull = () => {
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) return null;
+  return require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 };
 
 const initDeepgram = () => {
@@ -232,7 +237,8 @@ const initGrok = () => {
   return new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
 };
 
-app.get('/api/twilio/token', auth, async (req, res) => {
+// ─── TWILIO TOKEN (GET + POST) ────────────────────────────────────────────────
+const buildTwilioToken = async (req, res) => {
   try {
     const twilio = initTwilio();
     if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
@@ -244,10 +250,16 @@ app.get('/api/twilio/token', auth, async (req, res) => {
       process.env.TWILIO_API_KEY_SECRET,
       { identity: req.agent.id, ttl: 3600 }
     );
-    token.addGrant(new VoiceGrant({ outgoingApplicationSid: process.env.TWILIO_TWIML_APP_SID, incomingAllow: true }));
+    token.addGrant(new VoiceGrant({
+      outgoingApplicationSid: process.env.TWILIO_TWIML_APP_SID,
+      incomingAllow: true
+    }));
     res.json({ token: token.toJwt(), identity: req.agent.id });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+};
+
+app.get('/api/twilio/token', auth, buildTwilioToken);
+app.post('/api/twilio/token', auth, buildTwilioToken);
 
 app.get('/api/twilio/lines', auth, async (req, res) => {
   try {
@@ -256,6 +268,134 @@ app.get('/api/twilio/lines', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── SMS SEND ─────────────────────────────────────────────────────────────────
+app.post('/api/twilio/sms', auth, async (req, res) => {
+  try {
+    // Use full auth client for messaging (API key doesn't support messages.create in all configs)
+    const twilio = initTwilioFull() || initTwilio();
+    if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
+
+    const { to, body, personId, lineId } = req.body;
+    if (!to || !body) return res.status(400).json({ error: 'Missing to or body' });
+
+    // Resolve from number
+    let fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+    if (lineId) {
+      const lineR = await pool.query('SELECT twilio_number FROM call_lines WHERE id=$1', [lineId]);
+      if (lineR.rows[0]) fromNumber = lineR.rows[0].twilio_number;
+    }
+
+    // Insert activity first with status 'sending' so we have the ID for status callback
+    const actR = await pool.query(
+      `INSERT INTO activities (person_id, agent_id, type, body, direction, sms_status)
+       VALUES ($1, $2, 'text', $3, 'outbound', 'sending') RETURNING *`,
+      [personId || null, req.agent.id, body]
+    );
+    const activityId = actR.rows[0].id;
+
+    // Send via Twilio — include statusCallback so we get delivery receipts
+    const statusCallbackUrl = process.env.APP_URL
+      ? `${process.env.APP_URL}/api/twilio/sms-status?activityId=${activityId}`
+      : null;
+
+    try {
+      const msgParams = { body, from: fromNumber, to };
+      if (statusCallbackUrl) msgParams.statusCallback = statusCallbackUrl;
+
+      const message = await twilio.messages.create(msgParams);
+
+      // Update activity with Twilio SID and sent status
+      await pool.query(
+        `UPDATE activities SET message_sid=$1, sms_status='sent' WHERE id=$2`,
+        [message.sid, activityId]
+      );
+
+      res.json({ ok: true, sid: message.sid, activityId });
+    } catch (twilioErr) {
+      // Mark as failed in DB
+      await pool.query(
+        `UPDATE activities SET sms_status='failed', sms_error=$1 WHERE id=$2`,
+        [twilioErr.message, activityId]
+      );
+      res.status(500).json({ error: twilioErr.message, activityId });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── SMS RETRY ────────────────────────────────────────────────────────────────
+app.post('/api/twilio/sms/retry/:activityId', auth, async (req, res) => {
+  try {
+    const twilio = initTwilioFull() || initTwilio();
+    if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
+
+    const actR = await pool.query('SELECT * FROM activities WHERE id=$1', [req.params.activityId]);
+    const act = actR.rows[0];
+    if (!act) return res.status(404).json({ error: 'Activity not found' });
+
+    const personR = act.person_id
+      ? await pool.query('SELECT phone FROM people WHERE id=$1', [act.person_id])
+      : null;
+    const to = personR?.rows[0]?.phone;
+    if (!to) return res.status(400).json({ error: 'No phone number on contact' });
+
+    const fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+
+    // Reset status to sending
+    await pool.query(`UPDATE activities SET sms_status='sending', sms_error=NULL WHERE id=$1`, [act.id]);
+
+    const statusCallbackUrl = process.env.APP_URL
+      ? `${process.env.APP_URL}/api/twilio/sms-status?activityId=${act.id}`
+      : null;
+
+    try {
+      const msgParams = { body: act.body, from: fromNumber, to };
+      if (statusCallbackUrl) msgParams.statusCallback = statusCallbackUrl;
+
+      const message = await twilio.messages.create(msgParams);
+      await pool.query(
+        `UPDATE activities SET message_sid=$1, sms_status='sent' WHERE id=$2`,
+        [message.sid, act.id]
+      );
+      res.json({ ok: true, sid: message.sid });
+    } catch (twilioErr) {
+      await pool.query(
+        `UPDATE activities SET sms_status='failed', sms_error=$1 WHERE id=$2`,
+        [twilioErr.message, act.id]
+      );
+      res.status(500).json({ error: twilioErr.message });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── SMS STATUS WEBHOOK (Twilio delivery receipts) ────────────────────────────
+app.post('/api/twilio/sms-status', async (req, res) => {
+  res.sendStatus(200); // Always respond quickly to Twilio
+  try {
+    const { activityId } = req.query;
+    const { MessageStatus, MessageSid, ErrorCode, ErrorMessage } = req.body;
+    if (!activityId) return;
+
+    // Twilio statuses: queued → sent → delivered / undelivered / failed
+    const statusMap = {
+      queued: 'sending',
+      accepted: 'sending',
+      sending: 'sending',
+      sent: 'sent',
+      delivered: 'delivered',
+      undelivered: 'failed',
+      failed: 'failed'
+    };
+    const mapped = statusMap[MessageStatus] || MessageStatus;
+    const errorMsg = ErrorCode ? `Error ${ErrorCode}: ${ErrorMessage || MessageStatus}` : null;
+
+    await pool.query(
+      `UPDATE activities SET sms_status=$1, sms_error=$2, message_sid=COALESCE($3, message_sid) WHERE id=$4`,
+      [mapped, errorMsg, MessageSid || null, activityId]
+    );
+  } catch (e) { console.error('SMS status webhook error:', e.message); }
+});
+
+// ─── VOICE TWIML ──────────────────────────────────────────────────────────────
 app.post('/api/twilio/voice', async (req, res) => {
   try {
     const VoiceResponse = require('twilio').twiml.VoiceResponse;
@@ -404,6 +544,21 @@ app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Also expose without /admin prefix for frontend compatibility
+app.get('/api/agents', auth, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,is_active,created_at FROM agents ORDER BY name');
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/call-lines', auth, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT * FROM call_lines WHERE is_active=true ORDER BY name');
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/admin/agents', auth, adminOnly, async (req, res) => {
   try {
     const { name, email, password, role, phone, avatarColor } = req.body;
@@ -471,10 +626,6 @@ app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
 });
 
 // ─── DB INIT ──────────────────────────────────────────────────────────────────
-// Each statement is wrapped in its own try/catch so a failure on one table
-// never prevents the others from being created. No foreign key constraints
-// are used — the existing `people` table uses integer PKs from a prior schema
-// and FK type mismatches would cause the whole block to abort.
 async function initDB() {
   const run = async (sql, label) => {
     try { await pool.query(sql); }
@@ -483,7 +634,6 @@ async function initDB() {
 
   await run(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`, 'uuid-ossp');
 
-  // agents — must exist before app boots (login depends on it)
   await run(`
     CREATE TABLE IF NOT EXISTS agents (
       id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -499,7 +649,6 @@ async function initDB() {
     )
   `, 'create agents');
 
-  // people — may already exist with integer PKs; CREATE IF NOT EXISTS is safe
   await run(`
     CREATE TABLE IF NOT EXISTS people (
       id            SERIAL PRIMARY KEY,
@@ -518,7 +667,6 @@ async function initDB() {
     )
   `, 'create people');
 
-  // add any missing columns to existing people table
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS background TEXT`, 'people.background');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`, 'people.tags');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`, 'people.custom_fields');
@@ -527,7 +675,6 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
 
-  // call_lines
   await run(`
     CREATE TABLE IF NOT EXISTS call_lines (
       id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -539,7 +686,6 @@ async function initDB() {
     )
   `, 'create call_lines');
 
-  // line_agents — no FK constraints to avoid type issues
   await run(`
     CREATE TABLE IF NOT EXISTS line_agents (
       line_id  TEXT NOT NULL,
@@ -548,7 +694,6 @@ async function initDB() {
     )
   `, 'create line_agents');
 
-  // smart_lists
   await run(`
     CREATE TABLE IF NOT EXISTS smart_lists (
       id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -558,7 +703,6 @@ async function initDB() {
     )
   `, 'create smart_lists');
 
-  // custom_fields
   await run(`
     CREATE TABLE IF NOT EXISTS custom_fields (
       id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -570,7 +714,6 @@ async function initDB() {
     )
   `, 'create custom_fields');
 
-  // calls — NO foreign keys (avoids integer/UUID type mismatch with old people table)
   await run(`
     CREATE TABLE IF NOT EXISTS calls (
       id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -592,7 +735,6 @@ async function initDB() {
     )
   `, 'create calls');
 
-  // activities — NO foreign keys
   await run(`
     CREATE TABLE IF NOT EXISTS activities (
       id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -603,11 +745,20 @@ async function initDB() {
       body          TEXT,
       duration      INTEGER,
       recording_url TEXT,
+      direction     TEXT DEFAULT 'outbound',
+      sms_status    TEXT DEFAULT NULL,
+      sms_error     TEXT DEFAULT NULL,
+      message_sid   TEXT DEFAULT NULL,
       created_at    TIMESTAMPTZ DEFAULT NOW()
     )
   `, 'create activities');
 
-  // tasks — NO foreign keys
+  // Add new columns to existing activities table if they don't exist
+  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS direction TEXT DEFAULT 'outbound'`, 'activities.direction');
+  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT NULL`, 'activities.sms_status');
+  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_error TEXT DEFAULT NULL`, 'activities.sms_error');
+  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS message_sid TEXT DEFAULT NULL`, 'activities.message_sid');
+
   await run(`
     CREATE TABLE IF NOT EXISTS tasks (
       id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -622,7 +773,7 @@ async function initDB() {
     )
   `, 'create tasks');
 
-  // seed admin — only if agents table was just created (email won't exist yet)
+  // Seed admin
   try {
     const exists = await pool.query(`SELECT 1 FROM agents WHERE email='admin@okcreal.com'`);
     if (exists.rows.length === 0) {
@@ -635,7 +786,7 @@ async function initDB() {
     }
   } catch (e) { console.error('[DB] seed admin:', e.message); }
 
-  // seed smart lists
+  // Seed smart lists
   try {
     await pool.query(`
       INSERT INTO smart_lists (name,filters,sort_order) VALUES
@@ -645,7 +796,7 @@ async function initDB() {
     `);
   } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
 
-  // seed custom fields
+  // Seed custom fields
   try {
     await pool.query(`
       INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES
@@ -657,7 +808,7 @@ async function initDB() {
     `);
   } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
 
-  // seed call line
+  // Seed call line
   try {
     await pool.query(`
       INSERT INTO call_lines (name,twilio_number,description)
