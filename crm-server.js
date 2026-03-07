@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken')
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +14,40 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
+
+// Auto-migration: create missing tables on startup
+async function runMigrations() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS activities (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    person_id UUID REFERENCES people(id) ON DELETE CASCADE,
+                          agent_id UUID,
+                                type TEXT NOT NULL DEFAULT 'note',
+                                      direction TEXT DEFAULT 'outbound',
+                                            content TEXT,
+                                                  summary TEXT,
+                                                        transcript TEXT,
+                                                              recording_url TEXT,
+                                                                    duration INTEGER,
+                                                                          twilio_call_sid TEXT,
+                                                                                processing BOOLEAN DEFAULT false,
+                                                                                      created_at TIMESTAMPTZ DEFAULT NOW()
+                                                                                          );
+                                                                                              CREATE TABLE IF NOT EXISTS tasks (
+                                                                                                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                                                                                                          person_id UUID REFERENCES people(id) ON DELETE CASCADE,
+                                                                                                                agent_id UUID,
+                                                                                                                      text TEXT NOT NULL,
+                                                                                                                            due_date DATE,
+                                                                                                                                  completed BOOLEAN DEFAULT false,
+                                                                                                                                        created_at TIMESTAMPTZ DEFAULT NOW()
+                                                                                                                                            );
+                                                                                                                                                CREATE INDEX IF NOT EXISTS idx_activities_person ON activities(person_id);
+                                                                                                                                                    CREATE INDEX IF NOT EXISTS idx_tasks_person ON tasks(person_id);
+                                                                                                                                                      `);
+    console.log('[DB] Migrations complete');
+}
+runMigrations().catch(e => console.error('[DB] Migration error:', e.message));
 
 // Middleware
 app.use(cors({ origin: '*' }));
