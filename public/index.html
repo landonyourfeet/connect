@@ -1588,6 +1588,12 @@ function handleIncomingCall(conn) {
   const matched = peopleData.find(p => p.phone && p.phone.replace(/\D/g,'') === from.replace(/\D/g,''));
   showCallBar('ringing', matched ? [matched.first_name, matched.last_name].filter(Boolean).join(' ') : from, from);
   if (window.neonGlow) window.neonGlow.ringing();
+
+  // ── Listen for remote hangup on the connection itself ──
+  conn.on('disconnect', handleCallEnd);
+  conn.on('cancel', handleCallEnd);    // caller hung up before answer
+  conn.on('reject', handleCallEnd);    // call declined
+
   try {
     const audio = new AudioContext();
     const osc = audio.createOscillator();
@@ -1620,13 +1626,14 @@ function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); }
 function endCall() { if (activeCall) activeCall.disconnect(); }
 
 function handleCallEnd() {
+  if (!activeCall) return;             // guard against double-fire
+  activeCall = null;
   if (window.neonGlow) window.neonGlow.callEnd();
   stopCallTimer();
   const duration = document.getElementById('call-timer').textContent;
   hideCallBar();
   toast('Call ended · ' + duration, 'info');
   if (currentPersonId) triggerAiSummary();
-  activeCall = null;
 }
 
 function hideCallBar() {
