@@ -1085,6 +1085,7 @@ function renderContactRecord(person, activities, tasks) {
           <button class="cqa-btn cqa-call" onclick="quickCall('${person.id}','${person.phone}','${esc(name)}')">📞 Call</button>
           <button class="cqa-btn cqa-text" onclick="openTextCompose()">💬 Text</button>
           <button class="cqa-btn cqa-note" onclick="openNoteCompose()">📝 Note</button>
+          <button class="cqa-btn" onclick="confirmDeleteLead('${person.id}','${esc(name)}')" style="background:rgba(220,38,38,0.12);color:#f87171;border:1px solid rgba(220,38,38,0.25)" title="Delete contact">🗑 Delete</button>
         </div>
       </div>
       <div class="contact-section">
@@ -1460,6 +1461,35 @@ async function loadAdmin() {
       <div class="admin-section">
         <div class="admin-section-header">
           <div class="admin-section-title">Agents & Users</div>
+          <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="toggleAddUserForm()">+ Add User</button>
+        </div>
+        <!-- Add User Form (hidden by default) -->
+        <div id="add-user-form" style="display:none;padding:20px;border-bottom:1px solid var(--border);background:var(--bg-3)">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end">
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Full Name</div>
+              <input id="new-user-name" type="text" placeholder="Jane Smith" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Email</div>
+              <input id="new-user-email" type="email" placeholder="jane@okcreal.com" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Password</div>
+              <input id="new-user-password" type="password" placeholder="••••••••" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Role</div>
+              <select id="new-user-role" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+                <option value="agent">Agent</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-primary" style="font-size:12px;padding:8px 16px;white-space:nowrap" onclick="submitAddUser()">Create User</button>
+              <button onclick="toggleAddUserForm()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:8px 12px;font-size:12px;cursor:pointer">Cancel</button>
+            </div>
+          </div>
         </div>
         <table class="admin-table">
           <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
@@ -1484,6 +1514,28 @@ async function loadAdmin() {
         </table>
       </div>`;
   } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
+}
+
+function toggleAddUserForm() {
+  const f = document.getElementById('add-user-form');
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById('new-user-name')?.focus();
+}
+
+async function submitAddUser() {
+  const name     = document.getElementById('new-user-name')?.value.trim();
+  const email    = document.getElementById('new-user-email')?.value.trim();
+  const password = document.getElementById('new-user-password')?.value;
+  const role     = document.getElementById('new-user-role')?.value || 'agent';
+  if (!name)     { toast('Name is required', 'error'); return; }
+  if (!email)    { toast('Email is required', 'error'); return; }
+  if (!password || password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+  try {
+    await api('/api/admin/agents', 'POST', { name, email, password, role });
+    toast(`User ${name} created ✓`, 'success');
+    loadAdmin();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
 }
 
 // ── TWILIO ─────────────────────────────────────────────────────────────
@@ -1623,7 +1675,7 @@ async function quickCall(personId, phone, name) {
   }
 
   try {
-    activeCall = await twilioDevice.connect({ params: { To: phone, From: '+14052562614' } });
+    activeCall = await twilioDevice.connect({ params: { To: phone, From: '+14052562614', personId: String(personId), agentId: String(currentUser?.id || '') } });
     if (window.neonGlow) window.neonGlow.callActive();
     showCallBar('active', name, phone);
     startCallTimer();
@@ -1635,17 +1687,64 @@ async function quickCall(personId, phone, name) {
 
 async function triggerAiSummary() {
   if (!currentPersonId) return;
+  // Recording webhook fires async — poll until transcript/summary lands (up to 45s)
   document.body.classList.add('ai-thinking');
-  try {
-    await api('/api/calls/summary', 'POST', { person_id: currentPersonId, duration: callSeconds });
-    setTimeout(async () => {
-      document.body.classList.remove('ai-thinking');
+  const start = Date.now();
+  const poll = async () => {
+    try {
       const activities = await api(`/api/activities?personId=${currentPersonId}`);
-      if (document.getElementById('timeline-scroll')) {
-        document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(activities || []);
+      const el = document.getElementById('timeline-scroll');
+      if (el) el.innerHTML = renderTimelineHTML(activities || []);
+      // Keep polling until a call activity has a real body (not placeholder)
+      const callAct = (activities || []).find(a => a.type === 'call' && a.body && a.body !== 'Transcript processing...' && a.body.length > 5);
+      if (callAct || Date.now() - start > 45000) {
+        document.body.classList.remove('ai-thinking');
+      } else {
+        setTimeout(poll, 5000);
       }
-    }, 4000);
-  } catch(e) { document.body.classList.remove('ai-thinking'); }
+    } catch(e) { document.body.classList.remove('ai-thinking'); }
+  };
+  setTimeout(poll, 8000); // give Twilio time to fire recording webhook
+}
+
+// ── DELETE LEAD ────────────────────────────────────────────────────────
+function confirmDeleteLead(personId, name) {
+  // Build inline confirm modal
+  const existing = document.getElementById('delete-confirm-overlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'delete-confirm-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:28px 32px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+      <div style="font-size:28px;margin-bottom:12px;text-align:center">⚠️</div>
+      <div style="font-family:var(--font-cond);font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:var(--text)">Delete Forever?</div>
+      <div style="font-size:13px;color:var(--text-2);text-align:center;margin-bottom:24px;line-height:1.5">
+        Are you sure you want to permanently delete <strong style="color:var(--text)">${name}</strong>?<br>
+        This will remove all calls, texts, and notes. <strong style="color:#f87171">This cannot be undone.</strong>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button onclick="document.getElementById('delete-confirm-overlay').remove()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="executDeleteLead('${personId}')" style="background:#dc2626;border:none;color:#fff;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer">Yes, Delete Forever</button>
+      </div>
+    </div>`;
+  // Close on backdrop click
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+async function executDeleteLead(personId) {
+  document.getElementById('delete-confirm-overlay')?.remove();
+  try {
+    await api(`/api/people/${personId}`, 'DELETE');
+    toast('Lead deleted', 'info');
+    // Go back to people list
+    peopleData = peopleData.filter(p => p.id !== personId);
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-people')?.classList.add('active');
+    document.getElementById('header-title').textContent = 'All People';
+    loadPeople(currentListId);
+  } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
 // ── MODALS & MISC ──────────────────────────────────────────────────────
