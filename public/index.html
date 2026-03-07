@@ -562,6 +562,45 @@
     /* ── AI GLOW ──────────────────────────────────────────────── */
     body.ai-thinking #main::before { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0; animation: app-glow-pulse 2s ease-in-out infinite; border-radius: inherit; }
     @keyframes app-glow-pulse { 0%,100% { box-shadow: inset 0 0 0 1px transparent; } 50% { box-shadow: inset 0 0 30px rgba(232,0,58,0.08); } }
+    /* ── NEON BORDER GLOW SYSTEM ─────────────────────────────────────── */
+    #app-glow-border {
+      position: fixed; inset: 0; pointer-events: none; z-index: 99999;
+      opacity: 0; transition: opacity 0.3s ease;
+    }
+    #app-glow-border.glow-ringing {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #00c8ff, inset 0 0 40px rgba(0,200,255,0.25), 0 0 0 3px #00c8ff, 0 0 40px rgba(0,200,255,0.4);
+      animation: glow-ring-pulse 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes glow-ring-pulse {
+      from { box-shadow: inset 0 0 0 3px #00c8ff, inset 0 0 30px rgba(0,200,255,0.2), 0 0 0 3px #00c8ff, 0 0 30px rgba(0,200,255,0.35); }
+      to   { box-shadow: inset 0 0 0 4px #00eeff, inset 0 0 60px rgba(0,238,255,0.4), 0 0 0 4px #00eeff, 0 0 60px rgba(0,238,255,0.6); }
+    }
+    #app-glow-border.glow-active-call {
+      opacity: 1;
+      box-shadow: inset 0 0 0 2px #00c8ff, inset 0 0 20px rgba(0,200,255,0.15), 0 0 0 2px #00c8ff, 0 0 20px rgba(0,200,255,0.3);
+    }
+    #app-glow-border.glow-sms-sent {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #00ff88, inset 0 0 50px rgba(0,255,136,0.3), 0 0 0 3px #00ff88, 0 0 50px rgba(0,255,136,0.5);
+      animation: glow-flash 2s ease-out forwards;
+    }
+    #app-glow-border.glow-sms-failed {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #ff3355, inset 0 0 50px rgba(255,51,85,0.3), 0 0 0 3px #ff3355, 0 0 50px rgba(255,51,85,0.5);
+      animation: glow-flash 2s ease-out forwards;
+    }
+    #app-glow-border.glow-sms-received {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #bb44ff, inset 0 0 50px rgba(187,68,255,0.3), 0 0 0 3px #bb44ff, 0 0 50px rgba(187,68,255,0.5);
+      animation: glow-flash 2s ease-out forwards;
+    }
+    @keyframes glow-flash {
+      0%   { opacity: 1; }
+      65%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
 
     /* ── MISC ─────────────────────────────────────────────────── */
     .text-red   { color: var(--red); }
@@ -571,6 +610,7 @@
   </style>
 </head>
 <body>
+<div id="app-glow-border"></div>
 
 <!-- LOGIN SCREEN -->
 <div id="login-screen">
@@ -1136,7 +1176,7 @@ function renderTasksHTML(tasks, personId) {
   }).join('');
 }
 
-function renderTimelineHTML(activities) {
+window.renderTimelineHTML = function renderTimelineHTML(activities) {
   if (!activities.length) return '<div class="people-empty"><div class="empty-icon">📋</div><p>No activity yet</p></div>';
   return [...activities].sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
     .map((act, idx, arr) => renderTimelineItem(act, idx < arr.length - 1)).join('');
@@ -1296,6 +1336,7 @@ async function submitCompose() {
         personId: currentPersonId
       });
       toast('Text sent ✓', 'success');
+      if (window.neonGlow) window.neonGlow.smsSent();
     } else {
       await api('/api/activities', 'POST', {
         personId: currentPersonId,
@@ -1311,6 +1352,7 @@ async function submitCompose() {
     document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(activities || []);
   } catch(e) {
     toast(e.message, 'error');
+    if (window.neonGlow) window.neonGlow.smsFailed();
   } finally {
     btn.disabled = false;
   }
@@ -1493,6 +1535,7 @@ function handleIncomingCall(conn) {
   const from = conn.parameters?.From || 'Unknown';
   const matched = peopleData.find(p => p.phone && p.phone.replace(/\D/g,'') === from.replace(/\D/g,''));
   showCallBar('ringing', matched ? [matched.first_name, matched.last_name].filter(Boolean).join(' ') : from, from);
+  if (window.neonGlow) window.neonGlow.ringing();
   try {
     const audio = new AudioContext();
     const osc = audio.createOscillator();
@@ -1517,6 +1560,7 @@ function showCallBar(state, name, number) {
 function acceptCall() {
   if (!activeCall) return;
   activeCall.accept();
+  if (window.neonGlow) window.neonGlow.callActive();
   showCallBar('active', document.getElementById('call-contact-name').textContent, document.getElementById('call-number').textContent);
   startCallTimer();
 }
@@ -1524,6 +1568,7 @@ function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); }
 function endCall() { if (activeCall) activeCall.disconnect(); }
 
 function handleCallEnd() {
+  if (window.neonGlow) window.neonGlow.callEnd();
   stopCallTimer();
   const duration = document.getElementById('call-timer').textContent;
   hideCallBar();
@@ -1579,6 +1624,7 @@ async function quickCall(personId, phone, name) {
 
   try {
     activeCall = await twilioDevice.connect({ params: { To: phone, From: '+14052562614' } });
+    if (window.neonGlow) window.neonGlow.callActive();
     showCallBar('active', name, phone);
     startCallTimer();
     activeCall.on('disconnect', handleCallEnd);
@@ -1682,6 +1728,97 @@ function formatTranscript(transcript) {
   }
   return esc(JSON.stringify(transcript));
 }
+</script>
+
+<!-- NEON GLOW CONTROLLER -->
+<script>
+(function() {
+  const glowEl = document.getElementById('app-glow-border');
+  let flashTimer = null;
+  let callGlowActive = false;
+
+  function setGlow(cls, duration) {
+    if (!glowEl) return;
+    // Clear any active flash timer
+    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
+    // Remove all glow classes
+    glowEl.className = '';
+    if (!cls) return;
+    // Force reflow so animation restarts
+    void glowEl.offsetWidth;
+    glowEl.classList.add(cls);
+    if (duration) {
+      flashTimer = setTimeout(() => {
+        // Only clear if call isn't active
+        if (!callGlowActive) glowEl.className = '';
+      }, duration);
+    }
+  }
+
+  // Expose globally
+  window.neonGlow = {
+    ringing()      { callGlowActive = true;  setGlow('glow-ringing'); },
+    callActive()   { callGlowActive = true;  setGlow('glow-active-call'); },
+    callEnd()      { callGlowActive = false; setGlow(null); },
+    smsSent()      { if (!callGlowActive) setGlow('glow-sms-sent', 2000); },
+    smsFailed()    { if (!callGlowActive) setGlow('glow-sms-failed', 2000); },
+    smsReceived()  { if (!callGlowActive) setGlow('glow-sms-received', 2000); },
+  };
+})();
+</script>
+
+<!-- INBOUND SMS POLLER -->
+<script>
+(function() {
+  let lastActivityIds = new Set();
+  let pollerInterval = null;
+
+  async function checkForNewInbound() {
+    if (!window.currentPersonId) return;
+    try {
+      const jwt = localStorage.getItem('crm_token');
+      if (!jwt) return;
+      const resp = await fetch(`/api/activities?personId=${window.currentPersonId}`, {
+        headers: { 'Authorization': 'Bearer ' + jwt }
+      });
+      if (!resp.ok) return;
+      const activities = await resp.json();
+      if (!Array.isArray(activities)) return;
+
+      const inbound = activities.filter(a => a.type === 'sms' && a.direction === 'inbound');
+      const newOnes = inbound.filter(a => !lastActivityIds.has(a.id));
+
+      if (lastActivityIds.size > 0 && newOnes.length > 0) {
+        // New inbound SMS arrived — flash purple and refresh timeline
+        if (window.neonGlow) window.neonGlow.smsReceived();
+        const el = document.getElementById('timeline-scroll');
+        if (el) el.innerHTML = window.renderTimelineHTML ? window.renderTimelineHTML(activities) : el.innerHTML;
+      }
+
+      // Update known IDs
+      lastActivityIds = new Set(activities.map(a => a.id));
+    } catch(e) {}
+  }
+
+  // Reset tracker when a new contact is opened
+  const origOpenContact = window.openContact;
+  window.openContact = async function(personId) {
+    lastActivityIds = new Set();
+    if (origOpenContact) await origOpenContact(personId);
+    // Seed known IDs after load
+    try {
+      const jwt = localStorage.getItem('crm_token');
+      const resp = await fetch(`/api/activities?personId=${personId}`, {
+        headers: { 'Authorization': 'Bearer ' + jwt }
+      });
+      const acts = await resp.json();
+      if (Array.isArray(acts)) lastActivityIds = new Set(acts.map(a => a.id));
+    } catch(e) {}
+  };
+
+  // Poll every 8 seconds
+  pollerInterval = setInterval(checkForNewInbound, 8000);
+})();
 </script>
 </body>
 </html>
