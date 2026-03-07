@@ -7,7 +7,7 @@
   <title>OKCREAL Connect</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script src="https://sdk.twilio.com/js/client/v1.14/twilio.js"></script>
+  <script src="https://sdk.twilio.com/js/client/releases/2.11.0/twilio.js"></script>
   <style>
     /* ── DESIGN TOKENS ────────────────────────────────────────── */
     :root {
@@ -1452,10 +1452,10 @@ async function initTwilio() {
     if (!data.token) return;
     if (typeof Twilio === 'undefined') { console.warn('[Twilio] SDK not loaded'); return; }
 
-    twilioDevice = new Twilio.Device();
     twilioReady = false;
+    twilioDevice = new Twilio.Device(data.token, { logLevel: 1, codecPreferences: ['opus', 'pcmu'] });
 
-    twilioDevice.on('ready', () => {
+    twilioDevice.on('registered', () => {
       twilioReady = true;
       console.log('[Twilio] Device ready');
     });
@@ -1466,7 +1466,7 @@ async function initTwilio() {
     twilioDevice.on('incoming', handleIncomingCall);
     twilioDevice.on('disconnect', handleCallEnd);
 
-    twilioDevice.setup(data.token, { debug: false });
+    twilioDevice.register();
   } catch(e) {
     console.warn('[Twilio] Init failed:', e.message);
   }
@@ -1577,7 +1577,7 @@ async function quickCall(personId, phone, name) {
   }
 
   try {
-    activeCall = twilioDevice.connect({ To: phone, From: '+14052562614' });
+    activeCall = await twilioDevice.connect({ params: { To: phone, From: '+14052562614' } });
     showCallBar('active', name, phone);
     startCallTimer();
     activeCall.on('disconnect', handleCallEnd);
