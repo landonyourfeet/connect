@@ -78,14 +78,6 @@
       0%   { background-position: -200% 0; }
       100% { background-position: 200% 0; }
     }
-    @keyframes slide-down {
-      from { transform: translateY(-100%); opacity: 0; }
-      to   { transform: translateY(0); opacity: 1; }
-    }
-    @keyframes slide-up {
-      from { transform: translateY(0); opacity: 1; }
-      to   { transform: translateY(-100%); opacity: 0; }
-    }
     @keyframes fade-in {
       from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -99,6 +91,9 @@
       100% { opacity: 1; letter-spacing: normal; filter: blur(0); }
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes sms-status-spin {
+      to { transform: rotate(360deg); }
+    }
 
     /* ── LOGIN ────────────────────────────────────────────────── */
     #login-screen {
@@ -123,1200 +118,460 @@
       padding: 48px 40px;
       animation: fade-in 0.6s ease forwards;
     }
-    .login-logo {
-      text-align: center;
-      margin-bottom: 36px;
-    }
+    .login-logo { text-align: center; margin-bottom: 36px; }
     .login-logo .wordmark {
       font-family: var(--font-disp);
-      font-size: 42px;
-      letter-spacing: 0.02em;
+      font-size: 42px; letter-spacing: 0.02em;
       animation: logo-appear 0.8s ease forwards;
     }
     .login-logo .wordmark span { color: var(--red); text-shadow: 0 0 20px var(--red-glow); }
     .login-logo .sub {
       font-family: var(--font-cond);
-      font-size: 11px;
-      letter-spacing: 0.3em;
-      color: var(--text-2);
-      margin-top: 4px;
-      text-transform: uppercase;
+      font-size: 11px; letter-spacing: 0.3em;
+      color: var(--text-2); margin-top: 4px; text-transform: uppercase;
     }
     .login-field { margin-bottom: 16px; }
     .login-field label {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--text-2);
-      margin-bottom: 8px;
+      display: block; font-size: 11px; font-weight: 600;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-2); margin-bottom: 8px;
     }
     .login-field input {
       width: 100%; height: 44px;
-      background: var(--bg-3);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 0 14px;
-      color: var(--text);
-      font-size: 14px;
+      background: var(--bg-3); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0 14px;
+      color: var(--text); font-size: 14px;
       transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .login-field input:focus {
-      border-color: var(--red);
-      box-shadow: 0 0 0 3px var(--red-dim);
-    }
+    .login-field input:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
     .login-btn {
       width: 100%; height: 46px; margin-top: 8px;
-      background: var(--red);
-      color: #fff;
-      font-family: var(--font-cond);
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
+      background: var(--red); color: #fff;
+      font-family: var(--font-cond); font-size: 15px; font-weight: 700;
+      letter-spacing: 0.12em; text-transform: uppercase;
       border-radius: var(--radius);
       transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
     }
-    .login-btn:hover {
-      background: #ff1a4e;
-      box-shadow: 0 0 20px var(--red-glow);
-    }
+    .login-btn:hover { background: #ff1a4e; box-shadow: 0 0 20px var(--red-glow); }
     .login-btn:active { transform: scale(0.98); }
     .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .login-error {
-      color: var(--red); font-size: 13px; text-align: center;
-      margin-top: 12px; min-height: 18px;
-    }
+    .login-error { color: var(--red); font-size: 13px; text-align: center; margin-top: 12px; min-height: 18px; }
 
     /* ── APP SHELL ────────────────────────────────────────────── */
-    #app {
-      display: none;
-      height: 100vh;
-      flex-direction: column;
-    }
+    #app { display: none; height: 100vh; flex-direction: column; }
     #app.visible { display: flex; }
 
     /* ── FLOATING CALL BAR ────────────────────────────────────── */
     #call-bar {
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      z-index: 900;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 900;
       transform: translateY(-100%);
       transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     #call-bar.visible { transform: translateY(0); }
     .call-bar-inner {
-      margin: 8px auto;
-      max-width: 620px;
-      background: var(--bg-3);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 12px 16px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
+      margin: 8px auto; max-width: 620px;
+      background: var(--bg-3); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 12px 16px;
+      display: flex; align-items: center; gap: 12px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.6);
     }
-    #call-bar.ringing .call-bar-inner {
-      animation: glow-breathe-green 1.4s ease-in-out infinite;
-      border-color: var(--green);
-    }
-    #call-bar.active .call-bar-inner {
-      border-color: rgba(0,232,122,0.4);
-    }
+    #call-bar.ringing .call-bar-inner { animation: glow-breathe-green 1.4s ease-in-out infinite; border-color: var(--green); }
+    #call-bar.active .call-bar-inner { border-color: rgba(0,232,122,0.4); }
     .call-pulse-ring {
       position: relative; width: 40px; height: 40px;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .call-pulse-ring::before, .call-pulse-ring::after {
-      content: '';
-      position: absolute; inset: 0;
-      border-radius: 50%;
-      border: 2px solid var(--green);
+      content: ''; position: absolute; inset: 0;
+      border-radius: 50%; border: 2px solid var(--green);
       animation: pulse-ring 1.5s ease-out infinite;
     }
     .call-pulse-ring::after { animation-delay: 0.5s; }
     #call-bar:not(.ringing) .call-pulse-ring::before,
     #call-bar:not(.ringing) .call-pulse-ring::after { display: none; }
     .call-avatar {
-      width: 40px; height: 40px;
-      border-radius: 50%;
-      background: var(--bg-5);
-      border: 2px solid var(--green);
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--bg-5); border: 2px solid var(--green);
       display: flex; align-items: center; justify-content: center;
       font-size: 15px; font-weight: 700; color: var(--green);
       position: relative; z-index: 1;
     }
     .call-info { flex: 1; min-width: 0; }
-    .call-status-label {
-      font-size: 10px; font-weight: 600;
-      letter-spacing: 0.15em; text-transform: uppercase;
-      color: var(--green);
-      margin-bottom: 2px;
-    }
-    .call-contact-name {
-      font-family: var(--font-cond);
-      font-size: 17px; font-weight: 700;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .call-number {
-      font-family: var(--font-mono);
-      font-size: 12px; color: var(--text-2);
-    }
-    .call-timer {
-      font-family: var(--font-mono);
-      font-size: 18px; font-weight: 500;
-      color: var(--green);
-      min-width: 52px; text-align: center;
-    }
+    .call-status-label { font-size: 10px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: var(--green); margin-bottom: 2px; }
+    .call-contact-name { font-family: var(--font-cond); font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .call-number { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+    .call-timer { font-family: var(--font-mono); font-size: 18px; font-weight: 500; color: var(--green); min-width: 52px; text-align: center; }
     .call-actions { display: flex; gap: 8px; align-items: center; }
     .call-btn {
-      height: 36px; padding: 0 14px;
-      border-radius: 100px;
-      font-size: 12px; font-weight: 600;
-      letter-spacing: 0.06em;
-      transition: all 0.15s;
-      display: flex; align-items: center; gap: 6px;
+      height: 36px; padding: 0 14px; border-radius: 100px;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+      transition: all 0.15s; display: flex; align-items: center; gap: 6px;
     }
-    .call-btn-accept {
-      background: var(--green); color: #000;
-    }
-    .call-btn-accept:hover {
-      box-shadow: 0 0 16px var(--green-glow); transform: scale(1.04);
-    }
-    .call-btn-decline {
-      background: var(--red); color: #fff;
-    }
-    .call-btn-decline:hover {
-      box-shadow: 0 0 16px var(--red-glow); transform: scale(1.04);
-    }
-    .call-btn-mute, .call-btn-hold {
-      background: var(--bg-5); color: var(--text-2);
-      border: 1px solid var(--border);
-    }
+    .call-btn-accept { background: var(--green); color: #000; }
+    .call-btn-accept:hover { box-shadow: 0 0 16px var(--green-glow); transform: scale(1.04); }
+    .call-btn-decline { background: var(--red); color: #fff; }
+    .call-btn-decline:hover { box-shadow: 0 0 16px var(--red-glow); transform: scale(1.04); }
+    .call-btn-mute, .call-btn-hold { background: var(--bg-5); color: var(--text-2); border: 1px solid var(--border); }
     .call-btn-mute:hover, .call-btn-hold:hover { color: var(--text); border-color: var(--border-hi); }
     .call-btn-mute.active { color: var(--amber); border-color: var(--amber); }
-    .call-btn-end {
-      background: var(--red-dim); color: var(--red);
-      border: 1px solid var(--red);
-    }
+    .call-btn-end { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
     .call-btn-end:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
 
     /* ── MAIN LAYOUT ──────────────────────────────────────────── */
-    .app-body {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
+    .app-body { display: flex; flex: 1; overflow: hidden; }
 
     /* ── SIDEBAR ──────────────────────────────────────────────── */
     #sidebar {
-      width: var(--sidebar-w);
-      flex-shrink: 0;
-      background: var(--bg-2);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
+      width: var(--sidebar-w); flex-shrink: 0;
+      background: var(--bg-2); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
     }
-    .sidebar-logo {
-      padding: 20px 20px 16px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .sidebar-logo .wordmark {
-      font-family: var(--font-disp);
-      font-size: 26px;
-      letter-spacing: 0.02em;
-      line-height: 1;
-    }
+    .sidebar-logo { padding: 20px 20px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .sidebar-logo .wordmark { font-family: var(--font-disp); font-size: 26px; letter-spacing: 0.02em; line-height: 1; }
     .sidebar-logo .wordmark span { color: var(--red); }
-    .sidebar-logo .sub {
-      font-family: var(--font-cond);
-      font-size: 10px;
-      letter-spacing: 0.25em;
-      color: var(--text-3);
-      text-transform: uppercase;
-      margin-top: 3px;
-    }
-
-    /* User status row */
-    .sidebar-user {
-      padding: 12px 16px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .user-avatar {
-      width: 32px; height: 32px;
-      border-radius: 50%;
-      background: var(--bg-5);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; font-weight: 700;
-      color: var(--text-2);
-      position: relative;
-      flex-shrink: 0;
-    }
-    .user-avatar .status-dot {
-      position: absolute;
-      bottom: -1px; right: -1px;
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      border: 2px solid var(--bg-2);
-      background: var(--text-3);
-    }
+    .sidebar-logo .sub { font-family: var(--font-cond); font-size: 10px; letter-spacing: 0.25em; color: var(--text-3); text-transform: uppercase; margin-top: 3px; }
+    .sidebar-user { padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text-2); position: relative; flex-shrink: 0; }
+    .user-avatar .status-dot { position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--bg-2); background: var(--text-3); }
     .user-avatar .status-dot.available { background: var(--green); }
     .user-avatar .status-dot.busy { background: var(--amber); }
     .user-info { flex: 1; min-width: 0; }
-    .user-name {
-      font-size: 13px; font-weight: 600;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .status-toggle {
-      background: none; padding: 0;
-      font-size: 11px; color: var(--text-3);
-      transition: color 0.15s;
-      text-align: left;
-    }
+    .user-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status-toggle { background: none; padding: 0; font-size: 11px; color: var(--text-3); transition: color 0.15s; text-align: left; }
     .status-toggle:hover { color: var(--text-2); }
     .status-toggle.available { color: var(--green); }
     .status-toggle.busy { color: var(--amber); }
-
-    /* Nav */
-    .sidebar-nav {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px 0;
-    }
-    .nav-section-label {
-      padding: 4px 16px 6px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--text-3);
-    }
-    .nav-item {
-      display: flex; align-items: center;
-      padding: 8px 16px;
-      gap: 10px;
-      color: var(--text-2);
-      font-size: 13px; font-weight: 500;
-      cursor: pointer;
-      border-radius: 0;
-      transition: all 0.15s;
-      border-left: 2px solid transparent;
-      position: relative;
-    }
+    .sidebar-nav { flex: 1; overflow-y: auto; padding: 12px 0; }
+    .nav-section-label { padding: 4px 16px 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-3); }
+    .nav-item { display: flex; align-items: center; padding: 8px 16px; gap: 10px; color: var(--text-2); font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 0; transition: all 0.15s; border-left: 2px solid transparent; position: relative; }
     .nav-item:hover { color: var(--text); background: var(--bg-3); }
-    .nav-item.active {
-      color: var(--text);
-      background: var(--red-dim);
-      border-left-color: var(--red);
-    }
-    .nav-item .nav-icon {
-      width: 18px; text-align: center;
-      font-size: 14px; flex-shrink: 0;
-      opacity: 0.7;
-    }
+    .nav-item.active { color: var(--text); background: var(--red-dim); border-left-color: var(--red); }
+    .nav-item .nav-icon { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; opacity: 0.7; }
     .nav-item.active .nav-icon { opacity: 1; }
-    .nav-badge {
-      margin-left: auto;
-      background: var(--bg-5);
-      color: var(--text-2);
-      font-size: 10px; font-weight: 700;
-      padding: 1px 6px;
-      border-radius: 100px;
-      min-width: 20px; text-align: center;
-    }
-    .nav-badge.urgent {
-      background: var(--red-dim);
-      color: var(--red);
-    }
-    .nav-badge.active-list {
-      background: var(--red-dim);
-      color: var(--red);
-    }
-    .nav-divider {
-      height: 1px;
-      background: var(--border);
-      margin: 8px 16px;
-    }
-
-    /* Smart lists section */
-    .smart-lists-header {
-      padding: 8px 16px 4px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .smart-lists-label {
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.18em; text-transform: uppercase;
-      color: var(--text-3);
-    }
-    .new-list-btn {
-      background: none; padding: 2px 4px;
-      color: var(--text-3); font-size: 16px;
-      transition: color 0.15s;
-    }
+    .nav-badge { margin-left: auto; background: var(--bg-5); color: var(--text-2); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 100px; min-width: 20px; text-align: center; }
+    .nav-badge.urgent { background: var(--red-dim); color: var(--red); }
+    .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
+    .smart-lists-header { padding: 8px 16px 4px; display: flex; align-items: center; justify-content: space-between; }
+    .smart-lists-label { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-3); }
+    .new-list-btn { background: none; padding: 2px 4px; color: var(--text-3); font-size: 16px; transition: color 0.15s; }
     .new-list-btn:hover { color: var(--text-2); }
-
-    /* Sidebar bottom */
-    .sidebar-bottom {
-      flex-shrink: 0;
-      padding: 12px 0;
-      border-top: 1px solid var(--border);
-    }
+    .sidebar-bottom { flex-shrink: 0; padding: 12px 0; border-top: 1px solid var(--border); }
 
     /* ── MAIN CONTENT ─────────────────────────────────────────── */
-    #main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      background: var(--bg);
-    }
-
-    /* Header */
-    .main-header {
-      flex-shrink: 0;
-      height: 56px;
-      padding: 0 20px;
-      display: flex; align-items: center; gap: 12px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-2);
-    }
-    .header-title {
-      font-family: var(--font-cond);
-      font-size: 20px; font-weight: 700;
-      letter-spacing: 0.02em;
-    }
-    .header-search {
-      flex: 1; max-width: 360px;
-      display: flex; align-items: center;
-      background: var(--bg-3);
-      border: 1px solid var(--border);
-      border-radius: 100px;
-      padding: 0 14px; gap: 8px;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    .header-search:focus-within {
-      border-color: var(--border-hi);
-      box-shadow: 0 0 0 3px rgba(255,255,255,0.04);
-    }
-    .header-search input {
-      flex: 1; height: 34px;
-      background: none; color: var(--text);
-      font-size: 13px;
-    }
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); position: relative; }
+    .main-header { flex-shrink: 0; height: 56px; padding: 0 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+    .header-title { font-family: var(--font-cond); font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
+    .header-search { flex: 1; max-width: 360px; display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 100px; padding: 0 14px; gap: 8px; transition: border-color 0.2s, box-shadow 0.2s; }
+    .header-search:focus-within { border-color: var(--border-hi); box-shadow: 0 0 0 3px rgba(255,255,255,0.04); }
+    .header-search input { flex: 1; height: 34px; background: none; color: var(--text); font-size: 13px; }
     .header-search input::placeholder { color: var(--text-3); }
     .search-icon { color: var(--text-3); font-size: 14px; }
     .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-    .btn-primary {
-      height: 34px; padding: 0 16px;
-      background: var(--red); color: #fff;
-      border-radius: var(--radius);
-      font-size: 13px; font-weight: 600;
-      display: flex; align-items: center; gap: 6px;
-      transition: all 0.15s;
-    }
+    .btn-primary { height: 34px; padding: 0 16px; background: var(--red); color: #fff; border-radius: var(--radius); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: all 0.15s; }
     .btn-primary:hover { background: #ff1a4e; box-shadow: 0 0 14px var(--red-glow); }
-    .btn-ghost {
-      height: 34px; padding: 0 14px;
-      background: var(--bg-4); color: var(--text-2);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      font-size: 13px; font-weight: 500;
-      transition: all 0.15s;
-    }
+    .btn-ghost { height: 34px; padding: 0 14px; background: var(--bg-4); color: var(--text-2); border-radius: var(--radius); border: 1px solid var(--border); font-size: 13px; font-weight: 500; transition: all 0.15s; }
     .btn-ghost:hover { color: var(--text); border-color: var(--border-hi); }
 
     /* ── VIEWS ────────────────────────────────────────────────── */
     .view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
     .view.active { display: flex; }
 
-    /* ── PEOPLE LIST VIEW ─────────────────────────────────────── */
-    #view-people {
-      overflow: hidden;
-    }
-    .people-toolbar {
-      flex-shrink: 0;
-      padding: 12px 20px;
-      display: flex; align-items: center; gap: 10px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-2);
-    }
-    .people-count {
-      font-size: 12px; color: var(--text-2);
-    }
+    /* ── PEOPLE LIST ──────────────────────────────────────────── */
+    #view-people { overflow: hidden; }
+    .people-toolbar { flex-shrink: 0; padding: 12px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+    .people-count { font-size: 12px; color: var(--text-2); }
     .people-count strong { color: var(--text); }
-    .filter-btn {
-      height: 28px; padding: 0 12px;
-      background: var(--bg-4); color: var(--text-2);
-      border: 1px solid var(--border);
-      border-radius: 100px;
-      font-size: 12px; font-weight: 500;
-      display: flex; align-items: center; gap: 5px;
-      transition: all 0.15s;
-    }
+    .filter-btn { height: 28px; padding: 0 12px; background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border); border-radius: 100px; font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 5px; transition: all 0.15s; }
     .filter-btn:hover { color: var(--text); }
     .filter-btn.active { background: var(--red-dim); color: var(--red); border-color: var(--red); }
-    .bulk-actions {
-      margin-left: auto; display: flex; gap: 6px;
-      opacity: 0; pointer-events: none; transition: opacity 0.2s;
-    }
+    .bulk-actions { margin-left: auto; display: flex; gap: 6px; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
     .bulk-actions.visible { opacity: 1; pointer-events: auto; }
-
-    /* Table */
-    .people-table-wrap {
-      flex: 1; overflow-y: auto;
-    }
-    .people-table {
-      width: 100%; border-collapse: collapse;
-    }
-    .people-table th {
-      position: sticky; top: 0;
-      background: var(--bg-2);
-      padding: 10px 16px;
-      text-align: left;
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.12em; text-transform: uppercase;
-      color: var(--text-3);
-      border-bottom: 1px solid var(--border);
-      cursor: pointer; user-select: none;
-      white-space: nowrap;
-    }
+    .people-table-wrap { flex: 1; overflow-y: auto; }
+    .people-table { width: 100%; border-collapse: collapse; }
+    .people-table th { position: sticky; top: 0; background: var(--bg-2); padding: 10px 16px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
     .people-table th:hover { color: var(--text-2); }
-    .people-table th.sorted { color: var(--text); }
-    .people-table th .sort-arrow { opacity: 0.5; }
-    .people-table th.sorted .sort-arrow { opacity: 1; }
-    .people-table td {
-      padding: 11px 16px;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
-      vertical-align: middle;
-    }
+    .people-table td { padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
     .people-table tr:hover td { background: var(--bg-2); }
     .people-table tr { cursor: pointer; transition: background 0.1s; }
-    .person-row-name {
-      display: flex; align-items: center; gap: 10px;
-    }
-    .person-avatar {
-      width: 32px; height: 32px; border-radius: 50%;
-      background: var(--bg-5);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; font-weight: 700;
-      color: var(--text-2); flex-shrink: 0;
-    }
-    .person-full-name {
-      font-size: 14px; font-weight: 600; color: var(--text);
-    }
-    .person-email {
-      font-size: 12px; color: var(--text-2);
-    }
-    .phone-mono {
-      font-family: var(--font-mono);
-      font-size: 12px; color: var(--text-2);
-      letter-spacing: 0.03em;
-    }
-    .stage-badge {
-      display: inline-flex; align-items: center;
-      padding: 2px 8px;
-      border-radius: 100px;
-      font-size: 11px; font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
+    .person-row-name { display: flex; align-items: center; gap: 10px; }
+    .person-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text-2); flex-shrink: 0; }
+    .person-full-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .person-email { font-size: 12px; color: var(--text-2); }
+    .phone-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); letter-spacing: 0.03em; }
+    .stage-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 100px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
     .stage-lead       { background: var(--blue-dim); color: var(--blue); }
     .stage-active     { background: var(--green-dim); color: var(--green); }
     .stage-past       { background: var(--bg-5); color: var(--text-2); }
     .stage-delinquent { background: var(--red-dim); color: var(--red); animation: glow-breathe-red 2s ease-in-out infinite; }
-    .tag-chip {
-      display: inline-flex; align-items: center;
-      padding: 1px 6px;
-      border-radius: 3px;
-      font-size: 10px; font-weight: 600;
-      letter-spacing: 0.04em;
-      margin: 1px;
-      background: var(--bg-5); color: var(--text-2);
-    }
+    .tag-chip { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; margin: 1px; background: var(--bg-5); color: var(--text-2); }
     .tag-eviction { background: var(--red-dim); color: var(--red); }
     .tag-delinquent { background: rgba(255,140,0,0.12); color: var(--amber); }
     .tag-committed { background: var(--green-dim); color: var(--green); }
     .last-activity { font-size: 12px; color: var(--text-2); }
-    .quick-call-btn {
-      height: 28px; padding: 0 12px;
-      background: var(--green-dim);
-      color: var(--green);
-      border: 1px solid rgba(0,232,122,0.25);
-      border-radius: 100px;
-      font-size: 11px; font-weight: 600;
-      display: flex; align-items: center; gap: 5px;
-      transition: all 0.15s;
-      white-space: nowrap;
-    }
-    .quick-call-btn:hover {
-      background: var(--green); color: #000;
-      box-shadow: 0 0 12px var(--green-glow);
-    }
-    .people-empty {
-      text-align: center; padding: 80px 20px;
-      color: var(--text-3);
-    }
+    .quick-call-btn { height: 28px; padding: 0 12px; background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,232,122,0.25); border-radius: 100px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 5px; transition: all 0.15s; white-space: nowrap; }
+    .quick-call-btn:hover { background: var(--green); color: #000; box-shadow: 0 0 12px var(--green-glow); }
+    .people-empty { text-align: center; padding: 80px 20px; color: var(--text-3); }
     .people-empty .empty-icon { font-size: 40px; margin-bottom: 16px; }
-    .people-empty p { font-size: 14px; }
-    .loader-row td {
-      text-align: center; padding: 60px;
-    }
-    .spinner {
-      width: 28px; height: 28px;
-      border: 2px solid var(--border);
-      border-top-color: var(--red);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      display: inline-block;
-    }
+    .loader-row td { text-align: center; padding: 60px; }
+    .spinner { width: 28px; height: 28px; border: 2px solid var(--border); border-top-color: var(--red); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
 
     /* ── CONTACT RECORD ───────────────────────────────────────── */
-    #view-contact {
-      flex-direction: row;
-      overflow: hidden;
-    }
-    .back-btn {
-      display: flex; align-items: center; gap: 6px;
-      color: var(--text-2); font-size: 12px;
-      cursor: pointer; transition: color 0.15s;
-    }
+    #view-contact { flex-direction: row; overflow: hidden; }
+    .back-btn { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; cursor: pointer; transition: color 0.15s; }
     .back-btn:hover { color: var(--text); }
-
-    /* Left panel */
-    .contact-left {
-      width: 272px; flex-shrink: 0;
-      background: var(--bg-2);
-      border-right: 1px solid var(--border);
-      overflow-y: auto;
-      display: flex; flex-direction: column;
-    }
-    .contact-card-top {
-      padding: 24px 20px 20px;
-      text-align: center;
-      border-bottom: 1px solid var(--border);
-    }
-    .contact-big-avatar {
-      width: 72px; height: 72px;
-      border-radius: 50%;
-      background: var(--bg-5);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 26px; font-weight: 800;
-      margin: 0 auto 14px;
-      border: 2px solid var(--border);
-      transition: border-color 0.3s, box-shadow 0.3s;
-    }
-    .contact-big-avatar.stage-delinquent {
-      border-color: var(--red);
-      box-shadow: 0 0 20px var(--red-glow);
-    }
-    .contact-big-avatar.stage-active {
-      border-color: var(--green);
-    }
-    .contact-record-name {
-      font-family: var(--font-cond);
-      font-size: 22px; font-weight: 700;
-      letter-spacing: 0.01em;
-      margin-bottom: 4px;
-    }
-    .contact-record-phone {
-      font-family: var(--font-mono);
-      font-size: 13px; color: var(--text-2);
-      margin-bottom: 8px;
-      cursor: pointer; transition: color 0.15s;
-    }
+    .contact-left { width: 272px; flex-shrink: 0; background: var(--bg-2); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+    .contact-card-top { padding: 24px 20px 20px; text-align: center; border-bottom: 1px solid var(--border); }
+    .contact-big-avatar { width: 72px; height: 72px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 800; margin: 0 auto 14px; border: 2px solid var(--border); transition: border-color 0.3s, box-shadow 0.3s; }
+    .contact-big-avatar.stage-delinquent { border-color: var(--red); box-shadow: 0 0 20px var(--red-glow); }
+    .contact-big-avatar.stage-active { border-color: var(--green); }
+    .contact-record-name { font-family: var(--font-cond); font-size: 22px; font-weight: 700; letter-spacing: 0.01em; margin-bottom: 4px; }
+    .contact-record-phone { font-family: var(--font-mono); font-size: 13px; color: var(--text-2); margin-bottom: 8px; cursor: pointer; transition: color 0.15s; }
     .contact-record-phone:hover { color: var(--green); }
-    .contact-quick-actions {
-      display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
-    }
-    .cqa-btn {
-      height: 30px; padding: 0 12px;
-      border-radius: 100px;
-      font-size: 11px; font-weight: 600;
-      letter-spacing: 0.04em;
-      display: flex; align-items: center; gap: 5px;
-      transition: all 0.15s;
-    }
+    .contact-quick-actions { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    .cqa-btn { height: 30px; padding: 0 12px; border-radius: 100px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; display: flex; align-items: center; gap: 5px; transition: all 0.15s; }
     .cqa-call { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,232,122,0.25); }
     .cqa-call:hover { background: var(--green); color: #000; box-shadow: 0 0 12px var(--green-glow); }
     .cqa-text { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(0,153,255,0.2); }
     .cqa-text:hover { background: var(--blue); color: #fff; }
     .cqa-note { background: var(--bg-5); color: var(--text-2); border: 1px solid var(--border); }
     .cqa-note:hover { color: var(--text); border-color: var(--border-hi); }
-
-    /* Contact details section */
-    .contact-section {
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
-    }
-    .contact-section-title {
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.15em; text-transform: uppercase;
-      color: var(--text-3); margin-bottom: 10px;
-    }
-    .detail-row {
-      display: flex; align-items: flex-start;
-      gap: 8px; margin-bottom: 8px;
-    }
+    .contact-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+    .contact-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-3); margin-bottom: 10px; }
+    .detail-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
     .detail-row:last-child { margin-bottom: 0; }
-    .detail-label {
-      font-size: 11px; color: var(--text-3);
-      width: 72px; flex-shrink: 0; padding-top: 1px;
-    }
-    .detail-value {
-      font-size: 13px; color: var(--text);
-      flex: 1; word-break: break-word;
-    }
-    .detail-value.clickable { cursor: pointer; color: var(--text-2); }
-    .detail-value.clickable:hover { color: var(--text); }
-
-    /* Stage selector */
-    .stage-select {
-      background: var(--bg-4);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 4px 8px;
-      color: var(--text);
-      font-size: 12px; font-weight: 500;
-      width: 100%;
-      cursor: pointer;
-    }
+    .detail-label { font-size: 11px; color: var(--text-3); width: 72px; flex-shrink: 0; padding-top: 1px; }
+    .detail-value { font-size: 13px; color: var(--text); flex: 1; word-break: break-word; }
+    .stage-select { background: var(--bg-4); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; color: var(--text); font-size: 12px; font-weight: 500; width: 100%; cursor: pointer; }
     .stage-select:focus { border-color: var(--border-hi); }
+    .tags-container { display: flex; flex-wrap: wrap; gap: 4px; }
 
-    /* Tags */
-    .tags-container {
-      display: flex; flex-wrap: wrap; gap: 4px;
-    }
-
-    /* ── TIMELINE (CENTER) ────────────────────────────────────── */
-    .contact-center {
-      flex: 1;
-      display: flex; flex-direction: column;
-      overflow: hidden;
-      min-width: 0;
-    }
-    .timeline-header {
-      flex-shrink: 0;
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-2);
-    }
-    .compose-area {
-      background: var(--bg-3);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      transition: border-color 0.2s;
-    }
+    /* ── TIMELINE ─────────────────────────────────────────────── */
+    .contact-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .timeline-header { flex-shrink: 0; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+    .compose-area { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: border-color 0.2s; }
     .compose-area:focus-within { border-color: var(--border-hi); }
-    .compose-tabs {
-      display: flex;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-4);
-    }
-    .compose-tab {
-      padding: 8px 14px;
-      font-size: 12px; font-weight: 500;
-      color: var(--text-2);
-      cursor: pointer; transition: all 0.15s;
-      border-bottom: 2px solid transparent;
-    }
-    .compose-tab.active {
-      color: var(--text);
-      border-bottom-color: var(--red);
-    }
+    .compose-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-4); }
+    .compose-tab { padding: 8px 14px; font-size: 12px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: all 0.15s; border-bottom: 2px solid transparent; }
+    .compose-tab.active { color: var(--text); border-bottom-color: var(--red); }
     .compose-tab:hover:not(.active) { color: var(--text); }
     .compose-body { padding: 10px 12px; }
-    .compose-input {
-      width: 100%; min-height: 60px; max-height: 150px;
-      background: none; color: var(--text);
-      font-size: 13px; resize: none;
-      border: none; outline: none;
-      font-family: var(--font-body);
-    }
+    .compose-input { width: 100%; min-height: 60px; max-height: 150px; background: none; color: var(--text); font-size: 13px; resize: none; border: none; outline: none; font-family: var(--font-body); }
     .compose-input::placeholder { color: var(--text-3); }
-    .compose-footer {
-      padding: 8px 12px;
-      display: flex; align-items: center; justify-content: flex-end;
-      border-top: 1px solid var(--border);
-      background: var(--bg-4);
-    }
-    .compose-submit {
-      height: 30px; padding: 0 16px;
-      background: var(--red); color: #fff;
-      border-radius: var(--radius);
-      font-size: 12px; font-weight: 600;
-      transition: all 0.15s;
-    }
+    .compose-footer { padding: 8px 12px; display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--border); background: var(--bg-4); }
+    .compose-submit { height: 30px; padding: 0 16px; background: var(--red); color: #fff; border-radius: var(--radius); font-size: 12px; font-weight: 600; transition: all 0.15s; }
     .compose-submit:hover { background: #ff1a4e; box-shadow: 0 0 10px var(--red-glow); }
     .compose-submit:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    /* Filter pills */
-    .timeline-filters {
-      display: flex; gap: 4px; margin-top: 10px;
-      flex-wrap: wrap;
-    }
-    .filter-pill {
-      height: 26px; padding: 0 10px;
-      border-radius: 100px;
-      font-size: 11px; font-weight: 600;
-      background: var(--bg-4); color: var(--text-2);
-      border: 1px solid var(--border);
-      cursor: pointer; transition: all 0.15s;
-      display: flex; align-items: center; gap: 5px;
-    }
+    .timeline-filters { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+    .filter-pill { height: 26px; padding: 0 10px; border-radius: 100px; font-size: 11px; font-weight: 600; background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
     .filter-pill:hover { color: var(--text); }
-    .filter-pill.active {
-      background: var(--red-dim); color: var(--red);
-      border-color: rgba(232,0,58,0.3);
-    }
-    .filter-pill .pill-count {
-      background: rgba(255,255,255,0.1);
-      padding: 0 5px; border-radius: 100px;
-      font-size: 10px;
-    }
-
-    /* Timeline scroll area */
-    .timeline-scroll {
-      flex: 1; overflow-y: auto;
-      padding: 16px 20px;
-    }
-
-    /* Timeline items */
-    .timeline-item {
-      display: flex; gap: 12px;
-      margin-bottom: 16px;
-      animation: fade-in 0.3s ease forwards;
-    }
-    .ti-icon-wrap {
-      flex-shrink: 0;
-      position: relative;
-    }
-    .ti-icon {
-      width: 32px; height: 32px;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 13px;
-    }
+    .filter-pill.active { background: var(--red-dim); color: var(--red); border-color: rgba(232,0,58,0.3); }
+    .filter-pill .pill-count { background: rgba(255,255,255,0.1); padding: 0 5px; border-radius: 100px; font-size: 10px; }
+    .timeline-scroll { flex: 1; overflow-y: auto; padding: 16px 20px; }
+    .timeline-item { display: flex; gap: 12px; margin-bottom: 16px; animation: fade-in 0.3s ease forwards; }
+    .ti-icon-wrap { flex-shrink: 0; position: relative; }
+    .ti-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; }
     .ti-call     { background: var(--green-dim); color: var(--green); }
     .ti-text     { background: var(--blue-dim); color: var(--blue); }
     .ti-note     { background: var(--amber-dim); color: var(--amber); }
     .ti-activity { background: var(--bg-5); color: var(--text-3); }
-    .ti-ai       { background: var(--red-dim); color: var(--red); }
-    .ti-connector {
-      position: absolute;
-      top: 36px; left: 50%; transform: translateX(-50%);
-      width: 1px; background: var(--border);
-    }
+    .ti-connector { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); width: 1px; background: var(--border); }
     .ti-body { flex: 1; min-width: 0; }
-    .ti-header {
-      display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-      margin-bottom: 4px;
-    }
-    .ti-type {
-      font-size: 13px; font-weight: 600;
-    }
-    .ti-agent {
-      font-size: 12px; color: var(--text-2);
-    }
-    .ti-time {
-      font-size: 11px; color: var(--text-3);
-      margin-left: auto;
-    }
-    .ti-content {
-      font-size: 13px; color: var(--text-2);
-      line-height: 1.55;
-    }
-    .ti-content.note-content {
-      background: rgba(255,140,0,0.06);
-      border-left: 2px solid var(--amber);
-      padding: 8px 10px; border-radius: 0 var(--radius) var(--radius) 0;
-      color: var(--text);
-    }
+    .ti-header { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+    .ti-type { font-size: 13px; font-weight: 600; }
+    .ti-agent { font-size: 12px; color: var(--text-2); }
+    .ti-time { font-size: 11px; color: var(--text-3); margin-left: auto; }
+    .ti-content { font-size: 13px; color: var(--text-2); line-height: 1.55; }
+    .ti-content.note-content { background: rgba(255,140,0,0.06); border-left: 2px solid var(--amber); padding: 8px 10px; border-radius: 0 var(--radius) var(--radius) 0; color: var(--text); }
 
-    /* Call timeline item */
-    .call-summary-card {
-      background: var(--bg-3);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 12px;
-      margin-top: 4px;
-    }
-    .call-summary-meta {
-      display: flex; align-items: center; gap: 8px;
-      margin-bottom: 8px;
-    }
-    .call-direction {
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.1em; text-transform: uppercase;
-      padding: 2px 7px; border-radius: 100px;
-    }
+    /* ── CALL CARDS ───────────────────────────────────────────── */
+    .call-summary-card { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-top: 4px; }
+    .call-summary-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .call-direction { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border-radius: 100px; }
     .call-inbound  { background: var(--blue-dim); color: var(--blue); }
     .call-outbound { background: var(--green-dim); color: var(--green); }
     .call-missed   { background: var(--red-dim); color: var(--red); }
-    .call-duration {
-      font-family: var(--font-mono);
-      font-size: 11px; color: var(--text-2);
-    }
-    .ai-summary-text {
-      font-size: 13px; color: var(--text);
-      line-height: 1.6; margin-bottom: 10px;
-    }
-    .ai-thinking-bar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 8px 10px;
-      background: var(--red-dim);
-      border-radius: var(--radius);
-      margin-bottom: 8px;
-      animation: glow-breathe-red 2s ease-in-out infinite;
-    }
-    .ai-thinking-text {
-      font-size: 12px; color: var(--red);
-      font-weight: 500;
-    }
-    .thinking-dots span {
-      display: inline-block;
-      width: 4px; height: 4px;
-      border-radius: 50%;
-      background: var(--red);
-      margin: 0 1px;
-      animation: dot-bounce 1.2s ease-in-out infinite;
-    }
+    .call-duration { font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+    .ai-summary-text { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 10px; }
+    .ai-thinking-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--red-dim); border-radius: var(--radius); margin-bottom: 8px; animation: glow-breathe-red 2s ease-in-out infinite; }
+    .ai-thinking-text { font-size: 12px; color: var(--red); font-weight: 500; }
+    .thinking-dots span { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--red); margin: 0 1px; animation: dot-bounce 1.2s ease-in-out infinite; }
     .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
     .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
-
-    .call-expand-btn {
-      background: none; padding: 0;
-      font-size: 12px; color: var(--text-2);
-      display: flex; align-items: center; gap: 4px;
-      transition: color 0.15s;
-    }
+    .call-expand-btn { background: none; padding: 0; font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 4px; transition: color 0.15s; }
     .call-expand-btn:hover { color: var(--text); }
-    .call-expanded {
-      display: none; margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
-    }
+    .call-expanded { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
     .call-expanded.open { display: block; }
-    .audio-player-wrap {
-      margin-bottom: 10px;
-    }
-    .audio-player-wrap audio {
-      width: 100%; height: 32px;
-      border-radius: var(--radius);
-    }
-    .transcript-content {
-      font-size: 12px; color: var(--text-2);
-      line-height: 1.7;
-      max-height: 200px; overflow-y: auto;
-      padding: 8px; background: var(--bg-4);
-      border-radius: var(--radius);
-    }
+    .audio-player-wrap { margin-bottom: 10px; }
+    .audio-player-wrap audio { width: 100%; height: 32px; border-radius: var(--radius); }
+    .transcript-content { font-size: 12px; color: var(--text-2); line-height: 1.7; max-height: 200px; overflow-y: auto; padding: 8px; background: var(--bg-4); border-radius: var(--radius); }
     .transcript-line { margin-bottom: 4px; }
     .transcript-speaker { font-weight: 700; color: var(--text); }
 
-    /* Text bubbles */
+    /* ── TEXT BUBBLES ─────────────────────────────────────────── */
     .text-thread { margin-top: 4px; }
-    .bubble-wrap {
-      display: flex; margin-bottom: 6px;
-    }
+    .bubble-wrap { display: flex; margin-bottom: 6px; }
     .bubble-wrap.outbound { justify-content: flex-end; }
-    .bubble {
-      max-width: 70%; padding: 8px 12px;
-      border-radius: 16px;
-      font-size: 13px; line-height: 1.4;
+    .bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.4; }
+    .bubble-inbound { background: var(--bg-4); color: var(--text); border-radius: 4px 16px 16px 16px; }
+    .bubble-outbound { background: var(--blue-dim); border: 1px solid rgba(0,153,255,0.2); color: var(--text); border-radius: 16px 4px 16px 16px; }
+    .bubble-time { font-size: 10px; color: var(--text-3); text-align: center; margin-bottom: 8px; }
+
+    /* ── SMS DELIVERY STATUS ──────────────────────────────────── */
+    .sms-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 5px;
+      margin-top: 4px;
+      padding-right: 2px;
     }
-    .bubble-inbound {
-      background: var(--bg-4); color: var(--text);
-      border-radius: 4px 16px 16px 16px;
+    .sms-status-icon {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
-    .bubble-outbound {
-      background: var(--blue-dim);
-      border: 1px solid rgba(0,153,255,0.2);
-      color: var(--text);
-      border-radius: 16px 4px 16px 16px;
+    .sms-status-icon.sending {
+      color: var(--text-3);
     }
-    .bubble-time {
-      font-size: 10px; color: var(--text-3);
-      text-align: center; margin-bottom: 8px;
+    .sms-status-icon.sending::before {
+      content: '';
+      display: inline-block;
+      width: 9px; height: 9px;
+      border: 1.5px solid var(--text-3);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: sms-status-spin 0.8s linear infinite;
+    }
+    .sms-status-icon.sent {
+      color: var(--text-3);
+    }
+    .sms-status-icon.sent::before { content: '✓'; }
+    .sms-status-icon.delivered {
+      color: var(--green);
+    }
+    .sms-status-icon.delivered::before { content: '✓✓'; }
+    .sms-status-icon.failed {
+      color: var(--red);
+    }
+    .sms-status-icon.failed::before { content: '✕'; }
+    .sms-retry-btn {
+      height: 20px;
+      padding: 0 8px;
+      border-radius: 100px;
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(232,0,58,0.3);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .sms-retry-btn:hover {
+      background: var(--red);
+      color: #fff;
+      box-shadow: 0 0 8px var(--red-glow);
+    }
+    .sms-retry-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .sms-error-msg {
+      font-size: 10px;
+      color: var(--red);
+      margin-top: 2px;
+      text-align: right;
     }
 
     /* ── RIGHT PANEL ──────────────────────────────────────────── */
-    .contact-right {
-      width: 268px; flex-shrink: 0;
-      background: var(--bg-2);
-      border-left: 1px solid var(--border);
-      overflow-y: auto;
-    }
-    .right-section {
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .right-section-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 10px;
-    }
-    .right-section-title {
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.15em; text-transform: uppercase;
-      color: var(--text-3);
-    }
-    .add-btn {
-      width: 20px; height: 20px;
-      background: none; color: var(--text-3);
-      font-size: 16px; line-height: 1;
-      transition: color 0.15s;
-      display: flex; align-items: center; justify-content: center;
-    }
+    .contact-right { width: 268px; flex-shrink: 0; background: var(--bg-2); border-left: 1px solid var(--border); overflow-y: auto; }
+    .right-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .right-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .right-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-3); }
+    .add-btn { width: 20px; height: 20px; background: none; color: var(--text-3); font-size: 16px; line-height: 1; transition: color 0.15s; display: flex; align-items: center; justify-content: center; }
     .add-btn:hover { color: var(--text-2); }
-
-    /* Tasks */
-    .task-item {
-      display: flex; align-items: flex-start;
-      gap: 8px; padding: 6px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
-    }
+    .task-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
     .task-item:last-child { border-bottom: none; }
-    .task-check {
-      width: 16px; height: 16px;
-      border-radius: 4px;
-      border: 1.5px solid var(--border-hi);
-      flex-shrink: 0; margin-top: 1px;
-      cursor: pointer; transition: all 0.15s;
-      display: flex; align-items: center; justify-content: center;
-    }
+    .task-check { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border-hi); flex-shrink: 0; margin-top: 1px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
     .task-check:hover { border-color: var(--green); }
-    .task-check.done {
-      background: var(--green); border-color: var(--green);
-      color: #000; font-size: 9px;
-    }
-    .task-text {
-      flex: 1; font-size: 12px; color: var(--text);
-      line-height: 1.4;
-    }
+    .task-check.done { background: var(--green); border-color: var(--green); color: #000; font-size: 9px; }
+    .task-text { flex: 1; font-size: 12px; color: var(--text); line-height: 1.4; }
     .task-text.done { text-decoration: line-through; color: var(--text-3); }
     .task-due { font-size: 10px; color: var(--text-3); display: block; margin-top: 2px; }
     .task-due.overdue { color: var(--red); }
-    .no-tasks {
-      font-size: 12px; color: var(--text-3); text-align: center;
-      padding: 12px 0;
-    }
+    .no-tasks { font-size: 12px; color: var(--text-3); text-align: center; padding: 12px 0; }
 
     /* ── INBOX VIEW ───────────────────────────────────────────── */
-    #view-inbox {
-      overflow: hidden;
-    }
+    #view-inbox { overflow: hidden; }
     .inbox-list { flex: 1; overflow-y: auto; }
-    .inbox-item {
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
-      cursor: pointer; transition: background 0.1s;
-      display: flex; align-items: center; gap: 12px;
-    }
+    .inbox-item { padding: 14px 20px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; display: flex; align-items: center; gap: 12px; }
     .inbox-item:hover { background: var(--bg-2); }
     .inbox-item.unread { background: rgba(232,0,58,0.04); }
-    .inbox-type-icon {
-      width: 36px; height: 36px;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px; flex-shrink: 0;
-    }
+    .inbox-type-icon { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
     .inbox-missed  { background: var(--red-dim); color: var(--red); }
     .inbox-text-in { background: var(--blue-dim); color: var(--blue); }
     .inbox-info { flex: 1; min-width: 0; }
-    .inbox-contact-name {
-      font-size: 14px; font-weight: 600;
-    }
-    .inbox-preview {
-      font-size: 12px; color: var(--text-2);
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
+    .inbox-contact-name { font-size: 14px; font-weight: 600; }
+    .inbox-preview { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .inbox-time { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
-    .inbox-empty {
-      text-align: center; padding: 80px 20px;
-      color: var(--text-3);
-    }
-    .inbox-empty .empty-icon { font-size: 40px; margin-bottom: 16px; }
 
     /* ── ADMIN VIEW ───────────────────────────────────────────── */
-    #view-admin {
-      overflow-y: auto; padding: 24px;
-    }
-    .admin-section {
-      background: var(--bg-2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      margin-bottom: 20px;
-      overflow: hidden;
-    }
-    .admin-section-header {
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .admin-section-title {
-      font-family: var(--font-cond);
-      font-size: 16px; font-weight: 700;
-    }
+    #view-admin { overflow-y: auto; padding: 24px; }
+    .admin-section { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 20px; overflow: hidden; }
+    .admin-section-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .admin-section-title { font-family: var(--font-cond); font-size: 16px; font-weight: 700; }
     .admin-table { width: 100%; border-collapse: collapse; }
-    .admin-table th {
-      padding: 10px 20px;
-      text-align: left;
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.12em; text-transform: uppercase;
-      color: var(--text-3);
-      border-bottom: 1px solid var(--border);
-    }
-    .admin-table td {
-      padding: 12px 20px;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
-      font-size: 13px;
-    }
+    .admin-table th { padding: 10px 20px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); border-bottom: 1px solid var(--border); }
+    .admin-table td { padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; }
     .admin-table tr:last-child td { border-bottom: none; }
-    .role-badge {
-      display: inline-block;
-      padding: 2px 8px; border-radius: 100px;
-      font-size: 10px; font-weight: 700;
-      letter-spacing: 0.08em; text-transform: uppercase;
-    }
+    .role-badge { display: inline-block; padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
     .role-admin { background: var(--red-dim); color: var(--red); }
     .role-agent { background: var(--bg-5); color: var(--text-2); }
-    .online-dot {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--green);
-      margin-right: 6px;
-    }
-    .offline-dot {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--text-3);
-      margin-right: 6px;
-    }
+    .online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; }
+    .offline-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); margin-right: 6px; }
 
     /* ── MODALS ───────────────────────────────────────────────── */
-    .modal-overlay {
-      position: fixed; inset: 0; z-index: 800;
-      background: rgba(0,0,0,0.7);
-      display: flex; align-items: center; justify-content: center;
-      display: none;
-    }
+    .modal-overlay { position: fixed; inset: 0; z-index: 800; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; }
     .modal-overlay.open { display: flex; }
-    .modal {
-      width: 480px; max-width: 94vw;
-      background: var(--bg-2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      animation: fade-in 0.2s ease forwards;
-    }
-    .modal-header {
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .modal-title {
-      font-family: var(--font-cond);
-      font-size: 17px; font-weight: 700;
-    }
-    .modal-close {
-      background: none; color: var(--text-2);
-      font-size: 18px; padding: 2px 6px;
-      transition: color 0.15s;
-    }
+    .modal { width: 480px; max-width: 94vw; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; animation: fade-in 0.2s ease forwards; }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .modal-title { font-family: var(--font-cond); font-size: 17px; font-weight: 700; }
+    .modal-close { background: none; color: var(--text-2); font-size: 18px; padding: 2px 6px; transition: color 0.15s; }
     .modal-close:hover { color: var(--text); }
     .modal-body { padding: 20px; }
-    .modal-footer {
-      padding: 14px 20px;
-      border-top: 1px solid var(--border);
-      display: flex; justify-content: flex-end; gap: 8px;
-    }
+    .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
     .form-field { margin-bottom: 16px; }
     .form-field:last-child { margin-bottom: 0; }
-    .form-label {
-      display: block;
-      font-size: 11px; font-weight: 600;
-      letter-spacing: 0.1em; text-transform: uppercase;
-      color: var(--text-2); margin-bottom: 6px;
-    }
-    .form-input {
-      width: 100%; height: 40px;
-      background: var(--bg-3); color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 0 12px; font-size: 13px;
-      transition: border-color 0.2s;
-    }
+    .form-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); margin-bottom: 6px; }
+    .form-input { width: 100%; height: 40px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; font-size: 13px; transition: border-color 0.2s; }
     .form-input:focus { border-color: var(--border-hi); }
-    .form-select {
-      width: 100%; height: 40px;
-      background: var(--bg-3); color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 0 12px; font-size: 13px;
-      cursor: pointer;
-    }
+    .form-select { width: 100%; height: 40px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; font-size: 13px; cursor: pointer; }
     .form-row { display: flex; gap: 12px; }
     .form-row .form-field { flex: 1; }
 
     /* ── TOAST ────────────────────────────────────────────────── */
-    #toast-container {
-      position: fixed; bottom: 24px; right: 24px;
-      z-index: 9999; display: flex; flex-direction: column; gap: 8px;
-    }
-    .toast {
-      padding: 12px 16px;
-      background: var(--bg-3);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: 13px; color: var(--text);
-      display: flex; align-items: center; gap: 10px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-      animation: fade-in 0.25s ease forwards;
-      max-width: 320px;
-      min-width: 240px;
-    }
+    #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 16px; background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: fade-in 0.25s ease forwards; max-width: 320px; min-width: 240px; }
     .toast.success { border-left: 3px solid var(--green); }
     .toast.error   { border-left: 3px solid var(--red); }
     .toast.info    { border-left: 3px solid var(--blue); }
 
-    /* ── APP GLOW WHEN AI THINKING ────────────────────────────── */
-    body.ai-thinking #main::before {
-      content: '';
-      position: absolute; inset: 0;
-      pointer-events: none; z-index: 0;
-      animation: app-glow-pulse 2s ease-in-out infinite;
-      border-radius: inherit;
-    }
-    @keyframes app-glow-pulse {
-      0%,100% { box-shadow: inset 0 0 0 1px transparent; }
-      50% { box-shadow: inset 0 0 30px rgba(232,0,58,0.08); }
-    }
-    #main { position: relative; }
+    /* ── AI GLOW ──────────────────────────────────────────────── */
+    body.ai-thinking #main::before { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0; animation: app-glow-pulse 2s ease-in-out infinite; border-radius: inherit; }
+    @keyframes app-glow-pulse { 0%,100% { box-shadow: inset 0 0 0 1px transparent; } 50% { box-shadow: inset 0 0 30px rgba(232,0,58,0.08); } }
 
     /* ── MISC ─────────────────────────────────────────────────── */
     .text-red   { color: var(--red); }
     .text-green { color: var(--green); }
     .text-muted { color: var(--text-2); }
     .text-mono  { font-family: var(--font-mono); }
-    .mt4 { margin-top: 4px; }
-    .mt8 { margin-top: 8px; }
   </style>
 </head>
 <body>
 
-<!-- ╔═══════════════════════════════════════════╗ -->
-<!-- ║            LOGIN SCREEN                  ║ -->
-<!-- ╚═══════════════════════════════════════════╝ -->
+<!-- LOGIN SCREEN -->
 <div id="login-screen">
   <div class="login-card">
     <div class="login-logo">
@@ -1336,9 +591,7 @@
   </div>
 </div>
 
-<!-- ╔═══════════════════════════════════════════╗ -->
-<!-- ║          FLOATING CALL BAR               ║ -->
-<!-- ╚═══════════════════════════════════════════╝ -->
+<!-- FLOATING CALL BAR -->
 <div id="call-bar">
   <div class="call-bar-inner">
     <div class="call-pulse-ring">
@@ -1362,9 +615,7 @@
   </div>
 </div>
 
-<!-- ╔═══════════════════════════════════════════╗ -->
-<!-- ║               APP SHELL                  ║ -->
-<!-- ╚═══════════════════════════════════════════╝ -->
+<!-- APP SHELL -->
 <div id="app">
   <div class="app-body">
 
@@ -1374,7 +625,6 @@
         <div class="wordmark">OKC<span style="color:var(--red)">REAL</span></div>
         <div class="sub">Connect</div>
       </div>
-
       <div class="sidebar-user">
         <div class="user-avatar" id="sidebar-avatar">
           <span id="sidebar-initials">?</span>
@@ -1385,43 +635,30 @@
           <button class="status-toggle" id="status-toggle" onclick="cycleStatus()">● Offline</button>
         </div>
       </div>
-
       <div class="sidebar-nav" id="sidebar-nav">
-        <!-- Inbox -->
         <div class="nav-item" data-view="inbox" onclick="navigate('inbox')">
           <span class="nav-icon">📥</span>
           Inbox
           <span class="nav-badge urgent" id="inbox-badge" style="display:none">0</span>
         </div>
-
         <div class="nav-divider"></div>
-
-        <!-- All People -->
         <div class="nav-section-label">People</div>
         <div class="nav-item active" data-view="people" data-list-id="all" onclick="navigate('people','all')">
           <span class="nav-icon">👥</span>
           All People
           <span class="nav-badge" id="badge-all">—</span>
         </div>
-
-        <!-- Smart Lists -->
         <div class="smart-lists-header">
           <span class="smart-lists-label">Smart Lists</span>
           <button class="new-list-btn" title="New list" onclick="openNewListModal()">+</button>
         </div>
-        <div id="smart-lists-nav">
-          <!-- populated by JS -->
-        </div>
-
+        <div id="smart-lists-nav"></div>
         <div class="nav-divider"></div>
-
-        <!-- Admin -->
         <div class="nav-item" data-view="admin" onclick="navigate('admin')">
           <span class="nav-icon">⚙️</span>
           Admin
         </div>
       </div>
-
       <div class="sidebar-bottom">
         <div class="nav-item" onclick="doLogout()" style="color:var(--text-3)">
           <span class="nav-icon">↩</span>
@@ -1432,8 +669,6 @@
 
     <!-- MAIN -->
     <div id="main">
-
-      <!-- Header -->
       <div class="main-header">
         <div class="header-title" id="header-title">All People</div>
         <div class="header-search">
@@ -1477,9 +712,7 @@
       </div>
 
       <!-- VIEW: Contact Record -->
-      <div class="view" id="view-contact">
-        <!-- populated by JS -->
-      </div>
+      <div class="view" id="view-contact"></div>
 
       <!-- VIEW: Inbox -->
       <div class="view" id="view-inbox">
@@ -1492,17 +725,12 @@
           </div>
         </div>
         <div class="inbox-list" id="inbox-list">
-          <div class="inbox-empty">
-            <div class="empty-icon">📭</div>
-            <p>Loading inbox…</p>
-          </div>
+          <div style="text-align:center;padding:80px;color:var(--text-3)"><div class="empty-icon">📭</div><p>Loading inbox…</p></div>
         </div>
       </div>
 
       <!-- VIEW: Admin -->
-      <div class="view" id="view-admin">
-        <!-- populated by JS -->
-      </div>
+      <div class="view" id="view-admin"></div>
 
     </div><!-- /main -->
   </div><!-- /app-body -->
@@ -1517,23 +745,11 @@
     </div>
     <div class="modal-body">
       <div class="form-row">
-        <div class="form-field">
-          <label class="form-label">First Name</label>
-          <input class="form-input" id="nc-first" type="text" placeholder="First" />
-        </div>
-        <div class="form-field">
-          <label class="form-label">Last Name</label>
-          <input class="form-input" id="nc-last" type="text" placeholder="Last" />
-        </div>
+        <div class="form-field"><label class="form-label">First Name</label><input class="form-input" id="nc-first" type="text" placeholder="First" /></div>
+        <div class="form-field"><label class="form-label">Last Name</label><input class="form-input" id="nc-last" type="text" placeholder="Last" /></div>
       </div>
-      <div class="form-field">
-        <label class="form-label">Phone</label>
-        <input class="form-input" id="nc-phone" type="tel" placeholder="+1 (405) 555-0000" />
-      </div>
-      <div class="form-field">
-        <label class="form-label">Email</label>
-        <input class="form-input" id="nc-email" type="email" placeholder="tenant@email.com" />
-      </div>
+      <div class="form-field"><label class="form-label">Phone</label><input class="form-input" id="nc-phone" type="tel" placeholder="+1 (405) 555-0000" /></div>
+      <div class="form-field"><label class="form-label">Email</label><input class="form-input" id="nc-email" type="email" placeholder="tenant@email.com" /></div>
       <div class="form-field">
         <label class="form-label">Stage</label>
         <select class="form-select" id="nc-stage">
@@ -1559,14 +775,8 @@
       <button class="modal-close" onclick="closeModal('modal-new-task')">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-field">
-        <label class="form-label">Task</label>
-        <input class="form-input" id="task-text-input" type="text" placeholder="Follow up on payment…" />
-      </div>
-      <div class="form-field">
-        <label class="form-label">Due Date</label>
-        <input class="form-input" id="task-due-input" type="date" />
-      </div>
+      <div class="form-field"><label class="form-label">Task</label><input class="form-input" id="task-text-input" type="text" placeholder="Follow up on payment…" /></div>
+      <div class="form-field"><label class="form-label">Due Date</label><input class="form-input" id="task-due-input" type="date" /></div>
     </div>
     <div class="modal-footer">
       <button class="btn-ghost" onclick="closeModal('modal-new-task')">Cancel</button>
@@ -1577,9 +787,6 @@
 
 <div id="toast-container"></div>
 
-<!-- ╔═══════════════════════════════════════════╗ -->
-<!-- ║                JAVASCRIPT                 ║ -->
-<!-- ╚═══════════════════════════════════════════╝ -->
 <script>
 // ── STATE ──────────────────────────────────────────────────────────
 const API = '';
@@ -1594,6 +801,7 @@ let sortField = 'last_activity';
 let sortDir = 'desc';
 let searchQuery = '';
 let twilioDevice = null;
+let twilioReady = false;
 let activeCall = null;
 let callTimerInterval = null;
 let callSeconds = 0;
@@ -1605,10 +813,7 @@ let userStatus = 'available';
 
 // ── API HELPERS ─────────────────────────────────────────────────────
 async function api(path, method = 'GET', body = null) {
-  const opts = {
-    method,
-    headers: { 'Content-Type': 'application/json' }
-  };
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (authToken) opts.headers['Authorization'] = `Bearer ${authToken}`;
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(API + path, opts);
@@ -1631,8 +836,7 @@ async function doLogin() {
   btn.disabled = true; btn.textContent = 'Signing in…';
   try {
     const data = await api('/api/auth/login', 'POST', { email, password });
-    authToken = data.token;
-    currentUser = data.agent;
+    authToken = data.token; currentUser = data.agent;
     localStorage.setItem('connect_token', authToken);
     localStorage.setItem('connect_user', JSON.stringify(currentUser));
     launchApp();
@@ -1645,16 +849,14 @@ async function doLogin() {
 
 function doLogout() {
   authToken = null; currentUser = null;
-  localStorage.removeItem('connect_token');
-  localStorage.removeItem('connect_user');
+  localStorage.removeItem('connect_token'); localStorage.removeItem('connect_user');
   if (twilioDevice) { try { twilioDevice.destroy(); } catch(e){} twilioDevice = null; }
+  twilioReady = false;
   document.getElementById('app').classList.remove('visible');
   document.getElementById('login-screen').style.display = 'flex';
 }
 
-document.getElementById('login-password').addEventListener('keydown', e => {
-  if (e.key === 'Enter') doLogin();
-});
+document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 
 // ── APP INIT ────────────────────────────────────────────────────────
 async function launchApp() {
@@ -1674,9 +876,7 @@ function updateSidebarUser() {
   setStatus('available');
 }
 
-if (authToken && currentUser) {
-  launchApp();
-}
+if (authToken && currentUser) launchApp();
 
 // ── STATUS ──────────────────────────────────────────────────────────
 function setStatus(s) {
@@ -1690,38 +890,23 @@ function setStatus(s) {
 }
 function cycleStatus() {
   const states = ['available', 'busy', 'offline'];
-  const idx = states.indexOf(userStatus);
-  setStatus(states[(idx + 1) % states.length]);
+  setStatus(states[(states.indexOf(userStatus) + 1) % states.length]);
 }
 
 // ── NAVIGATION ──────────────────────────────────────────────────────
 function navigate(view, listId = null) {
   currentView = view;
   if (listId) currentListId = listId;
-
-  // Update active nav item
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.remove('active');
-    if (el.dataset.view === view && (!listId || el.dataset.listId === listId)) {
-      el.classList.add('active');
-    }
+    if (el.dataset.view === view && (!listId || el.dataset.listId === listId)) el.classList.add('active');
   });
-
-  // Show/hide views
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   const viewEl = document.getElementById('view-' + view);
   if (viewEl) viewEl.classList.add('active');
-
-  // Load data for view
-  if (view === 'people') {
-    loadPeople(listId);
-  } else if (view === 'inbox') {
-    loadInbox();
-    document.getElementById('header-title').textContent = 'Inbox';
-  } else if (view === 'admin') {
-    loadAdmin();
-    document.getElementById('header-title').textContent = 'Admin';
-  }
+  if (view === 'people') loadPeople(listId);
+  else if (view === 'inbox') { loadInbox(); document.getElementById('header-title').textContent = 'Inbox'; }
+  else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
 }
 
 // ── SMART LISTS ─────────────────────────────────────────────────────
@@ -1729,24 +914,17 @@ async function loadSmartLists() {
   try {
     smartLists = await api('/api/smart-lists');
     renderSmartListsNav();
-  } catch(e) {
-    console.warn('Smart lists:', e.message);
-  }
+  } catch(e) { console.warn('Smart lists:', e.message); }
 }
 
 function renderSmartListsNav() {
   const nav = document.getElementById('smart-lists-nav');
-  if (!smartLists.length) {
-    nav.innerHTML = '<div style="padding:4px 16px;font-size:12px;color:var(--text-3)">No lists yet</div>';
-    return;
-  }
+  if (!smartLists.length) { nav.innerHTML = '<div style="padding:4px 16px;font-size:12px;color:var(--text-3)">No lists yet</div>'; return; }
   nav.innerHTML = smartLists.map(list => {
-    const isUrgent = (list.name || '').toLowerCase().includes('delinquent') || (list.name || '').toLowerCase().includes('eviction');
-    const badgeClass = isUrgent ? 'nav-badge urgent' : 'nav-badge';
+    const isUrgent = (list.name||'').toLowerCase().includes('delinquent') || (list.name||'').toLowerCase().includes('eviction');
     return `<div class="nav-item" data-view="people" data-list-id="${list.id}" onclick="navigate('people','${list.id}')">
-      <span class="nav-icon">▼</span>
-      ${esc(list.name)}
-      <span class="${badgeClass}" id="badge-${list.id}">${list.count != null ? list.count : '—'}</span>
+      <span class="nav-icon">▼</span>${esc(list.name)}
+      <span class="${isUrgent?'nav-badge urgent':'nav-badge'}" id="badge-${list.id}">—</span>
     </div>`;
   }).join('');
 }
@@ -1764,7 +942,6 @@ async function loadPeople(listId = 'all') {
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
     document.getElementById('header-title').textContent = listName;
     document.getElementById('people-count').innerHTML = `<strong>${peopleData.length}</strong> people`;
-    // update badge
     const badge = document.getElementById('badge-' + listId);
     if (badge) badge.textContent = peopleData.length;
     renderPeopleTable();
@@ -1781,33 +958,26 @@ function renderPeopleTable() {
   }
   const sorted = [...peopleData].sort((a, b) => {
     let va = a[sortField] || '', vb = b[sortField] || '';
-    if (sortField === 'name') { va = ((a.first_name||'') + (a.last_name||'')).toLowerCase(); vb = ((b.first_name||'') + (b.last_name||'')).toLowerCase(); }
+    if (sortField === 'name') { va = ((a.first_name||'')+(a.last_name||'')).toLowerCase(); vb = ((b.first_name||'')+(b.last_name||'')).toLowerCase(); }
     return sortDir === 'asc' ? va > vb ? 1 : -1 : va < vb ? 1 : -1;
   });
   tbody.innerHTML = sorted.map(p => {
     const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown';
     const initials = name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
     const stage = p.stage || 'Lead';
-    const stageCls = stageClass(stage);
     const tags = parseTags(p.tags);
     const lastAct = p.last_activity ? timeAgo(p.last_activity) : '—';
-    const assigned = p.assigned_agent || '—';
     return `<tr onclick="openContact('${p.id}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="row-check" value="${p.id}" onchange="updateBulkActions()"></td>
-      <td>
-        <div class="person-row-name">
-          <div class="person-avatar">${initials}</div>
-          <div>
-            <div class="person-full-name">${esc(name)}</div>
-            ${p.email ? `<div class="person-email">${esc(p.email)}</div>` : ''}
-          </div>
-        </div>
-      </td>
+      <td><div class="person-row-name">
+        <div class="person-avatar">${initials}</div>
+        <div><div class="person-full-name">${esc(name)}</div>${p.email?`<div class="person-email">${esc(p.email)}</div>`:''}</div>
+      </div></td>
       <td><span class="phone-mono">${formatPhone(p.phone)}</span></td>
-      <td><span class="stage-badge ${stageCls}">${esc(stage)}</span></td>
-      <td>${tags.map(t => `<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join(' ')}</td>
+      <td><span class="stage-badge ${stageClass(stage)}">${esc(stage)}</span></td>
+      <td>${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join(' ')}</td>
       <td><span class="last-activity">${lastAct}</span></td>
-      <td><span class="text-muted" style="font-size:12px">${esc(assigned)}</span></td>
+      <td><span class="text-muted" style="font-size:12px">${esc(p.assigned_agent||'—')}</span></td>
       <td onclick="event.stopPropagation()">
         <button class="quick-call-btn" onclick="quickCall('${p.id}','${p.phone}','${esc(name)}')">📞 Call</button>
       </td>
@@ -1833,19 +1003,16 @@ function toggleSelectAll(cb) {
   updateBulkActions();
 }
 function updateBulkActions() {
-  const any = document.querySelectorAll('.row-check:checked').length > 0;
-  document.getElementById('bulk-actions').classList.toggle('visible', any);
+  document.getElementById('bulk-actions').classList.toggle('visible', document.querySelectorAll('.row-check:checked').length > 0);
 }
 
 // ── CONTACT RECORD ───────────────────────────────────────────────────
 async function openContact(personId) {
   currentPersonId = personId;
   const viewEl = document.getElementById('view-contact');
-  viewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3)"><div class="spinner"></div></div>';
-
+  viewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:height:100%;color:var(--text-3)"><div class="spinner" style="margin:auto;margin-top:120px"></div></div>';
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   viewEl.classList.add('active');
-
   try {
     const [person, activities, tasks] = await Promise.all([
       api(`/api/people/${personId}`),
@@ -1864,18 +1031,12 @@ function renderContactRecord(person, activities, tasks) {
   const initials = name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
   const stage = person.stage || 'Lead';
   const tags = parseTags(person.tags);
-  const stageCls = stageClass(stage);
   document.getElementById('header-title').textContent = name;
 
-  const tasksHtml = renderTasksHTML(tasks, person.id);
-  const timelineHtml = renderTimelineHTML(activities);
-  const customFieldsHtml = renderCustomFieldsHTML(person);
-
   viewEl.innerHTML = `
-    <!-- Left panel -->
     <div class="contact-left">
       <div class="contact-card-top">
-        <div class="contact-big-avatar ${stageCls}">${initials}</div>
+        <div class="contact-big-avatar ${stageClass(stage)}">${initials}</div>
         <div class="contact-record-name">${esc(name)}</div>
         <div class="contact-record-phone" onclick="quickCall('${person.id}','${person.phone}','${esc(name)}')">${formatPhone(person.phone)}</div>
         ${person.email ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:8px">${esc(person.email)}</div>` : ''}
@@ -1885,7 +1046,6 @@ function renderContactRecord(person, activities, tasks) {
           <button class="cqa-btn cqa-note" onclick="openNoteCompose()">📝 Note</button>
         </div>
       </div>
-
       <div class="contact-section">
         <div class="contact-section-title">Details</div>
         <div class="detail-row">
@@ -1894,36 +1054,17 @@ function renderContactRecord(person, activities, tasks) {
             ${['Lead','Active Tenant','Past Tenant','Property Owner','Vendor','Delinquent'].map(s=>`<option value="${s}" ${stage===s?'selected':''}>${s}</option>`).join('')}
           </select>
         </div>
-        <div class="detail-row">
-          <span class="detail-label">Phone</span>
-          <span class="detail-value"><span class="phone-mono">${formatPhone(person.phone)}</span></span>
-        </div>
+        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value"><span class="phone-mono">${formatPhone(person.phone)}</span></span></div>
         ${person.email ? `<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value" style="font-size:12px;word-break:break-all">${esc(person.email)}</span></div>` : ''}
-        <div class="detail-row">
-          <span class="detail-label">Source</span>
-          <span class="detail-value" style="font-size:12px;color:var(--text-2)">${esc(person.source || '—')}</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Assigned</span>
-          <span class="detail-value" style="font-size:12px">${esc(person.assigned_agent || 'Unassigned')}</span>
-        </div>
+        <div class="detail-row"><span class="detail-label">Source</span><span class="detail-value" style="font-size:12px;color:var(--text-2)">${esc(person.source||'—')}</span></div>
       </div>
-
-      ${tags.length ? `<div class="contact-section">
-        <div class="contact-section-title">Tags</div>
-        <div class="tags-container">
-          ${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join('')}
-        </div>
-      </div>` : ''}
-
-      ${customFieldsHtml}
-
+      ${tags.length ? `<div class="contact-section"><div class="contact-section-title">Tags</div><div class="tags-container">${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join('')}</div></div>` : ''}
+      ${renderCustomFieldsHTML(person)}
       <div class="contact-section" style="border-bottom:none">
         <button onclick="navigate('people',currentListId)" class="back-btn">← Back to list</button>
       </div>
     </div>
 
-    <!-- Center: Timeline -->
     <div class="contact-center">
       <div class="timeline-header">
         <div class="compose-area" id="compose-area">
@@ -1942,39 +1083,28 @@ function renderContactRecord(person, activities, tasks) {
         <div class="timeline-filters">
           <button class="filter-pill active" data-filter="all" onclick="filterTimeline('all',this)">All</button>
           <button class="filter-pill" data-filter="call" onclick="filterTimeline('call',this)">📞 Calls <span class="pill-count">${activities.filter(a=>a.type==='call').length}</span></button>
-          <button class="filter-pill" data-filter="text" onclick="filterTimeline('text',this)">💬 Texts <span class="pill-count">${activities.filter(a=>a.type==='text').length}</span></button>
+          <button class="filter-pill" data-filter="text" onclick="filterTimeline('text',this)">💬 Texts <span class="pill-count">${activities.filter(a=>a.type==='text'||a.type==='sms').length}</span></button>
           <button class="filter-pill" data-filter="note" onclick="filterTimeline('note',this)">📝 Notes <span class="pill-count">${activities.filter(a=>a.type==='note').length}</span></button>
-          <button class="filter-pill" data-filter="activity" onclick="filterTimeline('activity',this)">⚡ Activity <span class="pill-count">${activities.filter(a=>a.type==='activity').length}</span></button>
         </div>
       </div>
-      <div class="timeline-scroll" id="timeline-scroll">
-        ${timelineHtml}
-      </div>
+      <div class="timeline-scroll" id="timeline-scroll">${renderTimelineHTML(activities)}</div>
     </div>
 
-    <!-- Right panel -->
     <div class="contact-right">
       <div class="right-section">
         <div class="right-section-header">
           <span class="right-section-title">Tasks</span>
           <button class="add-btn" onclick="openAddTaskModal('${person.id}')">+</button>
         </div>
-        <div id="tasks-list">${tasksHtml}</div>
+        <div id="tasks-list">${renderTasksHTML(tasks, person.id)}</div>
       </div>
-
       <div class="right-section">
-        <div class="right-section-header">
-          <span class="right-section-title">GROKFUB Status</span>
-        </div>
-        <div id="grokfub-status-area" style="font-size:12px;color:var(--text-2)">
-          ${tags.some(t=>t.toLowerCase().includes('eviction')) ?
-            `<div style="color:var(--red);font-weight:600;margin-bottom:4px">⚠️ Eviction Alert Active</div>` : ''}
-          ${tags.some(t=>t.toLowerCase().includes('delinquent')) ?
-            `<div style="color:var(--amber);margin-bottom:4px">💰 Delinquent Account</div>` : ''}
-          ${tags.some(t=>t.toLowerCase().includes('committed')) ?
-            `<div style="color:var(--green);margin-bottom:4px">✅ Payment Committed</div>` : ''}
-          ${!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k))) ?
-            '<div style="color:var(--text-3)">No active flags</div>' : ''}
+        <div class="right-section-header"><span class="right-section-title">Status Flags</span></div>
+        <div style="font-size:12px;color:var(--text-2)">
+          ${tags.some(t=>t.toLowerCase().includes('eviction')) ? `<div style="color:var(--red);font-weight:600;margin-bottom:4px">⚠️ Eviction Alert Active</div>` : ''}
+          ${tags.some(t=>t.toLowerCase().includes('delinquent')) ? `<div style="color:var(--amber);margin-bottom:4px">💰 Delinquent Account</div>` : ''}
+          ${tags.some(t=>t.toLowerCase().includes('committed')) ? `<div style="color:var(--green);margin-bottom:4px">✅ Payment Committed</div>` : ''}
+          ${!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k))) ? '<div style="color:var(--text-3)">No active flags</div>' : ''}
         </div>
       </div>
     </div>
@@ -1983,20 +1113,10 @@ function renderContactRecord(person, activities, tasks) {
 
 function renderCustomFieldsHTML(person) {
   const fields = [];
-  if (person.past_due_balance != null && person.past_due_balance !== '') {
-    fields.push({ label: 'Past Due', value: `$${parseFloat(person.past_due_balance).toFixed(2)}`, color: 'var(--red)' });
-  }
-  if (person.payment_commitment_date) {
-    fields.push({ label: 'Promised', value: formatDate(person.payment_commitment_date) });
-  }
+  if (person.past_due_balance != null && person.past_due_balance !== '') fields.push({ label: 'Past Due', value: `$${parseFloat(person.past_due_balance).toFixed(2)}`, color: 'var(--red)' });
+  if (person.payment_commitment_date) fields.push({ label: 'Promised', value: formatDate(person.payment_commitment_date) });
   if (!fields.length) return '';
-  return `<div class="contact-section">
-    <div class="contact-section-title">Payment Info</div>
-    ${fields.map(f=>`<div class="detail-row">
-      <span class="detail-label">${f.label}</span>
-      <span class="detail-value" style="${f.color?`color:${f.color};font-weight:700`:'font-size:12px'}">${f.value}</span>
-    </div>`).join('')}
-  </div>`;
+  return `<div class="contact-section"><div class="contact-section-title">Payment Info</div>${fields.map(f=>`<div class="detail-row"><span class="detail-label">${f.label}</span><span class="detail-value" style="${f.color?`color:${f.color};font-weight:700`:'font-size:12px'}">${f.value}</span></div>`).join('')}</div>`;
 }
 
 function renderTasksHTML(tasks, personId) {
@@ -2007,8 +1127,8 @@ function renderTasksHTML(tasks, personId) {
     const isOverdue = due && due < new Date() && !done;
     return `<div class="task-item" id="task-${t.id}">
       <div class="task-check ${done?'done':''}" onclick="toggleTask('${t.id}','${personId}',${done})">${done?'✓':''}</div>
-      <div class="task-text ${done?'done':''}" style="flex:1">
-        ${esc(t.text || t.title || t.description || '')}
+      <div class="task-text ${done?'done':''}">
+        ${esc(t.text||t.title||t.description||'')}
         ${due ? `<span class="task-due ${isOverdue?'overdue':''}">${isOverdue?'Overdue: ':'Due: '}${formatDate(t.due_date)}</span>` : ''}
       </div>
     </div>`;
@@ -2016,63 +1136,55 @@ function renderTasksHTML(tasks, personId) {
 }
 
 function renderTimelineHTML(activities) {
-  if (!activities.length) {
-    return '<div class="people-empty"><div class="empty-icon">📋</div><p>No activity yet</p></div>';
-  }
-  const sorted = [...activities].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-  return sorted.map((act, idx) => renderTimelineItem(act, idx < sorted.length - 1)).join('');
+  if (!activities.length) return '<div class="people-empty"><div class="empty-icon">📋</div><p>No activity yet</p></div>';
+  return [...activities].sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+    .map((act, idx, arr) => renderTimelineItem(act, idx < arr.length - 1)).join('');
 }
 
 function renderTimelineItem(act, hasConnector) {
   const type = act.type || 'activity';
   const agent = act.agent_name || act.agent || 'System';
   const time = act.created_at ? timeAgo(act.created_at) : '';
-  let iconCls = 'ti-activity', iconChar = '•';
-  let typeLabel = 'Activity';
-  let bodyHtml = `<div class="ti-content">${esc(act.body || act.content || act.note || '')}</div>`;
+  let iconCls = 'ti-activity', iconChar = '•', typeLabel = 'Activity';
+  let bodyHtml = `<div class="ti-content">${esc(act.body||act.content||act.note||'')}</div>`;
 
   if (type === 'call') {
     iconCls = 'ti-call'; iconChar = '📞'; typeLabel = 'Call';
     const dir = act.direction || 'outbound';
-    const dirLabel = dir === 'inbound' ? 'Inbound' : dir === 'missed' ? 'Missed' : 'Outbound';
-    const dirCls = 'call-' + dir;
-    const duration = (act.duration || act.duration_seconds) ? formatDuration(act.duration || act.duration_seconds) : '';
-    const hasRecording = act.call_recording_url || act.recording_url;
-    const hasSummary = act.summary;
-    const hasTranscript = act.transcript;
+    const duration = (act.duration||act.duration_seconds) ? formatDuration(act.duration||act.duration_seconds) : '';
     const cardId = 'call-card-' + act.id;
-
     bodyHtml = `<div class="call-summary-card" id="${cardId}">
       <div class="call-summary-meta">
-        <span class="call-direction ${dirCls}">${dirLabel}</span>
+        <span class="call-direction call-${dir === 'inbound' ? 'inbound' : dir === 'missed' ? 'missed' : 'outbound'}">${dir === 'inbound' ? 'Inbound' : dir === 'missed' ? 'Missed' : 'Outbound'}</span>
         ${duration ? `<span class="call-duration">${duration}</span>` : ''}
       </div>
-      ${hasSummary ? `<div class="ai-summary-text">${esc(act.summary)}</div>` : ''}
-      ${!hasSummary && !act.processing ? `<div class="ti-content" style="color:var(--text-3);font-style:italic">${act.body || act.content || 'No summary yet'}</div>` : ''}
-      ${act.processing ? `<div class="ai-thinking-bar">
-        <span style="font-size:14px">✦</span>
-        <span class="ai-thinking-text">OKCREAL AI is writing a summary</span>
-        <span class="thinking-dots"><span></span><span></span><span></span></span>
-      </div>` : ''}
-      ${(hasSummary || hasTranscript || hasRecording) ? `
+      ${act.summary ? `<div class="ai-summary-text">${esc(act.summary)}</div>` : ''}
+      ${!act.summary ? `<div class="ti-content" style="color:var(--text-3);font-style:italic">${act.body||act.content||'No summary yet'}</div>` : ''}
+      ${(act.summary || act.transcript || act.recording_url) ? `
         <button class="call-expand-btn" onclick="toggleCallExpand('${cardId}')">▶ Recording & Transcript</button>
         <div class="call-expanded" id="${cardId}-expanded">
-          ${hasRecording ? `<div class="audio-player-wrap"><audio controls src="${act.call_recording_url || act.recording_url}"></audio></div>` : ''}
-          ${hasTranscript ? `<div class="transcript-content">${formatTranscript(act.transcript)}</div>` : ''}
-        </div>
-      ` : ''}
+          ${act.recording_url ? `<div class="audio-player-wrap"><audio controls src="${act.recording_url}"></audio></div>` : ''}
+          ${act.transcript ? `<div class="transcript-content">${formatTranscript(act.transcript)}</div>` : ''}
+        </div>` : ''}
     </div>`;
+
   } else if (type === 'text' || type === 'sms') {
     iconCls = 'ti-text'; iconChar = '💬'; typeLabel = 'Text';
     const dir = act.direction || 'outbound';
+    const isOutbound = dir !== 'inbound';
+    const smsStatusHtml = isOutbound ? renderSmsStatus(act) : '';
     bodyHtml = `<div class="text-thread">
-      <div class="bubble-wrap ${dir}">
-        <div class="bubble bubble-${dir === 'inbound' ? 'inbound' : 'outbound'}">${esc(act.body || act.content || '')}</div>
+      <div class="bubble-wrap ${isOutbound ? 'outbound' : ''}">
+        <div>
+          <div class="bubble ${isOutbound ? 'bubble-outbound' : 'bubble-inbound'}">${esc(act.body||act.content||'')}</div>
+          ${smsStatusHtml}
+        </div>
       </div>
     </div>`;
+
   } else if (type === 'note') {
     iconCls = 'ti-note'; iconChar = '📝'; typeLabel = 'Note';
-    bodyHtml = `<div class="ti-content note-content">${esc(act.body || act.content || '')}</div>`;
+    bodyHtml = `<div class="ti-content note-content">${esc(act.body||act.content||'')}</div>`;
   }
 
   return `<div class="timeline-item" data-type="${type}">
@@ -2091,36 +1203,77 @@ function renderTimelineItem(act, hasConnector) {
   </div>`;
 }
 
+// ── SMS STATUS RENDERING ─────────────────────────────────────────────
+function renderSmsStatus(act) {
+  const status = act.sms_status || 'sent'; // activities without sms_status are old entries
+  const actId = act.id;
+  const personId = act.person_id || currentPersonId;
+
+  let iconHtml = '';
+  let retryHtml = '';
+  let errorHtml = '';
+
+  if (status === 'sending') {
+    iconHtml = `<span class="sms-status-icon sending" title="Sending…"></span>`;
+  } else if (status === 'sent') {
+    iconHtml = `<span class="sms-status-icon sent" title="Sent"></span>`;
+  } else if (status === 'delivered') {
+    iconHtml = `<span class="sms-status-icon delivered" title="Delivered"></span>`;
+  } else if (status === 'failed') {
+    iconHtml = `<span class="sms-status-icon failed" title="${esc(act.sms_error||'Failed')}"></span>`;
+    retryHtml = `<button class="sms-retry-btn" id="retry-btn-${actId}" onclick="retrySms('${actId}','${personId}')" title="Tap to retry">↺ Retry</button>`;
+    if (act.sms_error) errorHtml = `<div class="sms-error-msg">${esc(act.sms_error)}</div>`;
+  } else if (status === null || status === undefined) {
+    // Legacy activity — no status tracked, show nothing
+    return '';
+  }
+
+  return `<div class="sms-status-row">${iconHtml}${retryHtml}</div>${errorHtml}`;
+}
+
+// ── SMS RETRY ─────────────────────────────────────────────────────────
+async function retrySms(activityId, personId) {
+  const btn = document.getElementById('retry-btn-' + activityId);
+  if (btn) { btn.disabled = true; btn.textContent = '↺ Retrying…'; }
+  try {
+    await api(`/api/twilio/sms/retry/${activityId}`, 'POST');
+    toast('Retrying send…', 'info');
+    // Poll briefly then reload timeline to show updated status
+    setTimeout(async () => {
+      const acts = await api(`/api/activities?personId=${personId}`);
+      if (document.getElementById('timeline-scroll')) {
+        document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(acts || []);
+      }
+    }, 2500);
+  } catch(e) {
+    toast('Retry failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '↺ Retry'; }
+  }
+}
+
+// ── TIMELINE HELPERS ─────────────────────────────────────────────────
 function toggleCallExpand(cardId) {
-  const expanded = document.getElementById(cardId + '-expanded');
-  if (expanded) expanded.classList.toggle('open');
+  document.getElementById(cardId + '-expanded')?.classList.toggle('open');
 }
 
 function filterTimeline(type, btn) {
   document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
   btn.classList.add('active');
-  const items = document.querySelectorAll('.timeline-item');
-  items.forEach(item => {
-    if (type === 'all' || item.dataset.type === type) {
-      item.style.display = 'flex';
-    } else {
-      item.style.display = 'none';
-    }
+  document.querySelectorAll('.timeline-item').forEach(item => {
+    item.style.display = (type === 'all' || item.dataset.type === type) ? 'flex' : 'none';
   });
 }
 
-// Compose
+// ── COMPOSE ───────────────────────────────────────────────────────────
 let composeTab = 'note';
 function setComposeTab(tab) {
   composeTab = tab;
-  ['note','text','logcall'].forEach(t => {
-    document.getElementById('ctab-' + t)?.classList.toggle('active', t === tab);
-  });
+  ['note','text','logcall'].forEach(t => document.getElementById('ctab-'+t)?.classList.toggle('active', t === tab));
   const input = document.getElementById('compose-input');
-  const submitBtn = document.getElementById('compose-submit');
-  if (tab === 'note') { input.placeholder = 'Add a note…'; submitBtn.textContent = 'Save Note'; }
-  else if (tab === 'text') { input.placeholder = 'Type a message to send…'; submitBtn.textContent = 'Send Text'; }
-  else { input.placeholder = 'What happened on this call?'; submitBtn.textContent = 'Log Call'; }
+  const btn = document.getElementById('compose-submit');
+  if (tab === 'note') { input.placeholder = 'Add a note…'; btn.textContent = 'Save Note'; }
+  else if (tab === 'text') { input.placeholder = 'Type a message to send via SMS…'; btn.textContent = 'Send Text'; }
+  else { input.placeholder = 'What happened on this call?'; btn.textContent = 'Log Call'; }
 }
 function openNoteCompose() { setComposeTab('note'); document.getElementById('compose-input')?.focus(); }
 function openTextCompose() { setComposeTab('text'); document.getElementById('compose-input')?.focus(); }
@@ -2130,17 +1283,29 @@ async function submitCompose() {
   if (!content) return;
   const btn = document.getElementById('compose-submit');
   btn.disabled = true;
+
   try {
-    const type = composeTab === 'logcall' ? 'note' : composeTab;
-    await api('/api/activities', 'POST', {
-      personId: currentPersonId,
-      type,
-      body: content,
-      direction: 'outbound'
-    });
+    if (composeTab === 'text') {
+      // Actually send the SMS via Twilio
+      const person = await api(`/api/people/${currentPersonId}`);
+      if (!person.phone) { toast('Contact has no phone number', 'error'); return; }
+      await api('/api/twilio/sms', 'POST', {
+        to: person.phone,
+        body: content,
+        personId: currentPersonId
+      });
+      toast('Text sent ✓', 'success');
+    } else {
+      await api('/api/activities', 'POST', {
+        personId: currentPersonId,
+        type: composeTab === 'logcall' ? 'note' : composeTab,
+        body: content,
+        direction: 'outbound'
+      });
+      toast('Saved ✓', 'success');
+    }
+
     document.getElementById('compose-input').value = '';
-    toast('Saved ✓', 'success');
-    // Reload timeline
     const activities = await api(`/api/activities?personId=${currentPersonId}`);
     document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(activities || []);
   } catch(e) {
@@ -2162,29 +1327,24 @@ async function submitTask() {
   const due = document.getElementById('task-due-input').value;
   if (!text) return;
   try {
-    await api('/api/tasks', 'POST', { personId: currentTaskPersonId, title: text, due_date: due || null });
+    await api('/api/tasks', 'POST', { personId: currentTaskPersonId, title: text, due_date: due||null });
     closeModal('modal-new-task');
     toast('Task added ✓', 'success');
     const tasks = await api(`/api/tasks?personId=${currentTaskPersonId}`);
-    document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks || [], currentTaskPersonId);
-  } catch(e) {
-    toast(e.message, 'error');
-  }
+    document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks||[], currentTaskPersonId);
+  } catch(e) { toast(e.message, 'error'); }
 }
 async function toggleTask(taskId, personId, done) {
   try {
     await api(`/api/tasks/${taskId}`, 'PUT', { completed: !done, title: ' ' });
     const tasks = await api(`/api/tasks?personId=${personId}`);
-    document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks || [], personId);
+    document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks||[], personId);
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// Stage update
 async function updatePersonStage(personId, stage) {
-  try {
-    await api(`/api/people/${personId}`, 'PUT', { stage });
-    toast('Stage updated ✓', 'success');
-  } catch(e) { toast(e.message, 'error'); }
+  try { await api(`/api/people/${personId}`, 'PUT', { stage }); toast('Stage updated ✓', 'success'); }
+  catch(e) { toast(e.message, 'error'); }
 }
 
 // ── NEW CONTACT ───────────────────────────────────────────────────────
@@ -2208,7 +1368,7 @@ async function createContact() {
 async function loadInboxCount() {
   try {
     const data = await api('/api/inbox');
-    const total = (data.missed_calls || []).length + (data.unread_texts || []).length;
+    const total = (data.missed_calls||[]).length + (data.unread_texts||[]).length;
     const badge = document.getElementById('inbox-badge');
     if (total > 0) { badge.textContent = total; badge.style.display = 'inline'; }
     else badge.style.display = 'none';
@@ -2220,45 +1380,27 @@ async function loadInbox() {
   listEl.innerHTML = '<div style="text-align:center;padding:60px"><div class="spinner"></div></div>';
   try {
     const data = await api('/api/inbox');
-    const missed = data.missed_calls || [];
-    const texts = data.unread_texts || [];
     let items = [];
-    if (inboxFilter === 'all' || inboxFilter === 'missed') {
-      items = items.concat(missed.map(c => ({ ...c, _type: 'missed' })));
-    }
-    if (inboxFilter === 'all' || inboxFilter === 'texts') {
-      items = items.concat(texts.map(t => ({ ...t, _type: 'text' })));
-    }
+    if (inboxFilter === 'all' || inboxFilter === 'missed') items = items.concat((data.missed_calls||[]).map(c=>({...c,_type:'missed'})));
+    if (inboxFilter === 'all' || inboxFilter === 'texts') items = items.concat((data.unread_texts||[]).map(t=>({...t,_type:'text'})));
     items.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-    if (!items.length) {
-      listEl.innerHTML = '<div class="inbox-empty"><div class="empty-icon">✨</div><p>All caught up!</p></div>';
-      return;
-    }
+    if (!items.length) { listEl.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-3)"><div style="font-size:40px;margin-bottom:16px">✨</div><p>All caught up!</p></div>'; return; }
     listEl.innerHTML = items.map(item => {
-      const name = item.contact_name || item.from_number || item.phone || 'Unknown';
+      const name = item.contact_name||item.from_number||item.phone||'Unknown';
       const icon = item._type === 'missed' ? '📞' : '💬';
-      const iconCls = item._type === 'missed' ? 'inbox-missed' : 'inbox-text-in';
-      const preview = item._type === 'missed' ? 'Missed call' : (item.body || item.content || '');
-      const t = item.created_at ? timeAgo(item.created_at) : '';
-      return `<div class="inbox-item unread" onclick="${item.person_id ? `openContact('${item.person_id}')` : ''}">
-        <div class="inbox-type-icon ${iconCls}">${icon}</div>
-        <div class="inbox-info">
-          <div class="inbox-contact-name">${esc(name)}</div>
-          <div class="inbox-preview">${esc(preview)}</div>
-        </div>
-        <div class="inbox-time">${t}</div>
+      const preview = item._type === 'missed' ? 'Missed call' : (item.body||item.content||'');
+      return `<div class="inbox-item unread" onclick="${item.person_id?`openContact('${item.person_id}')`:''}"}>
+        <div class="inbox-type-icon ${item._type==='missed'?'inbox-missed':'inbox-text-in'}">${icon}</div>
+        <div class="inbox-info"><div class="inbox-contact-name">${esc(name)}</div><div class="inbox-preview">${esc(preview)}</div></div>
+        <div class="inbox-time">${item.created_at?timeAgo(item.created_at):''}</div>
       </div>`;
     }).join('');
-  } catch(e) {
-    listEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</div>`;
-  }
+  } catch(e) { listEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</div>`; }
 }
 
 function setInboxFilter(f) {
   inboxFilter = f;
-  ['all','missed','texts'].forEach(x => {
-    document.getElementById('inbox-filter-' + x)?.classList.toggle('active', x === f);
-  });
+  ['all','missed','texts'].forEach(x => document.getElementById('inbox-filter-'+x)?.classList.toggle('active', x === f));
   loadInbox();
 }
 
@@ -2275,59 +1417,74 @@ async function loadAdmin() {
       <div class="admin-section">
         <div class="admin-section-header">
           <div class="admin-section-title">Agents & Users</div>
-          <button class="btn-primary" onclick="openNewAgentModal()">+ Add Agent</button>
         </div>
         <table class="admin-table">
           <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
-          <tbody>
-            ${(agents || []).map(a => `<tr>
-              <td>${esc(a.name || '')}</td>
-              <td style="color:var(--text-2);font-size:12px">${esc(a.email || '')}</td>
-              <td><span class="role-badge ${a.role === 'admin' ? 'role-admin' : 'role-agent'}">${a.role || 'agent'}</span></td>
-              <td><span class="${a.is_online ? 'online-dot' : 'offline-dot'}"></span>${a.is_online ? 'Online' : 'Offline'}</td>
-            </tr>`).join('')}
-          </tbody>
+          <tbody>${(agents||[]).map(a=>`<tr>
+            <td>${esc(a.name||'')}</td>
+            <td style="color:var(--text-2);font-size:12px">${esc(a.email||'')}</td>
+            <td><span class="role-badge ${a.role==='admin'?'role-admin':'role-agent'}">${a.role||'agent'}</span></td>
+            <td><span class="${a.is_online?'online-dot':'offline-dot'}"></span>${a.is_online?'Online':'Offline'}</td>
+          </tr>`).join('')}</tbody>
         </table>
       </div>
-
       <div class="admin-section">
-        <div class="admin-section-header">
-          <div class="admin-section-title">Call Lines & Routing</div>
-        </div>
+        <div class="admin-section-header"><div class="admin-section-title">Call Lines & Routing</div></div>
         <table class="admin-table">
           <thead><tr><th>Line Name</th><th>Number</th><th>Description</th><th>Status</th></tr></thead>
-          <tbody>
-            ${(callLines || []).map(l => `<tr>
-              <td style="font-weight:600">${esc(l.name || '')}</td>
-              <td><span class="phone-mono" style="color:var(--green)">${formatPhone(l.twilio_number)}</span></td>
-              <td style="color:var(--text-2);font-size:12px">${esc(l.description || '')}</td>
-              <td><span class="${l.is_active ? 'online-dot' : 'offline-dot'}"></span>${l.is_active ? 'Active' : 'Inactive'}</td>
-            </tr>`).join('')}
-          </tbody>
+          <tbody>${(callLines||[]).map(l=>`<tr>
+            <td style="font-weight:600">${esc(l.name||'')}</td>
+            <td><span class="phone-mono" style="color:var(--green)">${formatPhone(l.twilio_number)}</span></td>
+            <td style="color:var(--text-2);font-size:12px">${esc(l.description||'')}</td>
+            <td><span class="${l.is_active?'online-dot':'offline-dot'}"></span>${l.is_active?'Active':'Inactive'}</td>
+          </tr>`).join('')}</tbody>
         </table>
-      </div>
-    `;
-  } catch(e) {
-    viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`;
-  }
+      </div>`;
+  } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
 }
 
 // ── TWILIO ─────────────────────────────────────────────────────────────
 async function initTwilio() {
   if (userStatus === 'offline') return;
   try {
-    const data = await api('/api/twilio/token', 'POST');
+    // Use GET — matches backend handler
+    const data = await api('/api/twilio/token', 'GET');
     if (!data.token) return;
-    if (typeof Twilio === 'undefined') return;
+    if (typeof Twilio === 'undefined') { console.warn('[Twilio] SDK not loaded'); return; }
+
     twilioDevice = new Twilio.Device();
-    twilioDevice.setup(data.token, { debug: false });
-    twilioDevice.on('ready', () => console.log('[Twilio] Ready'));
-    twilioDevice.on('error', err => console.warn('[Twilio]', err));
+    twilioReady = false;
+
+    twilioDevice.on('ready', () => {
+      twilioReady = true;
+      console.log('[Twilio] Device ready');
+    });
+    twilioDevice.on('error', err => {
+      twilioReady = false;
+      console.warn('[Twilio] Error:', err.message || err);
+    });
     twilioDevice.on('incoming', handleIncomingCall);
     twilioDevice.on('disconnect', handleCallEnd);
+
+    twilioDevice.setup(data.token, { debug: false });
   } catch(e) {
     console.warn('[Twilio] Init failed:', e.message);
   }
+}
+
+// Wait for Twilio device to become ready (with timeout)
+function waitForTwilioReady(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    if (twilioReady) return resolve();
+    const start = Date.now();
+    const check = setInterval(() => {
+      if (twilioReady) { clearInterval(check); resolve(); }
+      else if (Date.now() - start > timeoutMs) {
+        clearInterval(check);
+        reject(new Error('Phone not ready — check Twilio configuration'));
+      }
+    }, 200);
+  });
 }
 
 function handleIncomingCall(conn) {
@@ -2335,12 +1492,10 @@ function handleIncomingCall(conn) {
   const from = conn.parameters?.From || 'Unknown';
   const matched = peopleData.find(p => p.phone && p.phone.replace(/\D/g,'') === from.replace(/\D/g,''));
   showCallBar('ringing', matched ? [matched.first_name, matched.last_name].filter(Boolean).join(' ') : from, from);
-  // play ringtone
   try {
     const audio = new AudioContext();
     const osc = audio.createOscillator();
-    osc.connect(audio.destination);
-    osc.frequency.value = 440;
+    osc.connect(audio.destination); osc.frequency.value = 440;
     osc.start(); osc.stop(audio.currentTime + 0.3);
   } catch(e) {}
 }
@@ -2355,31 +1510,24 @@ function showCallBar(state, name, number) {
   document.getElementById('call-actions-incoming').style.display = state === 'ringing' ? 'flex' : 'none';
   document.getElementById('call-actions-active').style.display = state === 'active' ? 'flex' : 'none';
   document.getElementById('call-timer').style.display = state === 'active' ? 'inline' : 'none';
-  bar.classList.add('visible', state);
-  requestAnimationFrame(() => bar.classList.add('visible'));
+  requestAnimationFrame(() => bar.classList.add('visible', state));
 }
 
 function acceptCall() {
-  if (activeCall) {
-    activeCall.accept();
-    showCallBar('active',
-      document.getElementById('call-contact-name').textContent,
-      document.getElementById('call-number').textContent
-    );
-    startCallTimer();
-  }
+  if (!activeCall) return;
+  activeCall.accept();
+  showCallBar('active', document.getElementById('call-contact-name').textContent, document.getElementById('call-number').textContent);
+  startCallTimer();
 }
-function declineCall() { if (activeCall) { activeCall.reject(); } hideCallBar(); }
-function endCall() { if (activeCall) { activeCall.disconnect(); } }
+function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); }
+function endCall() { if (activeCall) activeCall.disconnect(); }
 
 function handleCallEnd() {
   stopCallTimer();
+  const duration = document.getElementById('call-timer').textContent;
   hideCallBar();
-  toast('Call ended · ' + document.getElementById('call-timer').textContent, 'info');
-  // trigger AI summary if on contact record
-  if (currentPersonId) {
-    triggerAiSummary();
-  }
+  toast('Call ended · ' + duration, 'info');
+  if (currentPersonId) triggerAiSummary();
   activeCall = null;
 }
 
@@ -2400,7 +1548,7 @@ function stopCallTimer() { clearInterval(callTimerInterval); }
 
 function toggleMute() {
   isMuted = !isMuted;
-  if (activeCall) isMuted ? activeCall.mute() : activeCall.mute(false);
+  if (activeCall) activeCall.mute(isMuted);
   const btn = document.getElementById('mute-btn');
   btn.classList.toggle('active', isMuted);
   btn.textContent = isMuted ? '🔇 Unmute' : '🎤 Mute';
@@ -2415,11 +1563,19 @@ function toggleHold() {
 
 async function quickCall(personId, phone, name) {
   if (!phone) { toast('No phone number', 'error'); return; }
-  if (!twilioDevice) {
-    toast('Connecting…', 'info');
-    await initTwilio();
-    if (!twilioDevice) { toast('Phone not ready. Check your connection.', 'error'); return; }
+
+  // Ensure Twilio is initialized and ready before connecting
+  if (!twilioDevice || !twilioReady) {
+    toast('Connecting phone…', 'info');
+    if (!twilioDevice) await initTwilio();
+    try {
+      await waitForTwilioReady();
+    } catch(e) {
+      toast(e.message, 'error');
+      return;
+    }
   }
+
   try {
     activeCall = twilioDevice.connect({ To: phone, From: '+14052562614' });
     showCallBar('active', name, phone);
@@ -2434,7 +1590,7 @@ async function triggerAiSummary() {
   if (!currentPersonId) return;
   document.body.classList.add('ai-thinking');
   try {
-    await api(`/api/calls/summary`, 'POST', { person_id: currentPersonId, duration: callSeconds });
+    await api('/api/calls/summary', 'POST', { person_id: currentPersonId, duration: callSeconds });
     setTimeout(async () => {
       document.body.classList.remove('ai-thinking');
       const activities = await api(`/api/activities?personId=${currentPersonId}`);
@@ -2442,26 +1598,17 @@ async function triggerAiSummary() {
         document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(activities || []);
       }
     }, 4000);
-  } catch(e) {
-    document.body.classList.remove('ai-thinking');
-  }
+  } catch(e) { document.body.classList.remove('ai-thinking'); }
 }
 
-// ── SMART LIST MODAL ──────────────────────────────────────────────────
-function openNewListModal() {
-  toast('Smart list builder coming soon', 'info');
-}
-
-// ── MODALS ─────────────────────────────────────────────────────────────
+// ── MODALS & MISC ──────────────────────────────────────────────────────
+function openNewListModal() { toast('Smart list builder coming soon', 'info'); }
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 function openNewContactModal() { openModal('modal-new-contact'); }
 
-// Close modal on overlay click
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) overlay.classList.remove('open');
-  });
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
 });
 
 // ── TOAST ──────────────────────────────────────────────────────────────
@@ -2511,7 +1658,7 @@ function parseTags(tags) {
 function stageClass(stage) {
   const s = (stage||'').toLowerCase();
   if (s.includes('lead')) return 'stage-lead';
-  if (s.includes('active') || s.includes('tenant')) return 'stage-active';
+  if (s.includes('active')||s.includes('tenant')) return 'stage-active';
   if (s.includes('past')) return 'stage-past';
   if (s.includes('delinquent')) return 'stage-delinquent';
   return 'stage-lead';
@@ -2527,7 +1674,7 @@ function formatTranscript(transcript) {
   if (!transcript) return '';
   if (typeof transcript === 'string') {
     return transcript.split('\n').map(line => {
-      const m = line.match(/^(Agent|Tenant|Speaker \d+):\s*(.+)/i);
+      const m = line.match(/^(Agent|Tenant|Caller|Speaker \d+):\s*(.+)/i);
       if (m) return `<div class="transcript-line"><span class="transcript-speaker">${esc(m[1])}:</span> ${esc(m[2])}</div>`;
       return `<div class="transcript-line">${esc(line)}</div>`;
     }).join('');
