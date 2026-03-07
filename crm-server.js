@@ -406,18 +406,21 @@ app.post('/api/twilio/voice', async (req, res) => {
     const VoiceResponse = require('twilio').twiml.VoiceResponse;
     const response = new VoiceResponse();
     const { To, CallerId, personId, lineId, agentId } = req.body;
+    const callSid = req.body.CallSid;
     if (!To) { response.say('No destination number provided.'); return res.type('xml').send(response.toString()); }
     const dial = response.dial({
       callerId: CallerId || process.env.TWILIO_RESIDENT_NUMBER,
       record: 'record-from-ringing-dual',
-      recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`
+      recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
+      recordingStatusCallbackMethod: 'POST'
     });
-    dial.number({ statusCallbackEvent: 'completed', statusCallback: `${process.env.APP_URL}/api/twilio/status` }, To);
-    if (personId && agentId) {
+    dial.number({ statusCallbackEvent: 'initiated ringing answered completed', statusCallback: `${process.env.APP_URL}/api/twilio/status`, statusCallbackMethod: 'POST' }, To);
+    // Always create call record so recording webhook can find it
+    if (callSid) {
       pool.query(
         'INSERT INTO calls (twilio_call_sid,person_id,agent_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (twilio_call_sid) DO NOTHING',
-        [req.body.CallSid, personId, agentId, lineId||null, 'outbound', 'initiated', CallerId||process.env.TWILIO_RESIDENT_NUMBER, To]
-      ).catch(() => {});
+        [callSid, personId||null, agentId||null, lineId||null, 'outbound', 'initiated', CallerId||process.env.TWILIO_RESIDENT_NUMBER, To]
+      ).catch(e => console.error('Insert call error:', e.message));
     }
     res.type('xml').send(response.toString());
   } catch (e) { console.error(e); res.status(500).send('<Response><Say>Error</Say></Response>'); }
@@ -441,11 +444,21 @@ app.post('/api/twilio/inbound', async (req, res) => {
       const aR = await pool.query('SELECT a.* FROM agents a JOIN line_agents la ON la.agent_id::text=a.id::text WHERE la.line_id=$1 AND a.is_active=true', [line.id]);
       agents = aR.rows;
     }
+    // Fallback: ring ALL active agents if none assigned to this line
+    if (agents.length === 0) {
+      const aR = await pool.query('SELECT * FROM agents WHERE is_active=true');
+      agents = aR.rows;
+    }
     if (agents.length === 0) {
       response.say('You have reached OKCREAL. Please leave a message after the beep.');
       response.record({ maxLength: 120, recordingStatusCallback: `${process.env.APP_URL}/api/twilio/voicemail?callId=${callInsert.rows[0].id}` });
     } else {
-      const dial = response.dial({ record: 'record-from-ringing-dual', recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording` });
+      const dial = response.dial({
+        record: 'record-from-ringing-dual',
+        recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
+        recordingStatusCallbackMethod: 'POST',
+        timeout: 30
+      });
       agents.forEach(a => dial.client(a.id));
     }
     res.type('xml').send(response.toString());
@@ -813,13 +826,32 @@ async function initDB() {
     `);
   } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
 
-  // Seed call line
+  // Seed call line + link admin agent to it
   try {
+    // Remove duplicate lines, keep only the oldest
+    await pool.query(`
+      DELETE FROM call_lines WHERE id NOT IN (
+        SELECT MIN(id::text)::uuid FROM call_lines GROUP BY twilio_number
+      )
+    `).catch(() => {});
+    // Insert line if not exists
     await pool.query(`
       INSERT INTO call_lines (name,twilio_number,description)
       VALUES ('OKCREAL Connect Line','+14052562614','Main OKCREAL line')
       ON CONFLICT DO NOTHING
     `);
+    // Link ALL active agents to the line automatically
+    const lineR = await pool.query(`SELECT id FROM call_lines WHERE twilio_number='+14052562614' LIMIT 1`);
+    const agentsR = await pool.query(`SELECT id FROM agents WHERE is_active=true`);
+    if (lineR.rows[0]) {
+      for (const agent of agentsR.rows) {
+        await pool.query(
+          `INSERT INTO line_agents (line_id,agent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [lineR.rows[0].id, agent.id]
+        ).catch(() => {});
+      }
+      console.log(`[DB] Linked ${agentsR.rows.length} agent(s) to call line`);
+    }
   } catch (e) { console.error('[DB] seed call_lines:', e.message); }
 
   console.log('[DB] Init complete');
