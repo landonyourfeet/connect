@@ -1584,7 +1584,7 @@
 // ── STATE ──────────────────────────────────────────────────────────
 const API = '';
 let authToken = localStorage.getItem('connect_token') || null;
-let currentUser = JSON.parse(localStorage.getItem('connect_user') || 'null');
+let currentUser = (() => { try { return JSON.parse(localStorage.getItem('connect_user') || 'null'); } catch(e) { localStorage.removeItem('connect_user'); return null; } })();
 let currentView = 'people';
 let currentListId = 'all';
 let currentPersonId = null;
@@ -1632,7 +1632,7 @@ async function doLogin() {
   try {
     const data = await api('/api/auth/login', 'POST', { email, password });
     authToken = data.token;
-    currentUser = data.user;
+    currentUser = data.agent;
     localStorage.setItem('connect_token', authToken);
     localStorage.setItem('connect_user', JSON.stringify(currentUser));
     launchApp();
@@ -2029,15 +2029,15 @@ function renderTimelineItem(act, hasConnector) {
   const time = act.created_at ? timeAgo(act.created_at) : '';
   let iconCls = 'ti-activity', iconChar = '•';
   let typeLabel = 'Activity';
-  let bodyHtml = `<div class="ti-content">${esc(act.content || act.note || '')}</div>`;
+  let bodyHtml = `<div class="ti-content">${esc(act.body || act.content || act.note || '')}</div>`;
 
   if (type === 'call') {
     iconCls = 'ti-call'; iconChar = '📞'; typeLabel = 'Call';
     const dir = act.direction || 'outbound';
     const dirLabel = dir === 'inbound' ? 'Inbound' : dir === 'missed' ? 'Missed' : 'Outbound';
     const dirCls = 'call-' + dir;
-    const duration = act.duration ? formatDuration(act.duration) : '';
-    const hasRecording = act.recording_url;
+    const duration = (act.duration || act.duration_seconds) ? formatDuration(act.duration || act.duration_seconds) : '';
+    const hasRecording = act.call_recording_url || act.recording_url;
     const hasSummary = act.summary;
     const hasTranscript = act.transcript;
     const cardId = 'call-card-' + act.id;
@@ -2048,7 +2048,7 @@ function renderTimelineItem(act, hasConnector) {
         ${duration ? `<span class="call-duration">${duration}</span>` : ''}
       </div>
       ${hasSummary ? `<div class="ai-summary-text">${esc(act.summary)}</div>` : ''}
-      ${!hasSummary && !act.processing ? `<div class="ti-content" style="color:var(--text-3);font-style:italic">${act.content || 'No summary yet'}</div>` : ''}
+      ${!hasSummary && !act.processing ? `<div class="ti-content" style="color:var(--text-3);font-style:italic">${act.body || act.content || 'No summary yet'}</div>` : ''}
       ${act.processing ? `<div class="ai-thinking-bar">
         <span style="font-size:14px">✦</span>
         <span class="ai-thinking-text">OKCREAL AI is writing a summary</span>
@@ -2057,7 +2057,7 @@ function renderTimelineItem(act, hasConnector) {
       ${(hasSummary || hasTranscript || hasRecording) ? `
         <button class="call-expand-btn" onclick="toggleCallExpand('${cardId}')">▶ Recording & Transcript</button>
         <div class="call-expanded" id="${cardId}-expanded">
-          ${hasRecording ? `<div class="audio-player-wrap"><audio controls src="${act.recording_url}"></audio></div>` : ''}
+          ${hasRecording ? `<div class="audio-player-wrap"><audio controls src="${act.call_recording_url || act.recording_url}"></audio></div>` : ''}
           ${hasTranscript ? `<div class="transcript-content">${formatTranscript(act.transcript)}</div>` : ''}
         </div>
       ` : ''}
@@ -2067,12 +2067,12 @@ function renderTimelineItem(act, hasConnector) {
     const dir = act.direction || 'outbound';
     bodyHtml = `<div class="text-thread">
       <div class="bubble-wrap ${dir}">
-        <div class="bubble bubble-${dir === 'inbound' ? 'inbound' : 'outbound'}">${esc(act.content || act.body || '')}</div>
+        <div class="bubble bubble-${dir === 'inbound' ? 'inbound' : 'outbound'}">${esc(act.body || act.content || '')}</div>
       </div>
     </div>`;
   } else if (type === 'note') {
     iconCls = 'ti-note'; iconChar = '📝'; typeLabel = 'Note';
-    bodyHtml = `<div class="ti-content note-content">${esc(act.content || '')}</div>`;
+    bodyHtml = `<div class="ti-content note-content">${esc(act.body || act.content || '')}</div>`;
   }
 
   return `<div class="timeline-item" data-type="${type}">
@@ -2133,9 +2133,9 @@ async function submitCompose() {
   try {
     const type = composeTab === 'logcall' ? 'note' : composeTab;
     await api('/api/activities', 'POST', {
-      person_id: currentPersonId,
+      personId: currentPersonId,
       type,
-      content,
+      body: content,
       direction: 'outbound'
     });
     document.getElementById('compose-input').value = '';
@@ -2162,7 +2162,7 @@ async function submitTask() {
   const due = document.getElementById('task-due-input').value;
   if (!text) return;
   try {
-    await api('/api/tasks', 'POST', { person_id: currentTaskPersonId, text, due_date: due || null });
+    await api('/api/tasks', 'POST', { personId: currentTaskPersonId, title: text, due_date: due || null });
     closeModal('modal-new-task');
     toast('Task added ✓', 'success');
     const tasks = await api(`/api/tasks?personId=${currentTaskPersonId}`);
@@ -2173,7 +2173,7 @@ async function submitTask() {
 }
 async function toggleTask(taskId, personId, done) {
   try {
-    await api(`/api/tasks/${taskId}`, 'PUT', { completed: !done });
+    await api(`/api/tasks/${taskId}`, 'PUT', { completed: !done, title: ' ' });
     const tasks = await api(`/api/tasks?personId=${personId}`);
     document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks || [], personId);
   } catch(e) { toast(e.message, 'error'); }
@@ -2189,16 +2189,14 @@ async function updatePersonStage(personId, stage) {
 
 // ── NEW CONTACT ───────────────────────────────────────────────────────
 async function createContact() {
-  const body = {
-    first_name: document.getElementById('nc-first').value.trim(),
-    last_name: document.getElementById('nc-last').value.trim(),
-    phone: document.getElementById('nc-phone').value.trim(),
-    email: document.getElementById('nc-email').value.trim(),
-    stage: document.getElementById('nc-stage').value
-  };
-  if (!body.first_name && !body.last_name && !body.phone) { toast('Need a name or phone', 'error'); return; }
+  const firstName = document.getElementById('nc-first').value.trim();
+  const lastName = document.getElementById('nc-last').value.trim();
+  const phone = document.getElementById('nc-phone').value.trim();
+  const email = document.getElementById('nc-email').value.trim();
+  const stage = document.getElementById('nc-stage').value;
+  if (!firstName && !lastName && !phone) { toast('Need a name or phone', 'error'); return; }
   try {
-    const p = await api('/api/people', 'POST', body);
+    const p = await api('/api/people', 'POST', { firstName, lastName, phone, email, stage });
     closeModal('modal-new-contact');
     toast('Contact added ✓', 'success');
     await loadPeople(currentListId);
