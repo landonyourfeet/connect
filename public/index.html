@@ -253,9 +253,40 @@
       animation: conn-flow 4s linear infinite;
       box-shadow: 0 0 8px 1px rgba(0,232,180,0.6);
     }
+    #conn-status-bar.status-busy {
+      background: transparent;
+    }
+    #conn-status-bar.status-busy::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: #f97316;
+      box-shadow: 0 0 10px 2px rgba(249,115,22,0.7);
+      animation: busy-breathe 2s ease-in-out infinite;
+    }
+    #conn-status-bar.status-offline {
+      background: #111;
+    }
+    #conn-status-bar.status-offline::before { display: none; }
     @keyframes conn-flow {
       0%   { background-position: 0% 0%; }
       100% { background-position: 300% 0%; }
+    }
+    @keyframes busy-breathe {
+      0%,100% { opacity: 0.6; box-shadow: 0 0 6px 1px rgba(249,115,22,0.5); }
+      50%      { opacity: 1;   box-shadow: 0 0 14px 3px rgba(249,115,22,0.85); }
+    }
+    /* Voice-reactive mode — JS drives this */
+    #conn-status-bar.voice-active {
+      background: transparent;
+      transition: height 0.04s ease, box-shadow 0.04s ease;
+    }
+    #conn-status-bar.voice-active::before { display: none; }
+    #conn-bar-voice {
+      position: absolute;
+      inset: 0;
+      border-radius: 0;
+      transition: opacity 0.04s, box-shadow 0.04s;
     }
     .sidebar-logo .wordmark { font-family: var(--font-disp); font-size: 26px; letter-spacing: 0.02em; line-height: 1; }
     .sidebar-logo .wordmark span { color: var(--red); }
@@ -329,10 +360,69 @@
     .person-email { font-size: 12px; color: var(--text-2); }
     .phone-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); letter-spacing: 0.03em; }
     .stage-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 100px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+    /* ── Stage Banner (top of center panel) ── */
+    #stage-banner {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: all 0.3s;
+    }
+    #stage-banner.banner-hidden { display: none; }
+    .stage-banner-text {
+      font-family: var(--font-cond);
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      padding: 6px 32px;
+      border-radius: 8px;
+      border: 2px solid;
+    }
+    .banner-resident {
+      color: #00e8f0;
+      border-color: #00e8f0;
+      background: rgba(0,232,240,0.07);
+      box-shadow: 0 0 18px rgba(0,232,240,0.25), inset 0 0 18px rgba(0,232,240,0.05);
+      text-shadow: 0 0 14px rgba(0,232,240,0.7);
+      animation: banner-pulse-cyan 2.5s ease-in-out infinite;
+    }
+    .banner-evicting {
+      color: #ff3b3b;
+      border-color: #ff3b3b;
+      background: rgba(255,59,59,0.08);
+      box-shadow: 0 0 18px rgba(255,59,59,0.3), inset 0 0 18px rgba(255,59,59,0.06);
+      text-shadow: 0 0 14px rgba(255,59,59,0.8);
+      animation: banner-pulse-red 1.8s ease-in-out infinite;
+    }
+    .banner-delinquent {
+      color: #3b9eff;
+      border-color: #3b9eff;
+      background: rgba(59,158,255,0.07);
+      box-shadow: 0 0 18px rgba(59,158,255,0.25), inset 0 0 18px rgba(59,158,255,0.05);
+      text-shadow: 0 0 14px rgba(59,158,255,0.7);
+      animation: banner-pulse-blue 2.5s ease-in-out infinite;
+    }
+    @keyframes banner-pulse-cyan {
+      0%,100% { box-shadow: 0 0 14px rgba(0,232,240,0.2), inset 0 0 14px rgba(0,232,240,0.04); }
+      50%      { box-shadow: 0 0 28px rgba(0,232,240,0.45), inset 0 0 24px rgba(0,232,240,0.1); }
+    }
+    @keyframes banner-pulse-red {
+      0%,100% { box-shadow: 0 0 14px rgba(255,59,59,0.25), inset 0 0 14px rgba(255,59,59,0.05); }
+      50%      { box-shadow: 0 0 32px rgba(255,59,59,0.55), inset 0 0 24px rgba(255,59,59,0.12); }
+    }
+    @keyframes banner-pulse-blue {
+      0%,100% { box-shadow: 0 0 14px rgba(59,158,255,0.2), inset 0 0 14px rgba(59,158,255,0.04); }
+      50%      { box-shadow: 0 0 28px rgba(59,158,255,0.45), inset 0 0 24px rgba(59,158,255,0.1); }
+    }
     .stage-lead       { background: var(--blue-dim); color: var(--blue); }
     .stage-active     { background: var(--green-dim); color: var(--green); }
     .stage-past       { background: var(--bg-5); color: var(--text-2); }
-    .stage-delinquent { background: var(--red-dim); color: var(--red); animation: glow-breathe-red 2s ease-in-out infinite; }
+    .stage-delinquent { background: rgba(59,158,255,0.12); color: #3b9eff; }
+    .stage-resident   { background: rgba(0,232,240,0.1);  color: #00e8f0; }
+    .stage-evicting   { background: rgba(255,59,59,0.12); color: #ff3b3b; animation: glow-breathe-red 1.8s ease-in-out infinite; }
     .tag-chip { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; margin: 1px; background: var(--bg-5); color: var(--text-2); }
     .tag-eviction { background: var(--red-dim); color: var(--red); }
     .tag-delinquent { background: rgba(255,140,0,0.12); color: var(--amber); }
@@ -353,6 +443,8 @@
     .contact-card-top { padding: 24px 20px 20px; text-align: center; border-bottom: 1px solid var(--border); }
     .contact-big-avatar { width: 72px; height: 72px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 800; margin: 0 auto 14px; border: 2px solid var(--border); transition: border-color 0.3s, box-shadow 0.3s; }
     .contact-big-avatar.stage-delinquent { border-color: var(--red); box-shadow: 0 0 20px var(--red-glow); }
+    .contact-big-avatar.stage-evicting { border-color: #ff3b3b; box-shadow: 0 0 20px rgba(255,59,59,0.5); animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    .contact-big-avatar.stage-resident { border-color: #00e8f0; box-shadow: 0 0 16px rgba(0,232,240,0.4); }
     .contact-big-avatar.stage-active { border-color: var(--green); }
     .contact-record-name { font-family: var(--font-cond); font-size: 22px; font-weight: 700; letter-spacing: 0.01em; margin-bottom: 4px; }
     .contact-record-phone { font-family: var(--font-mono); font-size: 13px; color: var(--text-2); margin-bottom: 8px; cursor: pointer; transition: color 0.15s; }
@@ -750,7 +842,7 @@
         <div class="sub">Connect</div>
       </div>
       <!-- Connection status bar -->
-      <div id="conn-status-bar" title="Offline"></div>
+      <div id="conn-status-bar" title="Offline"><div id="conn-bar-voice"></div></div>
       <div class="sidebar-user">
         <div class="user-avatar" id="sidebar-avatar">
           <span id="sidebar-initials">?</span>
@@ -880,7 +972,8 @@
         <label class="form-label">Stage</label>
         <select class="form-select" id="nc-stage">
           <option value="Lead">Lead</option>
-          <option value="Active Tenant">Active Tenant</option>
+          <option value="Resident">Resident</option>
+              <option value="Evicting">Evicting</option>
           <option value="Past Tenant">Past Tenant</option>
           <option value="Property Owner">Property Owner</option>
           <option value="Vendor">Vendor</option>
@@ -1011,8 +1104,31 @@ function setStatus(s) {
   const toggle = document.getElementById('status-toggle');
   dot.className = 'status-dot ' + s;
   if (s === 'available') { toggle.textContent = '● Available'; toggle.className = 'status-toggle available'; }
-  else if (s === 'busy') { toggle.textContent = '● Busy'; toggle.className = 'status-toggle busy'; }
-  else { toggle.textContent = '● Offline'; toggle.className = 'status-toggle'; }
+  else if (s === 'busy')  { toggle.textContent = '● Busy';      toggle.className = 'status-toggle busy'; }
+  else                    { toggle.textContent = '● Offline';   toggle.className = 'status-toggle'; }
+  // Drive connection bar colour
+  updateConnBarForStatus(s);
+}
+
+function updateConnBarForStatus(s) {
+  const bar = document.getElementById('conn-status-bar');
+  if (!bar) return;
+  // Remove all status overrides
+  bar.classList.remove('status-busy', 'status-offline');
+  if (s === 'busy') {
+    bar.classList.remove('connected');   // suppress rainbow while busy
+    bar.classList.add('status-busy');
+  } else if (s === 'offline') {
+    bar.classList.remove('connected');
+    bar.classList.add('status-offline');
+  } else {
+    // available — let the heartbeat logic restore 'connected' class
+    // force-check now so it snaps back immediately
+    fetch('/health', { method: 'GET', cache: 'no-store' })
+      .then(r => {
+        if (r.ok) bar.classList.add('connected');
+      }).catch(() => {});
+  }
 }
 function cycleStatus() {
   const states = ['available', 'busy', 'offline'];
@@ -1183,7 +1299,7 @@ function renderContactRecord(person, activities, tasks) {
         <div class="detail-row">
           <span class="detail-label">Stage</span>
           <select class="stage-select" onchange="updatePersonStage('${person.id}',this.value)">
-            ${['Lead','Active Tenant','Past Tenant','Property Owner','Vendor','Delinquent'].map(st=>`<option value="${st}" ${stage===st?'selected':''}>${st}</option>`).join('')}
+            ${['Lead','Resident','Delinquent','Evicting','Past Tenant','Property Owner','Vendor'].map(st=>`<option value="${st}" ${stage===st?'selected':''}>${st}</option>`).join('')}
           </select>
         </div>
         ${person.email ? `<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value" style="font-size:12px;word-break:break-all">${esc(person.email)}</span></div>` : ''}
@@ -1273,6 +1389,10 @@ function renderContactRecord(person, activities, tasks) {
     </div>
 
     <div class="contact-center">
+      <!-- Stage Banner -->
+      <div id="stage-banner" class="${getStageBannerClass(stage) ? '' : 'banner-hidden'}">
+        ${getStageBannerClass(stage) ? `<div class="stage-banner-text ${getStageBannerClass(stage)}">${esc(stage)}</div>` : ''}
+      </div>
       <div class="timeline-header">
         <div class="compose-area" id="compose-area">
           <div class="compose-tabs">
@@ -1308,10 +1428,10 @@ function renderContactRecord(person, activities, tasks) {
       <div class="right-section">
         <div class="right-section-header"><span class="right-section-title">Status Flags</span></div>
         <div style="font-size:12px;color:var(--text-2)">
-          ${tags.some(t=>t.toLowerCase().includes('eviction')) ? `<div style="color:var(--red);font-weight:600;margin-bottom:4px">⚠️ Eviction Alert Active</div>` : ''}
-          ${tags.some(t=>t.toLowerCase().includes('delinquent')) ? `<div style="color:var(--amber);margin-bottom:4px">💰 Delinquent Account</div>` : ''}
+          ${(stage==='Evicting'||tags.some(t=>t.toLowerCase().includes('eviction'))) ? `<div style="color:#ff3b3b;font-weight:600;margin-bottom:4px">⚠️ Eviction In Progress</div>` : ''}
+          ${(stage==='Delinquent'||tags.some(t=>t.toLowerCase().includes('delinquent'))) ? `<div style="color:#3b9eff;margin-bottom:4px">💰 Delinquent Account</div>` : ''}
           ${tags.some(t=>t.toLowerCase().includes('committed')) ? `<div style="color:var(--green);margin-bottom:4px">✅ Payment Committed</div>` : ''}
-          ${!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k))) ? '<div style="color:var(--text-3)">No active flags</div>' : ''}
+          ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--text-3)">No active flags</div>' : ''}
         </div>
       </div>
     </div>
@@ -1565,6 +1685,23 @@ async function toggleTask(taskId, personId, done) {
 }
 
 async function updatePersonStage(personId, stage) {
+  // Update the banner immediately
+  const banner = document.getElementById('stage-banner');
+  if (banner) {
+    const cls = getStageBannerClass(stage);
+    if (cls) {
+      banner.className = '';
+      banner.innerHTML = `<div class="stage-banner-text ${cls}">${esc(stage)}</div>`;
+    } else {
+      banner.className = 'banner-hidden';
+      banner.innerHTML = '';
+    }
+  }
+  // Update avatar border
+  const avatar = document.querySelector('.contact-big-avatar');
+  if (avatar) {
+    avatar.className = `contact-big-avatar ${stageClass(stage)}`;
+  }
   try { await api(`/api/people/${personId}`, 'PUT', { stage }); toast('Stage updated ✓', 'success'); }
   catch(e) { toast(e.message, 'error'); }
 }
@@ -1716,6 +1853,115 @@ async function submitAddUser() {
   } catch(e) { toast('Error: ' + e.message, 'error'); }
 }
 
+// ── VOICE BAR VISUALIZER ─────────────────────────────────────────────────
+const VoiceViz = (() => {
+  let _ctx = null, _analyser = null, _stream = null, _raf = null;
+  let _dataArray = null;
+  let _active = false;
+
+  // Color interpolation: silence = dim teal, talking = bright white-cyan, peak = hot white
+  function levelToStyle(level) {
+    // level: 0.0 (silence) → 1.0 (max)
+    const l = Math.pow(level, 0.6); // slight gamma for more visible low-level response
+
+    // glow intensity
+    const glowR = Math.floor(l * 80);
+    const glowG = Math.floor(180 + l * 75);
+    const glowB = Math.floor(200 + l * 55);
+    const spreadPx = 3 + Math.floor(l * 22);
+    const blurPx   = 4 + Math.floor(l * 32);
+    const alpha     = 0.35 + l * 0.65;
+
+    // bar height: 3px at silence, up to 7px at peak
+    const h = 3 + Math.floor(l * 4);
+
+    return {
+      bg: `rgb(${glowR}, ${glowG}, ${glowB})`,
+      shadow: `0 0 ${blurPx}px ${spreadPx}px rgba(0,232,240,${alpha.toFixed(2)})`,
+      h
+    };
+  }
+
+  function tick() {
+    if (!_active || !_analyser) return;
+    _analyser.getByteFrequencyData(_dataArray);
+
+    // weight mid-frequencies more — that's where voice lives (300Hz–3kHz)
+    const bins = _dataArray.length;
+    const voiceStart = Math.floor(bins * 0.05);
+    const voiceEnd   = Math.floor(bins * 0.45);
+    let sum = 0, count = 0;
+    for (let i = voiceStart; i < voiceEnd; i++) {
+      sum += _dataArray[i];
+      count++;
+    }
+    const avg = count ? sum / count : 0;
+    const level = Math.min(avg / 60, 1); // normalize; 60 ≈ comfortable speech level
+
+    const bar  = document.getElementById('conn-status-bar');
+    const fill = document.getElementById('conn-bar-voice');
+    if (bar && fill) {
+      const style = levelToStyle(level);
+      bar.style.height    = style.h + 'px';
+      fill.style.background  = style.bg;
+      fill.style.boxShadow   = style.shadow;
+      fill.style.opacity     = '1';
+    }
+
+    _raf = requestAnimationFrame(tick);
+  }
+
+  return {
+    async start() {
+      if (_active) return;
+      try {
+        _stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        _ctx      = new (window.AudioContext || window.webkitAudioContext)();
+        _analyser = _ctx.createAnalyser();
+        _analyser.fftSize = 512;
+        _analyser.smoothingTimeConstant = 0.55; // smooth but reactive
+        _dataArray = new Uint8Array(_analyser.frequencyBinCount);
+
+        const source = _ctx.createMediaStreamSource(_stream);
+        source.connect(_analyser);
+        // Do NOT connect analyser → destination (no echo)
+
+        _active = true;
+        const bar = document.getElementById('conn-status-bar');
+        if (bar) {
+          bar.classList.remove('connected','status-busy','status-offline');
+          bar.classList.add('voice-active');
+        }
+        tick();
+      } catch(e) {
+        console.warn('[VoiceViz] Could not start:', e.message);
+      }
+    },
+
+    stop() {
+      _active = false;
+      if (_raf) { cancelAnimationFrame(_raf); _raf = null; }
+      try { _stream?.getTracks().forEach(t => t.stop()); } catch(e) {}
+      try { _ctx?.close(); }                               catch(e) {}
+      _ctx = _analyser = _stream = _dataArray = null;
+
+      const bar  = document.getElementById('conn-status-bar');
+      const fill = document.getElementById('conn-bar-voice');
+      if (bar) {
+        bar.classList.remove('voice-active');
+        bar.style.height = '';
+      }
+      if (fill) {
+        fill.style.background = '';
+        fill.style.boxShadow  = '';
+      }
+
+      // Restore correct status colour
+      updateConnBarForStatus(userStatus);
+    }
+  };
+})();
+
 // ── CONNECTION STATUS ───────────────────────────────────────────────────
 (function() {
   const bar = () => document.getElementById('conn-status-bar');
@@ -1740,6 +1986,8 @@ async function submitAddUser() {
 
   // Active heartbeat — ping the health endpoint every 20s
   async function heartbeat() {
+    // Don't overwrite busy/offline status colours
+    if (window.userStatus === 'busy' || window.userStatus === 'offline' || document.getElementById('conn-status-bar')?.classList.contains('voice-active')) return;
     try {
       const r = await fetch('/health', { method: 'GET', cache: 'no-store' });
       setConnected(r.ok);
@@ -1834,6 +2082,7 @@ function acceptCall() {
   if (window.neonGlow) window.neonGlow.callActive();
   showCallBar('active', document.getElementById('call-contact-name').textContent, document.getElementById('call-number').textContent);
   startCallTimer();
+  VoiceViz.start();
 }
 function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); }
 function endCall() { if (activeCall) activeCall.disconnect(); }
@@ -1841,6 +2090,7 @@ function endCall() { if (activeCall) activeCall.disconnect(); }
 function handleCallEnd() {
   if (!activeCall) return;             // guard against double-fire
   activeCall = null;
+  VoiceViz.stop();
   if (window.neonGlow) window.neonGlow.callEnd();
   stopCallTimer();
   const duration = document.getElementById('call-timer').textContent;
@@ -2322,11 +2572,21 @@ function parseTags(tags) {
 }
 function stageClass(stage) {
   const s = (stage||'').toLowerCase();
+  if (s === 'evicting') return 'stage-evicting';
+  if (s === 'delinquent') return 'stage-delinquent';
+  if (s === 'resident') return 'stage-resident';
   if (s.includes('lead')) return 'stage-lead';
   if (s.includes('active')||s.includes('tenant')) return 'stage-active';
   if (s.includes('past')) return 'stage-past';
-  if (s.includes('delinquent')) return 'stage-delinquent';
   return 'stage-lead';
+}
+
+function getStageBannerClass(stage) {
+  const s = (stage||'').toLowerCase();
+  if (s === 'resident')   return 'banner-resident';
+  if (s === 'evicting')   return 'banner-evicting';
+  if (s === 'delinquent') return 'banner-delinquent';
+  return null;
 }
 function tagClass(tag) {
   const t = (tag||'').toLowerCase();
