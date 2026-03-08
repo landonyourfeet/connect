@@ -1471,9 +1471,13 @@ app.get('/api/security/stream', auth, (req, res) => {
 app.get('/api/security/events', auth, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT se.*, p.first_name, p.last_name, p.id as person_id, p.stage
+      SELECT se.*,
+             p.first_name, p.last_name, p.id as person_id, p.stage,
+             COALESCE(pc.name, se.camera_name) AS camera_name,
+             COALESCE(pc.site, se.site)         AS site
       FROM security_events se
-      LEFT JOIN people p ON p.unifi_person_id = se.unifi_person_id
+      LEFT JOIN people p          ON p.unifi_person_id = se.unifi_person_id
+      LEFT JOIN protect_cameras pc ON pc.mac = se.camera_mac
       ORDER BY se.triggered_at DESC LIMIT 50
     `);
     res.json(r.rows);
