@@ -1776,11 +1776,13 @@ async function initDB() {
   await run(`
     CREATE TABLE IF NOT EXISTS smart_lists (
       id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      name       TEXT NOT NULL,
+      name       TEXT NOT NULL UNIQUE,
       filters    JSONB DEFAULT '{}',
       sort_order INTEGER DEFAULT 0
     )
   `, 'create smart_lists');
+  await pool.query(`ALTER TABLE smart_lists ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0`).catch(()=>{});
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS smart_lists_name_idx ON smart_lists(name)`, 'smart_lists name index');
 
   await run(`
     CREATE TABLE IF NOT EXISTS custom_fields (
@@ -1867,12 +1869,23 @@ async function initDB() {
 
   // Seed smart lists
   try {
-    await pool.query(`
-      INSERT INTO smart_lists (name,filters,sort_order) VALUES
-        ('Delinquent Residents','{}',0),('Active Residents','{}',1),
-        ('Active Leads','{}',2),('Past Clients','{}',3)
-      ON CONFLICT DO NOTHING
-    `);
+    // Upsert smart lists with real filters
+    const smartListDefs = [
+      { name: 'Delinquent Residents', filters: { stage: 'Delinquent' }, sort_order: 0 },
+      { name: 'Delinquent Leads',     filters: { stage: 'Lead', tags: ['Delinquent'] }, sort_order: 1 },
+      { name: 'Active Residents',     filters: { stage: 'Resident' }, sort_order: 2 },
+      { name: 'Active Leads',         filters: { stage: 'Lead' }, sort_order: 3 },
+      { name: 'Evicting',             filters: { stage: 'Evicting' }, sort_order: 4 },
+      { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
+    ];
+    for (const sl of smartListDefs) {
+      await pool.query(
+        `INSERT INTO smart_lists (name,filters,sort_order)
+         VALUES($1,$2::jsonb,$3)
+         ON CONFLICT (name) DO UPDATE SET filters=EXCLUDED.filters`,
+        [sl.name, JSON.stringify(sl.filters), sl.sort_order]
+      ).catch(()=>{});
+    }
   } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
 
   // Seed custom fields
