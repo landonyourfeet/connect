@@ -1143,11 +1143,45 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
 });
 
 // ── RECORDING PROXY — serves Twilio recordings with embedded auth so browser audio player works ──
-app.get('/api/calls/:callId/recording', auth, async (req, res) => {
+// Uses query param token (?token=JWT) because HTML <audio> elements can't send Authorization headers
+app.get('/api/calls/:callId/recording', async (req, res) => {
   try {
-    const callR = await pool.query('SELECT recording_url FROM calls WHERE id=$1', [req.params.callId]);
-    const recUrl = callR.rows[0]?.recording_url;
-    if (!recUrl) return res.status(404).json({ error: 'No recording' });
+    // Accept token from Authorization header OR ?token= query param (needed for <audio src>)
+    const headerToken = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null;
+    const queryToken  = req.query.token || null;
+    const token = headerToken || queryToken;
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    let agentId;
+    try { agentId = jwt.verify(token, JWT_SECRET).id; } catch(e) { return res.status(401).json({ error: 'Unauthorized' }); }
+    const agentR = await pool.query('SELECT id FROM agents WHERE id=$1 AND is_active=true', [agentId]);
+    if (!agentR.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Look up recording_url — check calls table first, then activities table
+    // (some recordings land only on activities.recording_url)
+    const callR = await pool.query(
+      `SELECT COALESCE(c.recording_url, a.recording_url) AS recording_url
+       FROM calls c
+       LEFT JOIN activities a ON a.call_id::text = c.id::text
+       WHERE c.id::text = $1
+       LIMIT 1`,
+      [req.params.callId]
+    );
+    let recUrl = callR.rows[0]?.recording_url;
+
+    // Fallback: callId might be an activity id — look up via activities directly
+    if (!recUrl) {
+      const actR = await pool.query(
+        `SELECT COALESCE(a.recording_url, c.recording_url) AS recording_url
+         FROM activities a
+         LEFT JOIN calls c ON c.id::text = a.call_id::text
+         WHERE a.id::text = $1 OR a.call_id::text = $1
+         LIMIT 1`,
+        [req.params.callId]
+      );
+      recUrl = actR.rows[0]?.recording_url;
+    }
+
+    if (!recUrl) return res.status(404).json({ error: 'No recording found for this call' });
     const auth = twilioBasicAuth();
     if (!auth) return res.status(500).json({ error: 'Twilio credentials not configured' });
     const https = require('https');
