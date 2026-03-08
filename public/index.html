@@ -3314,7 +3314,9 @@ async function loadAdmin() {
             </tr>`).join('')}</tbody>
           </table>`}
         </div>
-      </div>`;\n\n  } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
+      </div>`;
+
+  } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
 }
 
 // ── CAMERA NAME ADMIN ─────────────────────────────────────────────────────────
