@@ -1682,6 +1682,17 @@ async function initDB() {
       site  TEXT DEFAULT 'Main'
     )
   `, 'create protect_cameras');
+  // Seed known camera names (MAC → friendly name from UniFi Protect device list)
+  // Add entries here as you identify each camera MAC from the Protect devices page
+  const knownCams = [
+    ['847848B2C827', 'Marlin Rear Overwatch', 'Marlin'],
+  ];
+  for (const [mac, name, site] of knownCams) {
+    await pool.query(
+      `INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING`,
+      [mac, name, site]
+    ).catch(()=>{});
+  }
   // Migrate old stage names
   await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate stage Active Tenant->Resident').catch(()=>{});
   await run(`UPDATE people SET stage='Contractor' WHERE stage='Vendor'`, 'migrate stage Vendor->Contractor').catch(()=>{});
