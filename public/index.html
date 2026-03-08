@@ -294,6 +294,47 @@
     #app.visible { display: flex; }
 
     /* ── FLOATING CALL BAR ────────────────────────────────────── */
+    /* ── SECURITY ALERT HISTORY ──────────────────────────────────── */
+    .sec-hist-card {
+      background: var(--bg-2); border-radius: 10px;
+      border: 1px solid var(--border); overflow: hidden;
+      transition: border-color 0.15s;
+    }
+    .sec-hist-card:hover { border-color: rgba(255,59,59,0.4); }
+    .sec-hist-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      background: rgba(255,59,59,0.04);
+    }
+    .sec-hist-thumb {
+      width: 60px; height: 44px; object-fit: cover; border-radius: 6px;
+      border: 1px solid rgba(255,59,59,0.3); flex-shrink: 0;
+    }
+    .sec-hist-thumb-ph {
+      width: 60px; height: 44px; background: var(--bg); border-radius: 6px;
+      border: 1px solid var(--border); display: flex; align-items: center;
+      justify-content: center; font-size: 22px; flex-shrink: 0;
+    }
+    .sec-hist-meta { flex: 1; min-width: 0; }
+    .sec-hist-cam { font-size: 13px; font-weight: 700; color: var(--text); white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .sec-hist-time { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+    .sec-hist-site { font-size: 10px; font-weight: 700; letter-spacing:0.1em; text-transform:uppercase; color:#ff3b3b; opacity:0.8; }
+    .sec-hist-body { padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
+    .sec-hist-person { flex: 1; min-width: 0; }
+    .sec-hist-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .sec-hist-unknown { font-size: 12px; color: var(--text-3); font-style: italic; }
+    .sec-hist-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .sec-hist-btn {
+      font-size: 11px; padding: 5px 11px; border-radius: 6px; font-weight: 600;
+      cursor: pointer; border: none; font-family: inherit; transition: all 0.15s;
+    }
+    .sec-hist-btn.footage { background:rgba(255,59,59,0.15); color:#ff3b3b; border:1px solid rgba(255,59,59,0.3); }
+    .sec-hist-btn.footage:hover { background:rgba(255,59,59,0.3); }
+    .sec-hist-btn.open { background:var(--bg-3); color:var(--text); border:1px solid var(--border); }
+    .sec-hist-btn.open:hover { border-color:var(--accent); color:var(--accent); }
+    .sec-hist-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:60px 20px; color:var(--text-3); text-align:center; }
+    .sec-hist-day-label { font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-3); padding:6px 0 4px; margin-top:4px; }
+
     /* ── SECURITY PROFILE PANEL ──────────────────────────────────── */
     .sec-profile-section { display: flex; flex-direction: column; gap: 14px; }
     .sec-id-row { display: flex; gap: 14px; align-items: flex-start; }
@@ -1151,6 +1192,11 @@
           <span class="nav-icon">⚙️</span>
           Admin
         </div>
+        <div class="nav-item" data-view="security" onclick="navigate('security')" id="nav-security">
+          <span class="nav-icon">🚨</span>
+          Security Alerts
+          <span id="sec-alert-badge" style="display:none;margin-left:auto;background:#ff3b3b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.05em"></span>
+        </div>
       </div>
       <div class="sidebar-bottom">
         <!-- Theme toggle -->
@@ -1232,6 +1278,18 @@
 
       <!-- VIEW: Admin -->
       <div class="view" id="view-admin"></div>
+
+      <!-- VIEW: Security Alerts -->
+      <div class="view" id="view-security">
+        <div class="people-toolbar" style="border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0">
+          <div style="font-size:13px;font-weight:700;color:#ff3b3b;letter-spacing:0.05em;text-transform:uppercase">🚨 Watchlist — Last 30 Days</div>
+          <div style="flex:1"></div>
+          <button onclick="loadSecurityAlertHistory()" style="font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-2);cursor:pointer;font-family:inherit">↻ Refresh</button>
+        </div>
+        <div id="sec-history-list" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px">
+          <div style="color:var(--text-3);font-size:13px">Loading…</div>
+        </div>
+      </div>
 
     </div><!-- /main -->
   </div><!-- /app-body -->
@@ -1454,6 +1512,7 @@ function updateSidebarUser() {
   document.getElementById('sidebar-name').textContent = currentUser.name || currentUser.email;
   setStatus('available');
   JirehSecurity.connect();
+  initSecBadge();
 }
 
 if (authToken && currentUser) launchApp();
@@ -1510,6 +1569,7 @@ function navigate(view, listId = null) {
   if (view === 'people') loadPeople(listId);
   else if (view === 'inbox') { loadInbox(); document.getElementById('header-title').textContent = 'Inbox'; }
   else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
+  else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
 }
 
 // ── SMART LISTS ─────────────────────────────────────────────────────
@@ -2419,6 +2479,110 @@ async function submitAddUser() {
 }
 
 // ── VOICE BAR VISUALIZER ─────────────────────────────────────────────────
+// ── SECURITY ALERT HISTORY VIEW ──────────────────────────────────────────
+async function loadSecurityAlertHistory() {
+  const container = document.getElementById('sec-history-list');
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--text-3);font-size:13px">Loading…</div>';
+
+  try {
+    const events = await apiFetch('/api/security/events');
+    if (!events || !events.length) {
+      container.innerHTML = `<div class="sec-hist-empty">
+        <div style="font-size:40px">🛡</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text)">No alerts in the last 30 days</div>
+        <div style="font-size:12px">Watchlist detections from UniFi Protect will appear here</div>
+      </div>`;
+      updateSecBadge(0);
+      return;
+    }
+
+    updateSecBadge(events.length);
+
+    // Group by date
+    const groups = {};
+    events.forEach(e => {
+      const d = new Date(e.triggered_at);
+      const key = d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
+
+    let html = '';
+    for (const [day, items] of Object.entries(groups)) {
+      html += `<div class="sec-hist-day-label">${esc(day)}</div>`;
+      items.forEach(e => {
+        const t = new Date(e.triggered_at);
+        const timeStr = t.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        const agoStr  = timeAgo(t);
+
+        const thumb = e.thumbnail_b64
+          ? `<img class="sec-hist-thumb" src="data:image/jpeg;base64,${e.thumbnail_b64.substring(0,50000)}" onerror="this.className='sec-hist-thumb-ph';this.innerHTML='📷'">`
+          : `<div class="sec-hist-thumb-ph">📷</div>`;
+
+        const siteLabel = e.site ? `<div class="sec-hist-site">${esc(e.site)}</div>` : '';
+
+        let personHTML = '';
+        let openBtn = '';
+        if (e.first_name || e.last_name) {
+          const fullName = [e.first_name, e.last_name].filter(Boolean).join(' ');
+          const stageColor = {
+            'Resident':'rgba(0,210,210,0.15)','Evicting':'rgba(255,59,59,0.15)',
+            'Delinquent':'rgba(59,158,255,0.15)'
+          }[e.stage] || 'rgba(255,255,255,0.08)';
+          const stageText = { 'Resident':'#00d2d2','Evicting':'#ff3b3b','Delinquent':'#3b9eff' }[e.stage] || 'var(--text-3)';
+          personHTML = `<div class="sec-hist-name">${esc(fullName)}</div>
+            ${e.stage ? `<span class="sec-hist-stage" style="background:${stageColor};color:${stageText}">${esc(e.stage)}</span>` : ''}`;
+          openBtn = `<button class="sec-hist-btn open" onclick="navigate('person',${e.person_id})">Open File</button>`;
+        } else {
+          personHTML = `<div class="sec-hist-unknown">Unknown individual</div>`;
+        }
+
+        const footageBtn = e.event_link
+          ? `<button class="sec-hist-btn footage" onclick="window.open('${e.event_link}','_blank')">📹 Footage</button>`
+          : '';
+
+        html += `<div class="sec-hist-card">
+          <div class="sec-hist-header">
+            ${thumb}
+            <div class="sec-hist-meta">
+              ${siteLabel}
+              <div class="sec-hist-cam">${esc(e.camera_name || 'Unknown Camera')}</div>
+              <div class="sec-hist-time">${timeStr} &nbsp;·&nbsp; ${agoStr}</div>
+            </div>
+          </div>
+          <div class="sec-hist-body">
+            <div class="sec-hist-person">${personHTML}</div>
+            <div class="sec-hist-actions">${footageBtn}${openBtn}</div>
+          </div>
+        </div>`;
+      });
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div class="sec-hist-empty"><div style="color:#ff3b3b">Failed to load: ${esc(e.message)}</div></div>`;
+  }
+}
+
+function updateSecBadge(count) {
+  const badge = document.getElementById('sec-alert-badge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// Call on login to show badge count immediately
+async function initSecBadge() {
+  try {
+    const events = await apiFetch('/api/security/events');
+    updateSecBadge((events || []).length);
+  } catch(e) {}
+}
+
 // ── JIREH SECURITY — SSE + Alert System ────────────────────────────────
 const JirehSecurity = (() => {
   let _sse = null;
@@ -2439,7 +2603,16 @@ const JirehSecurity = (() => {
     _sse.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data);
-        if (payload.type === 'poi_detected') showAlert(payload);
+        if (payload.type === 'poi_detected') {
+          showAlert(payload);
+          // Increment badge immediately
+          const badge = document.getElementById('sec-alert-badge');
+          if (badge) {
+            const cur = parseInt(badge.textContent) || 0;
+            badge.textContent = cur + 1;
+            badge.style.display = '';
+          }
+        }
       } catch(err) {}
     };
   }
