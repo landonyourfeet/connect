@@ -109,8 +109,29 @@ app.get('/api/people', auth, async (req, res) => {
     const { search, stage, tags, smartListId, limit = 50, offset = 0 } = req.query;
     let where = ['1=1']; let params = [];
     if (search) {
-      params.push(`%${search}%`);
-      where.push(`(p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length} OR p.phone ILIKE $${params.length} OR p.email ILIKE $${params.length})`);
+      const parts = search.trim().split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        // Full name search — match first+last in either order
+        params.push(`%${parts[0]}%`); const p1 = params.length;
+        params.push(`%${parts.slice(1).join(' ')}%`); const p2 = params.length;
+        params.push(`%${parts[parts.length-1]}%`); const p3 = params.length;
+        params.push(`%${parts.slice(0,-1).join(' ')}%`); const p4 = params.length;
+        params.push(`%${search}%`); const pFull = params.length;
+        where.push(`(
+          (p.first_name ILIKE $${p1} AND p.last_name ILIKE $${p2}) OR
+          (p.first_name ILIKE $${p3} AND p.last_name ILIKE $${p4}) OR
+          p.phone ILIKE $${pFull} OR p.email ILIKE $${pFull} OR
+          EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pFull})
+        )`);
+      } else {
+        params.push(`%${search}%`);
+        const pi = params.length;
+        where.push(`(
+          p.first_name ILIKE $${pi} OR p.last_name ILIKE $${pi} OR
+          p.phone ILIKE $${pi} OR p.email ILIKE $${pi} OR
+          EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pi})
+        )`);
+      }
     }
     if (stage) { params.push(stage); where.push(`p.stage=$${params.length}`); }
     if (tags) {
