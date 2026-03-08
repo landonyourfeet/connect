@@ -1821,7 +1821,10 @@ async function api(path, method = 'GET', body = null) {
   if (res.status === 401) { doLogout(); throw new Error('Unauthorized'); }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const e = new Error(err.error || `HTTP ${res.status}`);
+    e.status = res.status;
+    e.data = err;
+    throw e;
   }
   return res.json();
 }
@@ -3010,7 +3013,46 @@ async function createContact() {
     toast('Contact added ✓', 'success');
     await loadPeople(currentListId);
     if (p.id) openContact(p.id);
-  } catch(e) { toast(e.message, 'error'); }
+  } catch(e) {
+    if (e.status === 409 && e.data?.existing) {
+      const ex = e.data.existing;
+      const name = ex.name || 'this contact';
+      // Show duplicate warning with link to existing contact
+      const confirmed = await showDuplicateAlert(name, ex, e.data.message);
+      if (confirmed) {
+        closeModal('modal-new-contact');
+        openContact(ex.id);
+      }
+    } else {
+      toast(e.message, 'error');
+    }
+  }
+}
+
+function showDuplicateAlert(name, existing, reason) {
+  return new Promise(resolve => {
+    // Reuse toast-style but as a sticky centered dialog
+    const id = 'dupe-alert-' + Date.now();
+    const div = document.createElement('div');
+    div.id = id;
+    div.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center`;
+    div.innerHTML = `
+      <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:14px;padding:28px 32px;max-width:420px;width:90%;box-shadow:0 12px 60px rgba(0,0,0,0.6)">
+        <div style="font-size:28px;margin-bottom:12px">⚠️</div>
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px">Duplicate Contact</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:16px;line-height:1.6">
+          ${esc(reason || 'A contact with this phone or email already exists.')}<br><br>
+          <strong style="color:var(--text)">${esc(name)}</strong>${existing.phone ? `<br>📞 ${esc(existing.phone)}` : ''}${existing.email ? `<br>✉️ ${esc(existing.email)}` : ''}${existing.stage ? `<br>🏷 ${esc(existing.stage)}` : ''}
+        </div>
+        <div style="display:flex;gap:10px">
+          <button id="${id}-open" style="flex:1;padding:9px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Open Existing Contact</button>
+          <button id="${id}-cancel" style="flex:1;padding:9px;background:var(--bg-4);color:var(--text-2);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer">Go Back</button>
+        </div>
+      </div>`;
+    document.body.appendChild(div);
+    document.getElementById(`${id}-open`).onclick = () => { div.remove(); resolve(true); };
+    document.getElementById(`${id}-cancel`).onclick = () => { div.remove(); resolve(false); };
+  });
 }
 
 // ── INBOX ─────────────────────────────────────────────────────────────
