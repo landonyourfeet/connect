@@ -931,11 +931,26 @@ app.post('/api/twilio/recording', async (req, res) => {
     if (dg) {
       try {
         const rawUrl = `${recUrl}`;
-        // Download recording as buffer with Twilio Basic Auth, then send buffer to Deepgram
-        const authedUrl = rawUrl.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
-        const audioResp = await fetch(authedUrl);
-        if (!audioResp.ok) throw new Error(`Twilio fetch failed: ${audioResp.status}`);
-        const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+        // Download recording as buffer with Twilio Basic Auth using https module
+        const audioBuffer = await new Promise((resolve, reject) => {
+          const https = require('https');
+          const url   = new URL(rawUrl);
+          const opts  = {
+            hostname: url.hostname,
+            path:     url.pathname + url.search,
+            method:   'GET',
+            headers:  { Authorization: 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64') }
+          };
+          const req = https.request(opts, (res) => {
+            if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch failed: ${res.statusCode}`)); }
+            const chunks = [];
+            res.on('data', c => chunks.push(c));
+            res.on('end',  () => resolve(Buffer.concat(chunks)));
+            res.on('error', reject);
+          });
+          req.on('error', reject);
+          req.end();
+        });
         console.log(`Deepgram: fetched ${audioBuffer.length} bytes, sending to transcription`);
         const { result } = await dg.listen.prerecorded.transcribeFile(
           audioBuffer,
@@ -993,10 +1008,25 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
       const dg = initDeepgram();
       if (dg) {
         try {
-          const authedUrl = call.recording_url.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
-          const audioResp = await fetch(authedUrl);
-          if (!audioResp.ok) throw new Error(`Twilio fetch failed: ${audioResp.status}`);
-          const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+          const audioBuffer = await new Promise((resolve, reject) => {
+            const https = require('https');
+            const url   = new URL(call.recording_url);
+            const opts  = {
+              hostname: url.hostname,
+              path:     url.pathname + url.search,
+              method:   'GET',
+              headers:  { Authorization: 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64') }
+            };
+            const req = https.request(opts, (res) => {
+              if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch failed: ${res.statusCode}`)); }
+              const chunks = [];
+              res.on('data', c => chunks.push(c));
+              res.on('end',  () => resolve(Buffer.concat(chunks)));
+              res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.end();
+          });
           console.log(`Retry Deepgram: fetched ${audioBuffer.length} bytes`);
           const { result } = await dg.listen.prerecorded.transcribeFile(
             audioBuffer,
@@ -1043,14 +1073,30 @@ app.get('/api/calls/:callId/recording', auth, async (req, res) => {
     const callR = await pool.query('SELECT recording_url FROM calls WHERE id=$1', [req.params.callId]);
     const recUrl = callR.rows[0]?.recording_url;
     if (!recUrl) return res.status(404).json({ error: 'No recording' });
-    const authedUrl = recUrl.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
-    const upstream = await fetch(authedUrl);
-    if (!upstream.ok) return res.status(502).json({ error: 'Could not fetch recording' });
-    res.set('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+    const sid   = process.env.TWILIO_ACCOUNT_SID;
+    const token = process.env.TWILIO_AUTH_TOKEN;
+    if (!sid || !token) return res.status(500).json({ error: 'Twilio credentials not configured' });
+    const https = require('https');
+    const url   = new URL(recUrl);
+    const opts  = {
+      hostname: url.hostname,
+      path:     url.pathname + url.search,
+      method:   'GET',
+      headers:  { Authorization: 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64') }
+    };
+    const upstream = await new Promise((resolve, reject) => {
+      const r = https.request(opts, resolve);
+      r.on('error', reject);
+      r.end();
+    });
+    if (upstream.statusCode !== 200) {
+      upstream.resume();
+      return res.status(502).json({ error: `Twilio returned ${upstream.statusCode}` });
+    }
+    res.set('Content-Type', upstream.headers['content-type'] || 'audio/mpeg');
     res.set('Cache-Control', 'private, max-age=3600');
-    const { Readable } = require('stream');
-    Readable.fromWeb(upstream.body).pipe(res);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    upstream.pipe(res);
+  } catch(e) { console.error('Recording proxy error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/twilio/voicemail', async (req, res) => {
