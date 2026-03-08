@@ -3052,12 +3052,11 @@ function toggleAddUserForm() {
 }
 
 // ── FUB IMPORT ──────────────────────────────────────────────────────────────
-let _importRows = []; // parsed + mapped rows from CSV
-
+// Upload raw CSV file — zero in-browser parsing to avoid tab crash on large exports
 function importFileChosen(input) {
   const file = input.files[0];
   if (!file) return;
-  document.getElementById('import-filename').textContent = file.name;
+  document.getElementById('import-filename').textContent = `${file.name} (${(file.size/1024).toFixed(0)} KB)`;
   const dryBtn    = document.getElementById('import-dryrun-btn');
   const commitBtn = document.getElementById('import-commit-btn');
   dryBtn.disabled = false; dryBtn.style.opacity = '1';
@@ -3065,68 +3064,13 @@ function importFileChosen(input) {
   commitBtn.style.background = 'var(--bg-5)'; commitBtn.style.color = 'var(--text-2)';
   document.getElementById('import-preview').style.display = 'none';
   document.getElementById('import-status').style.display = 'none';
-  _importRows = [];
-
-  const reader = new FileReader();
-  reader.onload = e => { _importRows = importParseCSV(e.target.result); };
-  reader.readAsText(file);
-}
-
-function importParseCSV(raw) {
-  const lines = raw.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
-  if (!lines.length) return [];
-  const headers = importCSVLine(lines[0]);
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    const vals = importCSVLine(lines[i]);
-    const row = {};
-    headers.forEach((h,j) => { row[h] = (vals[j]||'').trim(); });
-    rows.push(row);
-  }
-  return rows;
-}
-
-function importCSVLine(line) {
-  const result = []; let cur = '', inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
-    else if (ch === ',' && !inQ) { result.push(cur); cur=''; }
-    else cur += ch;
-  }
-  result.push(cur);
-  return result;
-}
-
-function importMapStage(s) {
-  const v = (s||'').toLowerCase().trim();
-  if (!v) return 'Lead';
-  if (['hot','warm','cold','nurture','active','rental prospect','prospect','new',
-       'uncontacted','attempted contact','pre-approval','showing scheduled'].includes(v)) return 'Lead';
-  if (['past client','past tenant','past buyer','past seller','closed','purchased','sold'].includes(v)) return 'Past Tenant';
-  if (['owner','property owner','landlord'].includes(v)) return 'Property Owner';
-  if (['resident','tenant','active tenant','current tenant'].includes(v)) return 'Resident';
-  if (['contractor','vendor','maintenance'].includes(v)) return 'Contractor';
-  if (['caseworker','case worker','social worker','hap','section 8'].includes(v)) return 'Caseworker';
-  if (['trash','do not contact','dnc','spam','blocked'].includes(v)) return 'Lead';
-  return 'Lead';
-}
-
-function importIsBlocked(s) {
-  return ['trash','do not contact','dnc','spam','blocked'].includes((s||'').toLowerCase().trim());
-}
-
-function importNormalizePhone(ph) {
-  if (!ph) return null;
-  const d = ph.replace(/\D/g,'');
-  if (d.length===10) return '+1'+d;
-  if (d.length===11 && d[0]==='1') return '+'+d;
-  return null;
 }
 
 async function runImport(commit) {
-  if (!_importRows.length) { toast('No CSV loaded', 'error'); return; }
+  const fileInput = document.getElementById('import-file-input');
+  const file = fileInput && fileInput.files[0];
+  if (!file) { toast('No CSV file selected', 'error'); return; }
+
   const statusEl  = document.getElementById('import-status');
   const previewEl = document.getElementById('import-preview');
   const tbody     = document.getElementById('import-preview-body');
@@ -3134,34 +3078,25 @@ async function runImport(commit) {
   const commitBtn = document.getElementById('import-commit-btn');
 
   statusEl.style.display = 'block';
-  statusEl.textContent = commit ? '⏳ Importing…' : '⏳ Analysing CSV…';
+  statusEl.textContent = commit ? '⏳ Importing… this may take a moment for large files' : '⏳ Analysing CSV…';
   previewEl.style.display = 'none';
 
-  // Build payload
-  const contacts = _importRows.map(row => ({
-    first_name:  row['First Name'] || (row['Name']||'').split(' ')[0] || '',
-    last_name:   row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '',
-    fub_id:      row['ID'] || null,
-    email:       row['Email 1'] || null,
-    phone:       importNormalizePhone(row['Phone 1']),
-    phone_type:  row['Phone 1 - Type'] || 'mobile',
-    fub_stage:   row['Stage'] || '',
-    stage:       importMapStage(row['Stage']),
-    is_blocked:  importIsBlocked(row['Stage']),
-    source:      row['Lead Source'] || null,
-    assigned_to: row['Assigned To'] || null,
-    tags:        row['Tags'] ? row['Tags'].split(',').map(t=>t.trim()).filter(Boolean) : [],
-    notes:       [row['Notes'],row['Description'],row['Background']].filter(Boolean).join('\n\n') || null,
-    dob:         importParseDOB(row['DOB:'] || row['Birthday']),
-    address:     row['Property Address'] || null,
-    city:        row['Property City'] || null,
-    state:       row['Property State'] || null,
-    zip:         row['Property Postal Code'] || null,
-  })).filter(c => c.first_name);
-
   try {
-    const res  = await api('/api/import/fub', 'POST', { contacts, commit });
-    const data = res;
+    const token = localStorage.getItem('connect_token');
+    const form = new FormData();
+    form.append('csv', file);
+    form.append('commit', commit ? '1' : '0');
+
+    const resp = await fetch('/api/import/fub', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(err.error || resp.statusText);
+    }
+    const data = await resp.json();
 
     // Summary pills
     const pills = [
@@ -3177,7 +3112,7 @@ async function runImport(commit) {
       </div>`
     ).join('');
 
-    // Preview rows
+    // Preview rows (first 200)
     tbody.innerHTML = (data.preview||[]).map(r => {
       const actionColor = r.action==='insert'?'var(--green)':r.action==='update'?'var(--amber)':'var(--text-3)';
       const actionLabel = r.action==='insert'?'+ NEW':r.action==='update'?'~ UPDATE':'– SKIP';
@@ -3199,8 +3134,7 @@ async function runImport(commit) {
       commitBtn.disabled = true; commitBtn.style.opacity = '0.4';
       toast(`Import done! ${data.inserted} new contacts added.`, 'success');
     } else {
-      statusEl.textContent = `Dry run complete — review below, then click Commit Import when ready.`;
-      // Enable commit button
+      statusEl.textContent = `Dry run complete (${data.total} contacts) — review below, then click Commit Import when ready.`;
       commitBtn.disabled = false;
       commitBtn.style.opacity = '1';
       commitBtn.style.background = 'var(--red)';
@@ -3210,14 +3144,6 @@ async function runImport(commit) {
     statusEl.textContent = '❌ Error: ' + e.message;
     toast('Import error: ' + e.message, 'error');
   }
-}
-
-function importParseDOB(val) {
-  if (!val) return null;
-  const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-  return null;
 }
 
 async function submitAddUser() {
