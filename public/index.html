@@ -340,11 +340,11 @@
     .sec-id-row { display: flex; gap: 14px; align-items: flex-start; }
     .sec-id-col { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; }
     .sec-id-photo-wrap {
-      width: 148px; height: 96px; border-radius: 8px;
+      width: 100%; height: 120px; border-radius: 8px;
       border: 2px dashed var(--border); background: var(--bg-2);
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; overflow: hidden; transition: border-color 0.2s;
-      position: relative;
+      position: relative; box-sizing: border-box;
     }
     .sec-id-photo-wrap:hover { border-color: var(--accent); }
     .sec-id-photo-wrap img { width:100%; height:100%; object-fit:cover; border-radius:6px; display:block; }
@@ -1990,39 +1990,36 @@ function renderContactRecord(person, activities, tasks) {
         </div>
         <div class="sec-profile-section">
 
-          <!-- ID PHOTO + BACKGROUND NOTES side by side -->
-          <div class="sec-id-row">
-            <div class="sec-id-col">
-              <div class="sec-label">ID / Bio Photo</div>
-              <div class="sec-id-photo-wrap" id="sec-id-photo-wrap" onclick="document.getElementById('sec-id-file').click()">
-                <div class="sec-id-missing" id="sec-id-missing">
-                  <svg width="38" height="28" viewBox="0 0 38 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="1" y="1" width="36" height="26" rx="3" stroke="currentColor" stroke-width="1.5"/>
-                    <rect x="5" y="5" width="10" height="12" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-                    <circle cx="10" cy="9" r="2" stroke="currentColor" stroke-width="1.1"/>
-                    <path d="M5 17c0-2 2-3 5-3s5 1 5 3" stroke="currentColor" stroke-width="1.1"/>
-                    <line x1="19" y1="7" x2="33" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-                    <line x1="19" y1="11" x2="33" y2="11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-                    <line x1="19" y1="15" x2="27" y2="15" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-                  </svg>
-                  <div class="sec-id-badge">ID Missing</div>
-                  <div style="font-size:9px;margin-top:2px;color:var(--text-3)">Click to upload</div>
-                </div>
-                <img id="sec-id-img" style="display:none" src="" alt="ID Photo">
+          <!-- ID PHOTO -->
+          <div class="sec-field">
+            <div class="sec-label">ID / Bio Photo</div>
+            <div class="sec-id-photo-wrap" id="sec-id-photo-wrap" onclick="document.getElementById('sec-id-file').click()">
+              <div class="sec-id-missing" id="sec-id-missing">
+                <svg width="38" height="28" viewBox="0 0 38 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="36" height="26" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                  <rect x="5" y="5" width="10" height="12" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                  <circle cx="10" cy="9" r="2" stroke="currentColor" stroke-width="1.1"/>
+                  <path d="M5 17c0-2 2-3 5-3s5 1 5 3" stroke="currentColor" stroke-width="1.1"/>
+                  <line x1="19" y1="7" x2="33" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  <line x1="19" y1="11" x2="33" y2="11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  <line x1="19" y1="15" x2="27" y2="15" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+                <div class="sec-id-badge">ID Missing</div>
+                <div style="font-size:9px;margin-top:2px;color:var(--text-3)">Click to upload</div>
               </div>
-              <div class="sec-id-btns">
-                <button class="sec-micro-btn" onclick="document.getElementById('sec-id-file').click()">📎 Upload</button>
-                <button class="sec-micro-btn del" id="sec-id-del-btn" style="display:none" onclick="secDeleteIdPhoto()">✕ Remove</button>
-              </div>
-              <input type="file" id="sec-id-file" accept="image/*" style="display:none" onchange="secHandleIdUpload(event)">
+              <img id="sec-id-img" style="display:none" src="" alt="ID Photo">
             </div>
+            <div class="sec-id-btns" style="margin-top:6px">
+              <button class="sec-micro-btn" onclick="document.getElementById('sec-id-file').click()">📎 Upload</button>
+              <button class="sec-micro-btn del" id="sec-id-del-btn" style="display:none" onclick="secDeleteIdPhoto()">✕ Remove</button>
+            </div>
+            <input type="file" id="sec-id-file" accept="image/*" style="display:none" onchange="secHandleIdUpload(event)">
+          </div>
 
-            <div class="sec-info-col">
-              <div class="sec-field">
-                <div class="sec-label">Background Info</div>
-                <textarea class="sec-textarea" id="sec-bg-notes" placeholder="Staff notes about this person's background, history with property, concerns…" rows="5"></textarea>
-              </div>
-            </div>
+          <!-- BACKGROUND NOTES — full width below ID -->
+          <div class="sec-field">
+            <div class="sec-label">Background Info</div>
+            <textarea class="sec-textarea" id="sec-bg-notes" placeholder="Staff notes about this person's background, history with property, concerns…" rows="5"></textarea>
           </div>
 
           <!-- CRIMINAL / LEGAL HISTORY -->
