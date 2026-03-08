@@ -234,7 +234,7 @@ async function notifyCaseworkers(residentId, triggerType, agentId) {
       // Send SMS if caseworker has a phone
       if (cw.phone) {
         try {
-          const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+          const twilioClient = initTwilioFull();
           const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
           const sent = await twilioClient.messages.create({
             body: msg,
@@ -640,8 +640,29 @@ const initTwilio = () => {
 };
 
 const initTwilioFull = () => {
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) return null;
-  return require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  // Prefer API Key credentials (what's actually set in Railway)
+  // Falls back to AUTH_TOKEN if set
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  if (!sid) return null;
+  if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
+    return require('twilio')(process.env.TWILIO_API_KEY_SID, process.env.TWILIO_API_KEY_SECRET, { accountSid: sid });
+  }
+  if (process.env.TWILIO_AUTH_TOKEN) {
+    return require('twilio')(sid, process.env.TWILIO_AUTH_TOKEN);
+  }
+  return null;
+};
+
+// Helper: Basic Auth buffer for downloading Twilio recordings
+// Uses API Key SID + Secret (preferred) or Account SID + Auth Token
+const twilioBasicAuth = () => {
+  if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
+    return Buffer.from(`${process.env.TWILIO_API_KEY_SID}:${process.env.TWILIO_API_KEY_SECRET}`).toString('base64');
+  }
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    return Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
+  }
+  return null;
 };
 
 const initDeepgram = () => {
@@ -939,7 +960,7 @@ app.post('/api/twilio/recording', async (req, res) => {
             hostname: url.hostname,
             path:     url.pathname + url.search,
             method:   'GET',
-            headers:  { Authorization: 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64') }
+            headers:  { Authorization: 'Basic ' + twilioBasicAuth() }
           };
           const req = https.request(opts, (res) => {
             if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch failed: ${res.statusCode}`)); }
@@ -1015,7 +1036,7 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
               hostname: url.hostname,
               path:     url.pathname + url.search,
               method:   'GET',
-              headers:  { Authorization: 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64') }
+              headers:  { Authorization: 'Basic ' + twilioBasicAuth() }
             };
             const req = https.request(opts, (res) => {
               if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch failed: ${res.statusCode}`)); }
@@ -1073,16 +1094,15 @@ app.get('/api/calls/:callId/recording', auth, async (req, res) => {
     const callR = await pool.query('SELECT recording_url FROM calls WHERE id=$1', [req.params.callId]);
     const recUrl = callR.rows[0]?.recording_url;
     if (!recUrl) return res.status(404).json({ error: 'No recording' });
-    const sid   = process.env.TWILIO_ACCOUNT_SID;
-    const token = process.env.TWILIO_AUTH_TOKEN;
-    if (!sid || !token) return res.status(500).json({ error: 'Twilio credentials not configured' });
+    const auth = twilioBasicAuth();
+    if (!auth) return res.status(500).json({ error: 'Twilio credentials not configured' });
     const https = require('https');
     const url   = new URL(recUrl);
     const opts  = {
       hostname: url.hostname,
       path:     url.pathname + url.search,
       method:   'GET',
-      headers:  { Authorization: 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64') }
+      headers:  { Authorization: 'Basic ' + auth }
     };
     const upstream = await new Promise((resolve, reject) => {
       const r = https.request(opts, resolve);
@@ -1531,6 +1551,21 @@ app.get('/api/security/stream', auth, (req, res) => {
 });
 
 // Recent security events (last 50)
+// DEBUG — expose raw webhook payloads to diagnose event_link URL structure
+app.get('/api/security/events/raw', auth, adminOnly, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT id, event_id, event_link, camera_mac, site, raw_payload FROM security_events ORDER BY triggered_at DESC LIMIT 5');
+    res.json(r.rows.map(row => ({
+      id: row.id,
+      event_id: row.event_id,
+      event_link: row.event_link,
+      camera_mac: row.camera_mac,
+      site: row.site,
+      payload: row.raw_payload ? JSON.parse(row.raw_payload) : null
+    })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/security/events', auth, async (req, res) => {
   try {
     const r = await pool.query(`
@@ -1668,7 +1703,10 @@ app.post('/api/protect/webhook', async (req, res) => {
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`OKCREAL Connect running on port ${PORT}`);
-    console.log(`Twilio:   ${process.env.TWILIO_ACCOUNT_SID ? '✓' : '✗'}`);
+    console.log(`Twilio Account:  ${process.env.TWILIO_ACCOUNT_SID ? '✓' : '✗'}`);
+    console.log(`Twilio API Key:  ${process.env.TWILIO_API_KEY_SID ? '✓' : '✗'}`);
+    console.log(`Twilio Auth Tok: ${process.env.TWILIO_AUTH_TOKEN ? '✓' : '✗ (not needed if API Key set)'}`);
+    console.log(`Twilio RecAuth:  ${twilioBasicAuth() ? '✓ ready' : '✗ NO CREDENTIALS - recordings will fail'}`);
     console.log(`Deepgram: ${process.env.DEEPGRAM_API_KEY ? '✓' : '✗'}`);
     console.log(`Grok:     ${process.env.GROK_API_KEY ? '✓' : '✗'}`);
   });
