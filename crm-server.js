@@ -517,6 +517,48 @@ app.get('/api/people/:id/household-activities', auth, async (req, res) => {
 });
 
 // ─── ACTIVITIES ───────────────────────────────────────────────────────────────
+// ── INBOX ─────────────────────────────────────────────────────────────────────
+app.get('/api/inbox', auth, async (req, res) => {
+  try {
+    // Missed calls: inbound calls that were not answered (no-answer, busy, failed)
+    // within the last 7 days
+    const missedR = await pool.query(`
+      SELECT
+        c.id, c.from_number AS phone, c.created_at,
+        c.status, c.direction,
+        p.id AS person_id,
+        COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), c.from_number) AS contact_name
+      FROM calls c
+      LEFT JOIN people p ON p.id = c.person_id
+      WHERE c.direction = 'inbound'
+        AND c.status IN ('no-answer','busy','failed','canceled')
+        AND c.created_at > NOW() - INTERVAL '7 days'
+      ORDER BY c.created_at DESC
+      LIMIT 50
+    `);
+
+    // Unread inbound SMS: inbound SMS activities from last 7 days
+    const textsR = await pool.query(`
+      SELECT
+        a.id, a.body, a.created_at, a.person_id,
+        p.phone AS phone,
+        COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), p.phone) AS contact_name
+      FROM activities a
+      LEFT JOIN people p ON p.id = a.person_id
+      WHERE a.type = 'sms'
+        AND a.direction = 'inbound'
+        AND a.created_at > NOW() - INTERVAL '7 days'
+      ORDER BY a.created_at DESC
+      LIMIT 50
+    `);
+
+    res.json({
+      missed_calls:  missedR.rows,
+      unread_texts:  textsR.rows,
+    });
+  } catch(e) { console.error('Inbox error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/activities', auth, async (req, res) => {
   try {
     const { personId, limit = 50, type } = req.query;
@@ -1239,6 +1281,82 @@ app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
 });
 
 // Also expose without /admin prefix for frontend compatibility
+// ── FUB IMPORT ────────────────────────────────────────────────────────────────
+app.post('/api/import/fub', auth, async (req, res) => {
+  try {
+    const { contacts = [], commit = false } = req.body;
+    if (!Array.isArray(contacts) || !contacts.length) return res.status(400).json({ error: 'No contacts provided' });
+
+    // Load existing for dedup: fub_id, email, phone
+    const existingByFubId = new Map();
+    const existingByEmail = new Map();
+    const existingByPhone = new Map();
+
+    const { rows: existing } = await pool.query(`
+      SELECT p.id, p.fub_id, p.email,
+             array_agg(pp.phone) FILTER (WHERE pp.phone IS NOT NULL) AS phones
+      FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
+      GROUP BY p.id
+    `);
+    for (const p of existing) {
+      if (p.fub_id) existingByFubId.set(p.fub_id, p.id);
+      if (p.email)  existingByEmail.set(p.email.toLowerCase(), p.id);
+      for (const ph of (p.phones || [])) existingByPhone.set(ph, p.id);
+    }
+
+    let inserted = 0, updated = 0, skipped = 0, blocked = 0;
+    const preview = [];
+
+    for (const c of contacts) {
+      if (!c.first_name) { skipped++; continue; }
+
+      const email = c.email ? c.email.toLowerCase() : null;
+      let existingId = null;
+      if (c.fub_id && existingByFubId.has(c.fub_id))   existingId = existingByFubId.get(c.fub_id);
+      else if (email && existingByEmail.has(email))      existingId = existingByEmail.get(email);
+      else if (c.phone && existingByPhone.has(c.phone))  existingId = existingByPhone.get(c.phone);
+
+      const name = `${c.first_name} ${c.last_name||''}`.trim();
+      if (c.is_blocked) blocked++;
+
+      if (existingId) {
+        updated++;
+        preview.push({ action:'update', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
+        if (commit) {
+          await pool.query(`
+            UPDATE people SET
+              fub_id=COALESCE(fub_id,$1), dob=COALESCE(dob,$2), source=COALESCE(source,$3),
+              notes=COALESCE(NULLIF(notes,''),$4), is_blocked=is_blocked OR $5, updated_at=NOW()
+            WHERE id=$6`,
+            [c.fub_id, c.dob||null, c.source||null, c.notes||null, c.is_blocked, existingId]);
+          if (c.phone) await pool.query(
+            `INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`,
+            [existingId, c.phone, c.phone_type||'mobile']);
+        }
+      } else {
+        inserted++;
+        preview.push({ action:'insert', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
+        if (commit) {
+          const { rows:[np] } = await pool.query(`
+            INSERT INTO people
+              (first_name,last_name,email,stage,source,assigned_to,tags,notes,dob,fub_id,is_blocked,address,city,state,zip)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+            [c.first_name, c.last_name||null, email||null, c.stage, c.source||null,
+             c.assigned_to||null, c.tags||[], c.notes||null, c.dob||null,
+             c.fub_id||null, c.is_blocked||false,
+             c.address||null, c.city||null, c.state||null, c.zip||null]);
+          if (c.phone && np) await pool.query(
+            `INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES ($1,$2,$3,true) ON CONFLICT DO NOTHING`,
+            [np.id, c.phone, c.phone_type||'mobile']);
+        }
+      }
+    }
+
+    // Cap preview at 200 rows for response size
+    res.json({ inserted, updated, skipped, blocked, commit, preview: preview.slice(0, 200) });
+  } catch(e) { console.error('FUB import error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/agents', auth, async (req, res) => {
   try {
     const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,is_active,created_at FROM agents ORDER BY name');
