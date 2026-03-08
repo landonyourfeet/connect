@@ -2178,14 +2178,14 @@ function renderContactRecord(person, activities, tasks) {
             style="width:100%;box-sizing:border-box;padding:6px 10px;border-radius:6px;background:var(--bg-3);border:1px solid var(--border);color:var(--text);font-size:12px;font-family:inherit;outline:none">
           <div id="cw-search-results-${person.id}" style="margin-top:5px;display:flex;flex-direction:column;gap:3px;max-height:140px;overflow-y:auto"></div>
         </div>
-        ${(stage==='Resident'||stage==='Delinquent'||stage==='Evicting') ? \`
+        ${(stage==='Resident'||stage==='Delinquent'||stage==='Evicting') ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-          <button onclick="logLeaseViolation(\${person.id})"
+          <button onclick="logLeaseViolation(${person.id})"
             style="width:100%;padding:7px;border-radius:6px;background:rgba(255,59,59,0.1);border:1px solid rgba(255,59,59,0.3);color:#ff3b3b;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit"
             onmouseover="this.style.background='rgba(255,59,59,0.2)'" onmouseout="this.style.background='rgba(255,59,59,0.1)'">
             🚨 Log Lease Violation
           </button>
-        </div>\` : ''}
+        </div>` : ''}
       </div>
 
       <div class="right-section" id="security-detections-wrap">
