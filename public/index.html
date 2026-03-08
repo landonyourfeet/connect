@@ -3248,6 +3248,22 @@ const JirehOrganic = (() => {
 
     const pal = PALETTES[_mode] || PALETTES.idle;
 
+    // ── VOICE INTENSITY HEAT ────────────────────────────────────────
+    // When on a call, _smooth (0-1) drives hue: blue(200°) → amber(28°) → red(0°)
+    // Power curve so it stays cool at normal speech, burns red when loud
+    let voiceHueBase = pal.base;
+    let voiceHueRange = pal.range;
+    let voiceGlowBoost = 0;
+    if (_mode === 'voice') {
+      const heat = Math.pow(_smooth, 1.6); // power curve — slow ramp, fast burn
+      // 0 → cool teal/blue (195), 0.5 → amber (28), 1 → alarm red (0)
+      voiceHueBase  = heat < 0.5
+        ? 195 - (heat / 0.5) * 167          // 195 → 28 in first half
+        : 28  - ((heat - 0.5) / 0.5) * 28;  // 28 → 0 in second half
+      voiceHueRange = 40 + (1 - heat) * 80; // range narrows as it reddens (more focused color)
+      voiceGlowBoost = heat;
+    }
+
     for (let i = 0; i < blobs.length; i++) {
       const b = blobs[i];
       const f = FREQS[i];
@@ -3267,18 +3283,27 @@ const JirehOrganic = (() => {
       );
       b.hue = (b.hue + dh * 0.019 + 360) % 360;
 
-      // Constrain hue to palette range
-      const hue = pal.base + ((b.hue % pal.range) - pal.range / 2) * 0.75;
+      // Constrain hue to palette range — voice mode overrides base+range dynamically
+      const baseH  = _mode === 'voice' ? voiceHueBase  : pal.base;
+      const rangeH = _mode === 'voice' ? voiceHueRange : pal.range;
+      const hue = baseH + ((b.hue % rangeH) - rangeH / 2) * 0.75;
 
-      // Width breathes at its own irrational frequency
-      const wf = 0.17 + 0.08 * Math.abs(Math.sin(t * f.fw + b.phase));
+      // Width: blobs spread wider when heated — more aggressive presence
+      const heatSpread = _mode === 'voice' ? 1 + voiceGlowBoost * 0.55 : 1;
+      const wf = (0.17 + 0.08 * Math.abs(Math.sin(t * f.fw + b.phase))) * heatSpread;
       const sigma = wf * W;
       const xPx = b.x * W;
 
-      // Brightness + alpha shaped by voice or mode
-      const litMod = _mode === 'voice' ? _smooth * 22 : (_mode === 'ringing' ? 8 * Math.abs(Math.sin(t * 0.0025 * S3)) : 0);
+      // Brightness: hotter = brighter, especially in the red zone
+      const litMod = _mode === 'voice'
+        ? _smooth * 18 + voiceGlowBoost * 20
+        : (_mode === 'ringing' ? 8 * Math.abs(Math.sin(t * 0.0025 * S3)) : 0);
       const brt = (pal.litBase + litMod) | 0;
-      const alBase = _mode === 'voice' ? 0.25 + _smooth * 0.75 : 0.65 + 0.28 * Math.abs(Math.sin(t * f.f2 * 2.1 + b.phase));
+
+      // Alpha: surges at high intensity for warning punch
+      const alBase = _mode === 'voice'
+        ? 0.28 + _smooth * 0.52 + voiceGlowBoost * 0.20
+        : 0.65 + 0.28 * Math.abs(Math.sin(t * f.f2 * 2.1 + b.phase));
 
       const g = ctx.createLinearGradient(xPx - sigma * 2.4, 0, xPx + sigma * 2.4, 0);
       const col = `hsla(${hue|0},${pal.sat}%,${brt}%,`;
@@ -3305,7 +3330,7 @@ const JirehOrganic = (() => {
     const dt = Math.min(ts - lastTs, 50);
     lastTs = ts;
     t += dt;
-    _smooth += (_voice - _smooth) * 0.10; // lag-smoothed voice level
+    _smooth += (_voice - _smooth) * (_voice > _smooth ? 0.18 : 0.055); // fast attack, slow decay
 
     // Keep canvas sized to its container every frame (handles collapse/expand)
     if (canvas) {
