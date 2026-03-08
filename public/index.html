@@ -7,8 +7,9 @@
   <title>OKCREAL Connect</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="alternate icon" type="image/png" href="/favicon.png">
   <script src="/twilio-voice.js"></script>
   <style>
     /* ── DESIGN TOKENS ────────────────────────────────────────── */
@@ -1165,6 +1166,56 @@ let isMuted = false;
 let isOnHold = false;
 let inboxFilter = 'all';
 let currentTaskPersonId = null;
+// ── TAB ALERT — phone icon + title flash when call comes in ─────────────
+const TabAlert = (() => {
+  let _interval  = null;
+  let _origTitle = document.title;
+  let _origIcon  = null;
+
+  // Inline SVG favicons as data URIs — no server round-trip
+  const ICONS = {
+    default: null, // restored from original link tag
+    phone: `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='10' fill='%230a0a0f'/><text x='32' y='44' font-family='Arial Black,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23e6e6e6'>OK<tspan fill='%23e63946'>C</tspan></text></svg>`,
+    ringing: `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='10' fill='%2300cc55'/><text x='32' y='46' font-family='Arial' font-size='38' text-anchor='middle' fill='%23fff'>📞</text></svg>`,
+    active:  `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='10' fill='%23005522'/><text x='32' y='46' font-family='Arial' font-size='38' text-anchor='middle' fill='%2300ff88'>📞</text></svg>`,
+  };
+
+  function setIcon(type) {
+    let link = document.querySelector("link[rel='shortcut icon']");
+    if (!link) { link = document.createElement('link'); link.rel = 'shortcut icon'; document.head.appendChild(link); }
+    if (type === 'default') {
+      link.href = '/favicon.ico';
+    } else {
+      link.href = ICONS[type];
+      link.type = 'image/svg+xml';
+    }
+  }
+
+  return {
+    ringing(name) {
+      clearInterval(_interval);
+      _origTitle = document.title;
+      let flash = false;
+      setIcon('ringing');
+      _interval = setInterval(() => {
+        flash = !flash;
+        document.title = flash ? `📞 Incoming — ${name || 'Unknown'}` : `☎ OKCREAL Connect`;
+      }, 900);
+    },
+    active(name) {
+      clearInterval(_interval);
+      setIcon('active');
+      document.title = `📞 On Call — ${name || ''}`;
+    },
+    clear() {
+      clearInterval(_interval);
+      _interval = null;
+      setIcon('default');
+      document.title = _origTitle || 'OKCREAL Connect';
+    }
+  };
+})();
+
 // ── THEME ──────────────────────────────────────────────────────────────────
 (function() {
   const saved = localStorage.getItem('okcreal_theme') || 'dark';
@@ -2223,8 +2274,10 @@ function handleIncomingCall(conn) {
   activeCall = conn;
   const from = conn.parameters?.From || 'Unknown';
   const matched = peopleData.find(p => p.phone && p.phone.replace(/\D/g,'') === from.replace(/\D/g,''));
-  showCallBar('ringing', matched ? [matched.first_name, matched.last_name].filter(Boolean).join(' ') : from, from);
+  const callerName = matched ? [matched.first_name, matched.last_name].filter(Boolean).join(' ') : from;
+  showCallBar('ringing', callerName, from);
   if (window.neonGlow) window.neonGlow.ringing();
+  TabAlert.ringing(callerName);
 
   // ── Listen for remote hangup on the connection itself ──
   conn.on('disconnect', handleCallEnd);
@@ -2256,17 +2309,20 @@ function acceptCall() {
   if (!activeCall) return;
   activeCall.accept();
   if (window.neonGlow) window.neonGlow.callActive();
-  showCallBar('active', document.getElementById('call-contact-name').textContent, document.getElementById('call-number').textContent);
+  const _acceptName = document.getElementById('call-contact-name').textContent;
+  showCallBar('active', _acceptName, document.getElementById('call-number').textContent);
   startCallTimer();
   VoiceViz.start(activeCall);
+  TabAlert.active(_acceptName);
 }
-function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); }
+function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); TabAlert.clear(); }
 function endCall() { if (activeCall) activeCall.disconnect(); }
 
 function handleCallEnd() {
   if (!activeCall) return;             // guard against double-fire
   activeCall = null;
   VoiceViz.stop();
+  TabAlert.clear();
   if (window.neonGlow) window.neonGlow.callEnd();
   stopCallTimer();
   const duration = document.getElementById('call-timer').textContent;
@@ -2326,8 +2382,8 @@ async function quickCall(personId, phone, name) {
     showCallBar('active', name, phone);
     startCallTimer();
     activeCall.on('disconnect', handleCallEnd);
-    // Small delay to let Twilio wire up streams before tapping them
     setTimeout(() => VoiceViz.start(activeCall), 600);
+    TabAlert.active(name);
   } catch(e) {
     toast('Call failed: ' + e.message, 'error');
   }
