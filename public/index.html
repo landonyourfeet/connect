@@ -3014,13 +3014,13 @@ async function loadAdmin() {
           </p>
 
           <!-- Upload row -->
+          <input type="file" accept=".csv" id="import-file-input" style="display:none" onchange="importFileChosen(this)">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-            <label style="display:flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2)">
+            <button onclick="document.getElementById('import-file-input').click()" style="display:flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2)">
               📂 <span id="import-filename">Choose CSV file…</span>
-              <input type="file" accept=".csv" id="import-file-input" style="display:none" onchange="importFileChosen(this)">
-            </label>
-            <button class="btn-ghost" onclick="runImport(false)" id="import-dryrun-btn" disabled style="opacity:0.4">🔍 Dry Run Preview</button>
-            <button class="btn-primary" onclick="runImport(true)" id="import-commit-btn" disabled style="opacity:0.4;background:var(--bg-5);color:var(--text-2);border:1px solid var(--border)">🚀 Commit Import</button>
+            </button>
+            <button class="btn-ghost" onclick="runImport(false)" id="import-dryrun-btn" style="opacity:0.4">🔍 Dry Run Preview</button>
+            <button class="btn-primary" onclick="runImport(true)" id="import-commit-btn" style="opacity:0.4;background:var(--bg-5);color:var(--text-2);border:1px solid var(--border)">🚀 Commit Import</button>
           </div>
 
           <!-- Progress / status -->
@@ -3057,11 +3057,11 @@ function importFileChosen(input) {
   const file = input.files[0];
   if (!file) return;
   document.getElementById('import-filename').textContent = `${file.name} (${(file.size/1024).toFixed(0)} KB)`;
-  const dryBtn    = document.getElementById('import-dryrun-btn');
-  const commitBtn = document.getElementById('import-commit-btn');
-  dryBtn.disabled = false; dryBtn.style.opacity = '1';
-  commitBtn.disabled = true; commitBtn.style.opacity = '0.4';
-  commitBtn.style.background = 'var(--bg-5)'; commitBtn.style.color = 'var(--text-2)';
+  document.getElementById('import-dryrun-btn').style.opacity = '1';
+  document.getElementById('import-dryrun-btn').style.fontWeight = '600';
+  document.getElementById('import-commit-btn').style.opacity = '0.4';
+  document.getElementById('import-commit-btn').style.background = 'var(--bg-5)';
+  document.getElementById('import-commit-btn').style.color = 'var(--text-2)';
   document.getElementById('import-preview').style.display = 'none';
   document.getElementById('import-status').style.display = 'none';
 }
@@ -3069,7 +3069,10 @@ function importFileChosen(input) {
 async function runImport(commit) {
   const fileInput = document.getElementById('import-file-input');
   const file = fileInput && fileInput.files[0];
-  if (!file) { toast('No CSV file selected', 'error'); return; }
+  if (!file) { 
+    toast('Click "📂 Choose CSV file…" first to select your FUB export', 'error'); 
+    return; 
+  }
 
   const statusEl  = document.getElementById('import-status');
   const previewEl = document.getElementById('import-preview');
