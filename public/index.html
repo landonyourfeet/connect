@@ -294,6 +294,86 @@
     #app.visible { display: flex; }
 
     /* ── FLOATING CALL BAR ────────────────────────────────────── */
+    /* ── SECURITY PROFILE PANEL ──────────────────────────────────── */
+    .sec-profile-section { display: flex; flex-direction: column; gap: 14px; }
+    .sec-id-row { display: flex; gap: 14px; align-items: flex-start; }
+    .sec-id-col { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; }
+    .sec-id-photo-wrap {
+      width: 148px; height: 96px; border-radius: 8px;
+      border: 2px dashed var(--border); background: var(--bg-2);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; overflow: hidden; transition: border-color 0.2s;
+      position: relative;
+    }
+    .sec-id-photo-wrap:hover { border-color: var(--accent); }
+    .sec-id-photo-wrap img { width:100%; height:100%; object-fit:cover; border-radius:6px; display:block; }
+    .sec-id-missing {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      color: var(--text-3); font-size: 10px; text-align: center; padding: 6px; pointer-events: none;
+    }
+    .sec-id-badge {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.12em;
+      color: #ff3b3b; text-transform: uppercase; margin-top: 2px;
+    }
+    .sec-id-btns { display: flex; gap: 4px; }
+    .sec-micro-btn {
+      font-size: 10px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-2); transition: all 0.15s; font-family: inherit;
+    }
+    .sec-micro-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .sec-micro-btn.del:hover { border-color: #ff3b3b; color: #ff3b3b; }
+    .sec-info-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    .sec-field { display: flex; flex-direction: column; gap: 4px; }
+    .sec-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-3);
+    }
+    .sec-textarea {
+      width: 100%; box-sizing: border-box; min-height: 58px;
+      background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 12px;
+      padding: 8px 10px; resize: vertical; font-family: inherit;
+      transition: border-color 0.15s; line-height: 1.5;
+    }
+    .sec-textarea:focus { outline: none; border-color: var(--accent); }
+    .sec-dv-box {
+      border-radius: 8px; padding: 10px 12px;
+      border: 1px solid rgba(255,59,59,0.2);
+      background: rgba(255,59,59,0.04); transition: all 0.2s;
+    }
+    .sec-dv-box.active { background: rgba(255,59,59,0.1); border-color: rgba(255,59,59,0.45); }
+    .sec-dv-top { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .sec-dv-check { width: 16px; height: 16px; accent-color: #ff3b3b; cursor: pointer; flex-shrink:0; }
+    .sec-dv-title { font-size: 12px; font-weight: 700; color: var(--text); }
+    .sec-dv-sub { font-size: 11px; color: var(--text-3); margin-left: 24px; margin-top: 2px; }
+    .sec-dv-notes-wrap { margin-top: 8px; display: none; }
+    .sec-dv-box.active .sec-dv-notes-wrap { display: block; }
+    .sec-save-row { display: flex; align-items: center; gap: 10px; }
+    .sec-save-btn {
+      padding: 7px 18px; border-radius: 6px; font-size: 12px; font-weight: 700;
+      background: var(--accent); color: #fff; border: none; cursor: pointer;
+      transition: all 0.2s; font-family: inherit; letter-spacing: 0.04em;
+    }
+    .sec-save-btn:hover { opacity: 0.88; }
+    .sec-save-btn.saved { background: var(--green) !important; }
+    .sec-saved-msg { font-size: 11px; color: var(--green); opacity: 0; transition: opacity 0.3s; }
+    .sec-saved-msg.show { opacity: 1; }
+    .sec-detections-list { display: flex; flex-direction: column; gap: 6px; }
+    .sec-det-row {
+      display: flex; gap: 8px; align-items: flex-start;
+      padding: 7px 8px; background: var(--bg-2); border-radius: 6px;
+      border-left: 3px solid rgba(255,59,59,0.5);
+    }
+    .sec-det-thumb {
+      width: 38px; height: 38px; border-radius: 4px; object-fit: cover;
+      border: 1px solid rgba(255,59,59,0.4); flex-shrink: 0;
+    }
+    .sec-det-info { min-width: 0; font-size: 11px; }
+    .sec-det-cam { font-weight: 600; color: var(--text); }
+    .sec-det-meta { color: var(--text-3); margin-top: 1px; }
+    .sec-det-link { color: #ff3b3b; font-size: 10px; margin-top: 2px; display: inline-block; }
+
     /* ── JIREH SECURITY ALERT BANNER ──────────────────────────────── */
     #security-alert {
       position: fixed;
@@ -1551,34 +1631,134 @@ async function openContact(personId) {
   }
 }
 
+// ── JIREH SECURITY PROFILE ───────────────────────────────────────────────
+let _secPersonId = null;
+
 async function loadSecurityDetections(personId) {
+  _secPersonId = personId;
   const wrap = document.getElementById('security-detections-wrap');
-  const list = document.getElementById('security-detections-list');
-  if (!wrap || !list) return;
+  if (!wrap) return;
+  wrap.style.display = '';
+
+  // Load person data into fields
+  try {
+    const person = await apiFetch(`/api/people/${personId}`);
+    // ID photo
+    const img    = document.getElementById('sec-id-img');
+    const missing = document.getElementById('sec-id-missing');
+    const delBtn = document.getElementById('sec-id-del-btn');
+    if (person.id_photo_b64) {
+      const src = person.id_photo_b64.startsWith('data:') ? person.id_photo_b64 : 'data:image/jpeg;base64,' + person.id_photo_b64;
+      img.src = src; img.style.display = 'block'; missing.style.display = 'none'; delBtn.style.display = '';
+    } else {
+      img.style.display = 'none'; missing.style.display = 'flex'; delBtn.style.display = 'none';
+    }
+    // Text fields
+    document.getElementById('sec-bg-notes').value    = person.security_notes    || '';
+    document.getElementById('sec-criminal').value    = person.criminal_history  || '';
+    document.getElementById('sec-dv-notes').value    = person.dv_notes          || '';
+    // DV checkbox
+    const dvCheck = document.getElementById('sec-dv-check');
+    const dvBox   = document.getElementById('sec-dv-box');
+    dvCheck.checked = !!person.dv_victim;
+    dvBox.classList.toggle('active', !!person.dv_victim);
+  } catch(e) { console.warn('[Security] load person:', e.message); }
+
+  // Load camera detections
   try {
     const events = await apiFetch('/api/security/events');
-    const matched = (events||[]).filter(e => String(e.person_id) === String(personId));
-    if (!matched.length) { wrap.style.display = 'none'; return; }
-    wrap.style.display = '';
-    list.innerHTML = matched.slice(0,5).map(e => {
-      const t = new Date(e.triggered_at);
-      const ago = timeAgo(t);
+    const matched = (events || []).filter(e => String(e.person_id) === String(personId));
+    const camWrap = document.getElementById('sec-cam-detections-wrap');
+    const camList = document.getElementById('security-detections-list');
+    if (!matched.length) { camWrap.style.display = 'none'; return; }
+    camWrap.style.display = '';
+    camList.innerHTML = matched.slice(0, 8).map(e => {
+      const ago = timeAgo(new Date(e.triggered_at));
       const thumb = e.thumbnail_b64
-        ? `<img src="data:image/jpeg;base64,${e.thumbnail_b64.substring(0,50000)}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #ff3b3b;flex-shrink:0" onerror="this.style.display='none'">`
-        : `<div style="width:40px;height:40px;background:#1a1a1a;border-radius:4px;border:1px solid #333;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📷</div>`;
-      const link = e.event_link
-        ? `<a href="${e.event_link}" target="_blank" style="color:#ff3b3b;font-size:11px;margin-top:2px;display:block">View Footage →</a>` : '';
-      return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border)">
+        ? `<img class="sec-det-thumb" src="data:image/jpeg;base64,${e.thumbnail_b64.substring(0,50000)}" onerror="this.style.display='none'">`
+        : `<div style="width:38px;height:38px;border-radius:4px;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📷</div>`;
+      const link = e.event_link ? `<a class="sec-det-link" href="${e.event_link}" target="_blank">View Footage →</a>` : '';
+      return `<div class="sec-det-row">
         ${thumb}
-        <div style="min-width:0">
-          <div style="font-weight:600;color:var(--text)">${esc(e.camera_name||'Unknown Camera')}</div>
-          <div style="color:var(--text-3);font-size:11px">${e.site ? esc(e.site)+' · ' : ''}${ago}</div>
+        <div class="sec-det-info">
+          <div class="sec-det-cam">${esc(e.camera_name || 'Unknown Camera')}</div>
+          <div class="sec-det-meta">${e.site ? esc(e.site) + ' · ' : ''}${ago}</div>
           ${link}
         </div>
       </div>`;
     }).join('');
-  } catch(err) { wrap.style.display = 'none'; }
+  } catch(e) { console.warn('[Security] load events:', e.message); }
 }
+
+function secToggleDV() {
+  const check = document.getElementById('sec-dv-check');
+  const box   = document.getElementById('sec-dv-box');
+  // If click came from checkbox it already toggled; if from parent div, toggle manually
+  const isActive = check.checked;
+  box.classList.toggle('active', isActive);
+}
+
+async function secHandleIdUpload(event) {
+  const file = event.target.files[0];
+  if (!file || !_secPersonId) return;
+  if (file.size > 3 * 1024 * 1024) { toast('Image too large — max 3MB', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const b64 = e.target.result; // full data URL
+    try {
+      await apiFetch(`/api/people/${_secPersonId}/id-photo`, {
+        method: 'POST',
+        body: JSON.stringify({ photoB64: b64, photoName: file.name })
+      });
+      const img = document.getElementById('sec-id-img');
+      const missing = document.getElementById('sec-id-missing');
+      const delBtn = document.getElementById('sec-id-del-btn');
+      img.src = b64; img.style.display = 'block';
+      missing.style.display = 'none'; delBtn.style.display = '';
+      toast('ID photo saved', 'success');
+    } catch(err) { toast('Upload failed', 'error'); }
+  };
+  reader.readAsDataURL(file);
+  event.target.value = ''; // reset so same file can be re-uploaded
+}
+
+async function secDeleteIdPhoto() {
+  if (!_secPersonId) return;
+  if (!confirm('Remove ID photo?')) return;
+  try {
+    await apiFetch(`/api/people/${_secPersonId}/id-photo`, { method: 'DELETE' });
+    document.getElementById('sec-id-img').style.display = 'none';
+    document.getElementById('sec-id-missing').style.display = 'flex';
+    document.getElementById('sec-id-del-btn').style.display = 'none';
+    toast('ID photo removed', 'success');
+  } catch(e) { toast('Failed to remove photo', 'error'); }
+}
+
+async function secSaveProfile() {
+  if (!_secPersonId) return;
+  const btn = document.querySelector('.sec-save-btn');
+  const msg = document.getElementById('sec-saved-msg');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    await apiFetch(`/api/people/${_secPersonId}/security`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        securityNotes:   document.getElementById('sec-bg-notes').value,
+        criminalHistory: document.getElementById('sec-criminal').value,
+        dvVictim:        document.getElementById('sec-dv-check').checked,
+        dvNotes:         document.getElementById('sec-dv-notes').value
+      })
+    });
+    btn.textContent = 'Save Security Profile'; btn.disabled = false;
+    btn.classList.add('saved');
+    msg.classList.add('show');
+    setTimeout(() => { btn.classList.remove('saved'); msg.classList.remove('show'); }, 2500);
+  } catch(e) {
+    btn.textContent = 'Save Security Profile'; btn.disabled = false;
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
 
 function renderContactRecord(person, activities, tasks) {
   const viewEl = document.getElementById('view-contact');
@@ -1744,11 +1924,80 @@ function renderContactRecord(person, activities, tasks) {
           ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--text-3)">No active flags</div>' : ''}
         </div>
       </div>
-      <div class="right-section" id="security-detections-wrap" style="display:none">
+      <div class="right-section" id="security-detections-wrap">
         <div class="right-section-header">
-          <span class="right-section-title" style="color:#ff3b3b">🔒 Security</span>
+          <span class="right-section-title" style="color:#ff3b3b">🔒 Security Profile</span>
         </div>
-        <div id="security-detections-list" style="font-size:12px;color:var(--text-2)">No detections on record.</div>
+        <div class="sec-profile-section">
+
+          <!-- ID PHOTO + BACKGROUND NOTES side by side -->
+          <div class="sec-id-row">
+            <div class="sec-id-col">
+              <div class="sec-label">ID / Bio Photo</div>
+              <div class="sec-id-photo-wrap" id="sec-id-photo-wrap" onclick="document.getElementById('sec-id-file').click()">
+                <div class="sec-id-missing" id="sec-id-missing">
+                  <svg width="38" height="28" viewBox="0 0 38 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="1" y="1" width="36" height="26" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                    <rect x="5" y="5" width="10" height="12" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                    <circle cx="10" cy="9" r="2" stroke="currentColor" stroke-width="1.1"/>
+                    <path d="M5 17c0-2 2-3 5-3s5 1 5 3" stroke="currentColor" stroke-width="1.1"/>
+                    <line x1="19" y1="7" x2="33" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                    <line x1="19" y1="11" x2="33" y2="11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                    <line x1="19" y1="15" x2="27" y2="15" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  </svg>
+                  <div class="sec-id-badge">ID Missing</div>
+                  <div style="font-size:9px;margin-top:2px;color:var(--text-3)">Click to upload</div>
+                </div>
+                <img id="sec-id-img" style="display:none" src="" alt="ID Photo">
+              </div>
+              <div class="sec-id-btns">
+                <button class="sec-micro-btn" onclick="document.getElementById('sec-id-file').click()">📎 Upload</button>
+                <button class="sec-micro-btn del" id="sec-id-del-btn" style="display:none" onclick="secDeleteIdPhoto()">✕ Remove</button>
+              </div>
+              <input type="file" id="sec-id-file" accept="image/*" style="display:none" onchange="secHandleIdUpload(event)">
+            </div>
+
+            <div class="sec-info-col">
+              <div class="sec-field">
+                <div class="sec-label">Background Info</div>
+                <textarea class="sec-textarea" id="sec-bg-notes" placeholder="Staff notes about this person's background, history with property, concerns…" rows="5"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- CRIMINAL / LEGAL HISTORY -->
+          <div class="sec-field">
+            <div class="sec-label">⚖️ Criminal / Legal History</div>
+            <textarea class="sec-textarea" id="sec-criminal" placeholder="Known criminal record, active warrants, court cases, legal concerns…" rows="3"></textarea>
+          </div>
+
+          <!-- DV FLAG -->
+          <div class="sec-dv-box" id="sec-dv-box">
+            <div class="sec-dv-top" onclick="secToggleDV()">
+              <input type="checkbox" class="sec-dv-check" id="sec-dv-check" onclick="event.stopPropagation(); secToggleDV()">
+              <div>
+                <div class="sec-dv-title">🛡 Victim of Domestic Violence</div>
+              </div>
+            </div>
+            <div class="sec-dv-sub">Check if this resident is a known DV victim. Enables privacy protections.</div>
+            <div class="sec-dv-notes-wrap">
+              <textarea class="sec-textarea" id="sec-dv-notes" placeholder="DV case notes, safety plan details, protected address flag…" rows="2" style="margin-top:8px"></textarea>
+            </div>
+          </div>
+
+          <!-- SAVE -->
+          <div class="sec-save-row">
+            <button class="sec-save-btn" onclick="secSaveProfile()">Save Security Profile</button>
+            <span class="sec-saved-msg" id="sec-saved-msg">✓ Saved</span>
+          </div>
+
+          <!-- CAMERA DETECTIONS -->
+          <div id="sec-cam-detections-wrap" style="display:none">
+            <div class="sec-label" style="color:#ff3b3b;margin-bottom:6px">📷 Camera Detections</div>
+            <div class="sec-detections-list" id="security-detections-list"></div>
+          </div>
+
+        </div>
       </div>
     </div>
   `;
