@@ -1933,12 +1933,11 @@ function _idleReset() {
   }, IDLE_MS);
 }
 
-// Listen on all activity events — mouse, keyboard, touch, scroll
-['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'].forEach(evt => {
+// Listen on activity events for idle reset ONLY — never unlock on mouse/touch
+['mousemove', 'mousedown', 'touchstart', 'scroll', 'click'].forEach(evt => {
   document.addEventListener(evt, () => {
-    // Any activity while blurred = unlock
-    if (_privacyActive) togglePrivacyBlur(false);
-    else _idleReset();
+    // Mouse/touch activity only resets the idle timer — never unlocks
+    if (!_privacyActive) _idleReset();
   }, { passive: true });
 });
 
@@ -1961,7 +1960,11 @@ document.addEventListener('keydown', (e) => {
   // Escape to EXIT privacy mode
   if (e.key === 'Escape' && _privacyActive) {
     togglePrivacyBlur(false);
+    return;
   }
+
+  // Any other keypress (while not blurred) resets the idle timer
+  if (!_privacyActive) _idleReset();
 });
 
 // ── CASEWORKER PANEL ─────────────────────────────────────────────────────────
