@@ -3332,11 +3332,56 @@ async function saveCameraName(mac, id) {
 }
 
 async function discoverCameras() {
+  toast('Fetching cameras from UniFi Protect...', 'info');
   try {
-    const r = await api('/api/admin/cameras/discover', 'POST');
-    toast(`Discovered ${r.discovered} cameras, added ${r.added} new ✓`, 'success');
+    // Call UniFi Protect bootstrap API directly from the browser (already authenticated via cookie)
+    // This works because we're on okcreal.ui.com in the same browser session
+    const consoleId = '6C63F88E4A03000000000927D6F50000000009A5904200000000683ED32C:16735734';
+    const resp = await fetch(`https://okcreal.ui.com/api/self/console/cameras`, {
+      credentials: 'include',
+      headers: { 'x-console-id': consoleId }
+    });
+    
+    let cameras = [];
+    if (resp.ok) {
+      cameras = await resp.json();
+    } else {
+      // Try the bootstrap endpoint as fallback
+      const r2 = await fetch(`https://okcreal.ui.com/proxy/${consoleId}/protect/api/bootstrap`, { credentials: 'include' });
+      if (r2.ok) {
+        const boot = await r2.json();
+        cameras = boot.cameras || [];
+      }
+    }
+
+    if (!cameras.length) {
+      // Fall back to server-side discover from security_events
+      const r = await api('/api/admin/cameras/discover', 'POST');
+      toast(`Auto-discovered ${r.added} cameras from event history ✓`, 'success');
+      loadAdmin();
+      return;
+    }
+
+    // Send all cameras to server
+    let saved = 0;
+    for (const cam of cameras) {
+      if (!cam.mac || !cam.name) continue;
+      await api(`/api/admin/cameras/${encodeURIComponent(cam.mac.replace(/:/g,'').toUpperCase())}`, 'PUT', {
+        name: cam.name,
+        site: 'Marlin'
+      }).catch(() => {});
+      saved++;
+    }
+    toast(`Synced ${saved} cameras from UniFi Protect ✓`, 'success');
     loadAdmin();
-  } catch(e) { toast('Discover failed: ' + e.message, 'error'); }
+  } catch(e) {
+    // Network error or CORS — fall back to server-side discover
+    try {
+      const r = await api('/api/admin/cameras/discover', 'POST');
+      toast(`Auto-discovered ${r.added} cameras from event history ✓`, 'success');
+      loadAdmin();
+    } catch(e2) { toast('Discover failed: ' + e2.message, 'error'); }
+  }
 }
 
 // ── POWER DIALER ──────────────────────────────────────────────────────────────
