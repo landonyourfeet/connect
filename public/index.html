@@ -44,6 +44,135 @@
       --font-disp:   'Bebas Neue', cursive;
     }
 
+    /* ── DAYLIGHT THEME ──────────────────────────────────────────── */
+    [data-theme="light"] {
+      --bg:          #f2f2f7;
+      --bg-2:        #ffffff;
+      --bg-3:        #f2f2f7;
+      --bg-4:        #e8e8ed;
+      --bg-5:        #dcdce1;
+      --border:      #d1d1d6;
+      --border-hi:   #b8b8bf;
+      --text:        #1c1c1e;
+      --text-2:      #636366;
+      --text-3:      #aeaeb2;
+      --red-dim:     rgba(232, 0, 58, 0.10);
+      --red-glow:    rgba(232, 0, 58, 0.3);
+      --green-dim:   rgba(0, 180, 100, 0.12);
+      --green-glow:  rgba(0, 180, 100, 0.4);
+      --amber-dim:   rgba(200, 100, 0, 0.10);
+      --blue-dim:    rgba(0, 100, 210, 0.10);
+    }
+
+    /* Scrollbar — light */
+    [data-theme="light"] ::-webkit-scrollbar-track { background: var(--bg-3); }
+    [data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--border-hi); }
+
+    /* ── Light mode element overrides ── */
+    /* App-level bg */
+    [data-theme="light"] body,
+    [data-theme="light"] #app { background: var(--bg); color: var(--text); }
+
+    /* Login */
+    [data-theme="light"] .login-card { background: var(--bg-2); }
+
+    /* Main header */
+    [data-theme="light"] .main-header { background: var(--bg-2); border-color: var(--border); }
+
+    /* Activity timeline items */
+    [data-theme="light"] .activity-item { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .activity-body { color: var(--text-2); }
+
+    /* SMS bubbles */
+    [data-theme="light"] .sms-bubble-out { background: #007AFF; color: #fff; }
+    [data-theme="light"] .sms-bubble-in  { background: var(--bg-4); color: var(--text); }
+
+    /* Call bar */
+    [data-theme="light"] #call-bar .call-bar-inner { background: var(--bg-2); border-color: var(--border); }
+
+    /* Contact panels */
+    [data-theme="light"] .contact-left  { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .contact-right { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .contact-center { background: var(--bg-3); }
+
+    /* Compose */
+    [data-theme="light"] .compose-area  { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .compose-tabs  { background: var(--bg-3); }
+    [data-theme="light"] .compose-input { background: var(--bg-2); color: var(--text); }
+
+    /* Modals */
+    [data-theme="light"] .modal-box { background: var(--bg-2); border-color: var(--border); }
+
+    /* Tables */
+    [data-theme="light"] .data-table th { background: var(--bg-3); color: var(--text-2); }
+    [data-theme="light"] .data-table td { border-color: var(--border); }
+    [data-theme="light"] .data-table tr:hover td { background: var(--bg-3); }
+
+    /* People list */
+    [data-theme="light"] .people-list { background: var(--bg-2); }
+    [data-theme="light"] .list-row:hover { background: var(--bg-3); }
+    [data-theme="light"] .list-row.active { background: var(--bg-3); }
+
+    /* Inputs & selects */
+    [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea {
+      background: var(--bg-2); color: var(--text); border-color: var(--border);
+    }
+    [data-theme="light"] input::placeholder,
+    [data-theme="light"] textarea::placeholder { color: var(--text-3); }
+
+    /* Neon connection bar — soften glow in daylight */
+    [data-theme="light"] #conn-status-bar.connected::before {
+      opacity: 0.75;
+    }
+
+    /* Stage banners — keep glow but slightly more opaque bg */
+    [data-theme="light"] .banner-resident { background: rgba(0,232,240,0.12); }
+    [data-theme="light"] .banner-evicting  { background: rgba(255,59,59,0.14); }
+    [data-theme="light"] .banner-delinquent { background: rgba(59,158,255,0.12); }
+
+    /* Sidebar */
+    [data-theme="light"] #sidebar { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .nav-item:hover { background: var(--bg-3); }
+    [data-theme="light"] .nav-item.active { background: var(--bg-3); }
+
+    /* Theme toggle */
+    .theme-toggle-wrap {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .theme-toggle-label {
+      font-size: 12px; color: var(--text-3); flex: 1;
+      font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .theme-toggle-icon { font-size: 14px; line-height: 1; transition: transform 0.4s ease; }
+    .theme-toggle-track {
+      width: 40px; height: 22px;
+      background: var(--bg-5);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      position: relative;
+      transition: background 0.3s, border-color 0.3s;
+      flex-shrink: 0;
+    }
+    [data-theme="light"] .theme-toggle-track {
+      background: #007AFF;
+      border-color: #007AFF;
+    }
+    .theme-toggle-thumb {
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 16px; height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    [data-theme="light"] .theme-toggle-thumb {
+      transform: translateX(18px);
+    }
+
     /* ── RESET ────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; }
@@ -878,6 +1007,14 @@
         </div>
       </div>
       <div class="sidebar-bottom">
+        <!-- Theme toggle -->
+        <div class="theme-toggle-wrap" onclick="toggleTheme()" title="Switch theme">
+          <span class="theme-toggle-icon" id="theme-icon">🌙</span>
+          <span class="theme-toggle-label" id="theme-label">Stealth</span>
+          <div class="theme-toggle-track">
+            <div class="theme-toggle-thumb"></div>
+          </div>
+        </div>
         <div class="nav-item" onclick="doLogout()" style="color:var(--text-3)">
           <span class="nav-icon">↩</span>
           Sign Out
@@ -1028,6 +1165,33 @@ let isMuted = false;
 let isOnHold = false;
 let inboxFilter = 'all';
 let currentTaskPersonId = null;
+// ── THEME ──────────────────────────────────────────────────────────────────
+(function() {
+  const saved = localStorage.getItem('okcreal_theme') || 'dark';
+  applyTheme(saved, false);
+})();
+
+function applyTheme(mode, save = true) {
+  const root = document.documentElement;
+  const icon  = document.getElementById('theme-icon');
+  const label = document.getElementById('theme-label');
+  if (mode === 'light') {
+    root.setAttribute('data-theme', 'light');
+    if (icon)  icon.textContent  = '☀️';
+    if (label) label.textContent = 'Daylight';
+  } else {
+    root.removeAttribute('data-theme');
+    if (icon)  icon.textContent  = '🌙';
+    if (label) label.textContent = 'Stealth';
+  }
+  if (save) localStorage.setItem('okcreal_theme', mode);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'light' ? 'dark' : 'light');
+}
+
 let userStatus = 'available';
 
 // ── API HELPERS ─────────────────────────────────────────────────────
