@@ -3197,24 +3197,24 @@ function secOpenFile()  { JirehSecurity.openFile(); }
 // ── JIREH ORGANIC — living light organism ───────────────────────────────
 const JirehOrganic = (() => {
   // Irrational constants — ensures oscillators never re-sync
-  const φ = 1.6180339887498948, √2 = 1.4142135623730951;
-  const √3 = 1.7320508075688772, √5 = 2.2360679774997896;
+  const PHI = 1.6180339887498948, S2 = 1.4142135623730951;
+  const S3 = 1.7320508075688772, S5 = 2.2360679774997896;
 
   // 5 bioluminescent blobs, each drifting at its own irrational speed
   const blobs = [
-    { x:0.08, hue:200, speed: 0.000175 * φ,    hueV:0.09 * √2,  phase:0                },
-    { x:0.30, hue:255, speed:-0.000130 * √3,   hueV:0.11 * φ,   phase:Math.PI * √2     },
-    { x:0.54, hue:178, speed: 0.000205 / √5,   hueV:0.07 * √3,  phase:Math.PI / φ      },
-    { x:0.72, hue:232, speed:-0.000158 * √2,   hueV:0.13 / φ,   phase:Math.PI * 0.7    },
-    { x:0.91, hue:215, speed: 0.000092 * √5,   hueV:0.085* (Math.PI/4), phase:Math.PI*√3*0.5 },
+    { x:0.08, hue:200, speed: 0.000175 * PHI,    hueV:0.09 * S2,  phase:0                },
+    { x:0.30, hue:255, speed:-0.000130 * S3,   hueV:0.11 * PHI,   phase:Math.PI * S2     },
+    { x:0.54, hue:178, speed: 0.000205 / S5,   hueV:0.07 * S3,  phase:Math.PI / PHI      },
+    { x:0.72, hue:232, speed:-0.000158 * S2,   hueV:0.13 / PHI,   phase:Math.PI * 0.7    },
+    { x:0.91, hue:215, speed: 0.000092 * S5,   hueV:0.085* (Math.PI/4), phase:Math.PI*S3*0.5 },
   ];
   // Each blob gets 4 oscillator frequencies — all irrational multiples
   const FREQS = [
-    [φ,√2,√3,√5,Math.PI],
-    [√3,φ,Math.PI/4,√2,√5],
-    [√5,Math.PI/3,φ,√3,√2],
-    [√2,√5,φ,Math.PI/5,√3],
-    [Math.PI,√3,√2,φ,√5],
+    [PHI,S2,S3,S5,Math.PI],
+    [S3,PHI,Math.PI/4,S2,S5],
+    [S5,Math.PI/3,PHI,S3,S2],
+    [S2,S5,PHI,Math.PI/5,S3],
+    [Math.PI,S3,S2,PHI,S5],
   ].map((arr,i) => ({
     f1: 0.000310 * arr[i % 5],
     f2: 0.000193 * arr[(i+1) % 5],
@@ -3240,7 +3240,7 @@ const JirehOrganic = (() => {
 
     if (_mode === 'offline') {
       // Ghost-breath: barely alive
-      const v = 0.014 + 0.007 * Math.sin(t * 0.00048 * φ) * Math.sin(t * 0.00031 * √2);
+      const v = 0.014 + 0.007 * Math.sin(t * 0.00048 * PHI) * Math.sin(t * 0.00031 * S2);
       ctx.fillStyle = `rgba(170,0,35,${v.toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
       return;
@@ -3255,15 +3255,15 @@ const JirehOrganic = (() => {
       // Position: base drift + 3 irrational oscillators (sub-pixel wobble)
       const dx = b.speed
         + Math.sin(t * f.f1 + b.phase)           * 0.000088
-        + Math.sin(t * f.f2 + b.phase * φ)       * 0.000051
-        + Math.sin(t * f.f3 + b.phase * √2)      * 0.000024;
+        + Math.sin(t * f.f2 + b.phase * PHI)       * 0.000051
+        + Math.sin(t * f.f3 + b.phase * S2)      * 0.000024;
       b.x = ((b.x + dx) % 1 + 1) % 1;
 
       // Hue: slow organic walk, 3 oscillators at irrational ratios
       const dh = b.hueV * (
         Math.sin(t * f.f1 * 1.73 + b.phase)         * 0.55 +
-        Math.sin(t * f.f2 * 2.41 + b.phase * √3)    * 0.30 +
-        Math.sin(t * f.f3 * 3.14 + b.phase / φ)     * 0.15
+        Math.sin(t * f.f2 * 2.41 + b.phase * S3)    * 0.30 +
+        Math.sin(t * f.f3 * 3.14 + b.phase / PHI)     * 0.15
       );
       b.hue = (b.hue + dh * 0.019 + 360) % 360;
 
@@ -3276,7 +3276,7 @@ const JirehOrganic = (() => {
       const xPx = b.x * W;
 
       // Brightness + alpha shaped by voice or mode
-      const litMod = _mode === 'voice' ? _smooth * 22 : (_mode === 'ringing' ? 8 * Math.abs(Math.sin(t * 0.0025 * √3)) : 0);
+      const litMod = _mode === 'voice' ? _smooth * 22 : (_mode === 'ringing' ? 8 * Math.abs(Math.sin(t * 0.0025 * S3)) : 0);
       const brt = (pal.litBase + litMod) | 0;
       const alBase = _mode === 'voice' ? 0.25 + _smooth * 0.75 : 0.65 + 0.28 * Math.abs(Math.sin(t * f.f2 * 2.1 + b.phase));
 
