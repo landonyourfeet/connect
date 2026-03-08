@@ -520,8 +520,6 @@ app.get('/api/people/:id/household-activities', auth, async (req, res) => {
 // ── INBOX ─────────────────────────────────────────────────────────────────────
 app.get('/api/inbox', auth, async (req, res) => {
   try {
-    // Missed calls: inbound calls that were not answered (no-answer, busy, failed)
-    // within the last 7 days
     const missedR = await pool.query(`
       SELECT
         c.id, c.from_number AS phone, c.created_at,
@@ -529,34 +527,55 @@ app.get('/api/inbox', auth, async (req, res) => {
         p.id AS person_id,
         COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), c.from_number) AS contact_name
       FROM calls c
-      LEFT JOIN people p ON p.id = c.person_id
+      LEFT JOIN people p ON p.id::text = c.person_id
       WHERE c.direction = 'inbound'
         AND c.status IN ('no-answer','busy','failed','canceled')
         AND c.created_at > NOW() - INTERVAL '7 days'
+        AND (c.inbox_cleared IS NULL OR c.inbox_cleared = false)
       ORDER BY c.created_at DESC
       LIMIT 50
     `);
 
-    // Unread inbound SMS: inbound SMS activities from last 7 days
     const textsR = await pool.query(`
       SELECT
         a.id, a.body, a.created_at, a.person_id,
-        p.phone AS phone,
+        COALESCE(pp.phone, p.phone) AS phone,
         COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), p.phone) AS contact_name
       FROM activities a
-      LEFT JOIN people p ON p.id = a.person_id
+      LEFT JOIN people p ON p.id::text = a.person_id
+      LEFT JOIN person_phones pp ON pp.person_id = p.id AND pp.is_primary = true
       WHERE a.type = 'sms'
         AND a.direction = 'inbound'
         AND a.created_at > NOW() - INTERVAL '7 days'
+        AND (a.inbox_cleared IS NULL OR a.inbox_cleared = false)
       ORDER BY a.created_at DESC
       LIMIT 50
     `);
 
-    res.json({
-      missed_calls:  missedR.rows,
-      unread_texts:  textsR.rows,
-    });
+    res.json({ missed_calls: missedR.rows, unread_texts: textsR.rows });
   } catch(e) { console.error('Inbox error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Clear inbox notifications
+app.post('/api/inbox/clear', auth, async (req, res) => {
+  try {
+    const { type } = req.body; // 'missed', 'texts', or 'all'
+    if (type === 'missed' || type === 'all') {
+      await pool.query(`UPDATE calls SET inbox_cleared=true WHERE direction='inbound' AND status IN ('no-answer','busy','failed','canceled') AND created_at > NOW() - INTERVAL '7 days'`);
+    }
+    if (type === 'texts' || type === 'all') {
+      await pool.query(`UPDATE activities SET inbox_cleared=true WHERE type='sms' AND direction='inbound' AND created_at > NOW() - INTERVAL '7 days'`);
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Clear security event notifications
+app.post('/api/security/events/clear', auth, async (req, res) => {
+  try {
+    await pool.query(`UPDATE security_events SET dismissed=true WHERE dismissed=false`);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/activities', auth, async (req, res) => {
@@ -1541,6 +1560,9 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dob DATE`, 'people.dob');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE`, 'people.is_blocked');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS notes TEXT`, 'people.notes');
+  await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'calls.inbox_cleared');
+  await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`, 'calls.created_at');
+  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'activities.inbox_cleared');
 
   // Multi-phone support
   await run(`
