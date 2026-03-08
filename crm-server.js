@@ -1998,6 +1998,24 @@ app.delete('/api/admin/cameras/:id', auth, adminOnly, async (req, res) => {
   await pool.query('DELETE FROM protect_cameras WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 });
+// Bulk upsert cameras from UniFi Protect (sent from browser)
+app.post('/api/admin/cameras/bulk', auth, adminOnly, async (req, res) => {
+  const { cameras } = req.body; // [{mac, name, site}]
+  if (!Array.isArray(cameras)) return res.status(400).json({ error: 'cameras array required' });
+  let saved = 0;
+  for (const cam of cameras) {
+    if (!cam.mac) continue;
+    const mac = cam.mac.replace(/:/g, '').toUpperCase();
+    await pool.query(
+      `INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3)
+       ON CONFLICT (mac) DO UPDATE SET name=EXCLUDED.name, site=COALESCE(EXCLUDED.site, protect_cameras.site)`,
+      [mac, cam.name || mac, cam.site || 'Marlin']
+    ).catch(() => {});
+    saved++;
+  }
+  res.json({ saved });
+});
+
 // Seed protect_cameras from all known MACs in security_events
 app.post('/api/admin/cameras/discover', auth, adminOnly, async (req, res) => {
   try {
