@@ -2977,7 +2977,47 @@ async function loadAdmin() {
             <td><span class="${l.is_active?'online-dot':'offline-dot'}"></span>${l.is_active?'Active':'Inactive'}</td>
           </tr>`).join('')}</tbody>
         </table>
+      </div>
+
+      <!-- ── FUB IMPORT ──────────────────────────────────────────── -->
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <div class="admin-section-title">📥 Import Contacts (Follow Up Boss)</div>
+        </div>
+        <div style="padding:20px">
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
+            Export your contacts from Follow Up Boss (Contacts → ··· → Export), then upload the CSV here.
+            Run a <strong>dry run</strong> first to preview what will be imported before committing.
+          </p>
+
+          <!-- Upload row -->
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2)">
+              📂 <span id="import-filename">Choose CSV file…</span>
+              <input type="file" accept=".csv" id="import-file-input" style="display:none" onchange="importFileChosen(this)">
+            </label>
+            <button class="btn-ghost" onclick="runImport(false)" id="import-dryrun-btn" disabled style="opacity:0.4">🔍 Dry Run Preview</button>
+            <button class="btn-primary" onclick="runImport(true)" id="import-commit-btn" disabled style="opacity:0.4;background:var(--bg-5);color:var(--text-2);border:1px solid var(--border)">🚀 Commit Import</button>
+          </div>
+
+          <!-- Progress / status -->
+          <div id="import-status" style="display:none;font-size:13px;color:var(--text-3);margin-bottom:12px"></div>
+
+          <!-- Preview table -->
+          <div id="import-preview" style="display:none">
+            <div id="import-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px"></div>
+            <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+              <table class="admin-table" id="import-preview-table">
+                <thead><tr>
+                  <th>Action</th><th>Name</th><th>Stage</th><th>Phone</th><th>Email</th><th>FUB Stage</th><th>Blocked?</th>
+                </tr></thead>
+                <tbody id="import-preview-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>`;
+
   } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
 }
 
@@ -2986,6 +3026,175 @@ function toggleAddUserForm() {
   if (!f) return;
   f.style.display = f.style.display === 'none' ? 'block' : 'none';
   if (f.style.display === 'block') document.getElementById('new-user-name')?.focus();
+}
+
+// ── FUB IMPORT ──────────────────────────────────────────────────────────────
+let _importRows = []; // parsed + mapped rows from CSV
+
+function importFileChosen(input) {
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById('import-filename').textContent = file.name;
+  const dryBtn    = document.getElementById('import-dryrun-btn');
+  const commitBtn = document.getElementById('import-commit-btn');
+  dryBtn.disabled = false; dryBtn.style.opacity = '1';
+  commitBtn.disabled = true; commitBtn.style.opacity = '0.4';
+  commitBtn.style.background = 'var(--bg-5)'; commitBtn.style.color = 'var(--text-2)';
+  document.getElementById('import-preview').style.display = 'none';
+  document.getElementById('import-status').style.display = 'none';
+  _importRows = [];
+
+  const reader = new FileReader();
+  reader.onload = e => { _importRows = importParseCSV(e.target.result); };
+  reader.readAsText(file);
+}
+
+function importParseCSV(raw) {
+  const lines = raw.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  if (!lines.length) return [];
+  const headers = importCSVLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = importCSVLine(lines[i]);
+    const row = {};
+    headers.forEach((h,j) => { row[h] = (vals[j]||'').trim(); });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function importCSVLine(line) {
+  const result = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
+    else if (ch === ',' && !inQ) { result.push(cur); cur=''; }
+    else cur += ch;
+  }
+  result.push(cur);
+  return result;
+}
+
+function importMapStage(s) {
+  const v = (s||'').toLowerCase().trim();
+  if (!v) return 'Lead';
+  if (['hot','warm','cold','nurture','active','rental prospect','prospect','new',
+       'uncontacted','attempted contact','pre-approval','showing scheduled'].includes(v)) return 'Lead';
+  if (['past client','past tenant','past buyer','past seller','closed','purchased','sold'].includes(v)) return 'Past Tenant';
+  if (['owner','property owner','landlord'].includes(v)) return 'Property Owner';
+  if (['resident','tenant','active tenant','current tenant'].includes(v)) return 'Resident';
+  if (['contractor','vendor','maintenance'].includes(v)) return 'Contractor';
+  if (['caseworker','case worker','social worker','hap','section 8'].includes(v)) return 'Caseworker';
+  if (['trash','do not contact','dnc','spam','blocked'].includes(v)) return 'Lead';
+  return 'Lead';
+}
+
+function importIsBlocked(s) {
+  return ['trash','do not contact','dnc','spam','blocked'].includes((s||'').toLowerCase().trim());
+}
+
+function importNormalizePhone(ph) {
+  if (!ph) return null;
+  const d = ph.replace(/\D/g,'');
+  if (d.length===10) return '+1'+d;
+  if (d.length===11 && d[0]==='1') return '+'+d;
+  return null;
+}
+
+async function runImport(commit) {
+  if (!_importRows.length) { toast('No CSV loaded', 'error'); return; }
+  const statusEl  = document.getElementById('import-status');
+  const previewEl = document.getElementById('import-preview');
+  const tbody     = document.getElementById('import-preview-body');
+  const summaryEl = document.getElementById('import-summary');
+  const commitBtn = document.getElementById('import-commit-btn');
+
+  statusEl.style.display = 'block';
+  statusEl.textContent = commit ? '⏳ Importing…' : '⏳ Analysing CSV…';
+  previewEl.style.display = 'none';
+
+  // Build payload
+  const contacts = _importRows.map(row => ({
+    first_name:  row['First Name'] || (row['Name']||'').split(' ')[0] || '',
+    last_name:   row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '',
+    fub_id:      row['ID'] || null,
+    email:       row['Email 1'] || null,
+    phone:       importNormalizePhone(row['Phone 1']),
+    phone_type:  row['Phone 1 - Type'] || 'mobile',
+    fub_stage:   row['Stage'] || '',
+    stage:       importMapStage(row['Stage']),
+    is_blocked:  importIsBlocked(row['Stage']),
+    source:      row['Lead Source'] || null,
+    assigned_to: row['Assigned To'] || null,
+    tags:        row['Tags'] ? row['Tags'].split(',').map(t=>t.trim()).filter(Boolean) : [],
+    notes:       [row['Notes'],row['Description'],row['Background']].filter(Boolean).join('\n\n') || null,
+    dob:         importParseDOB(row['DOB:'] || row['Birthday']),
+    address:     row['Property Address'] || null,
+    city:        row['Property City'] || null,
+    state:       row['Property State'] || null,
+    zip:         row['Property Postal Code'] || null,
+  })).filter(c => c.first_name);
+
+  try {
+    const res  = await api('/api/import/fub', 'POST', { contacts, commit });
+    const data = res;
+
+    // Summary pills
+    const pills = [
+      { label: '✅ New',     val: data.inserted, color: 'var(--green)' },
+      { label: '🔄 Updated', val: data.updated,  color: 'var(--amber)' },
+      { label: '🚫 Blocked', val: data.blocked,  color: 'var(--red)' },
+      { label: '⏭ Skipped', val: data.skipped,  color: 'var(--text-3)' },
+    ];
+    summaryEl.innerHTML = pills.map(p =>
+      `<div style="background:var(--bg-3);border:1px solid var(--border);border-radius:8px;padding:8px 16px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:${p.color}">${p.val}</div>
+        <div style="font-size:11px;color:var(--text-3);font-weight:600;letter-spacing:0.08em">${p.label}</div>
+      </div>`
+    ).join('');
+
+    // Preview rows
+    tbody.innerHTML = (data.preview||[]).map(r => {
+      const actionColor = r.action==='insert'?'var(--green)':r.action==='update'?'var(--amber)':'var(--text-3)';
+      const actionLabel = r.action==='insert'?'+ NEW':r.action==='update'?'~ UPDATE':'– SKIP';
+      return `<tr>
+        <td><span style="font-size:11px;font-weight:700;color:${actionColor};letter-spacing:0.06em">${actionLabel}</span></td>
+        <td style="font-weight:500">${esc(r.name||'')}</td>
+        <td><span class="stage-badge stage-${(r.stage||'').toLowerCase().replace(/\s+/g,'-')}">${r.stage||''}</span></td>
+        <td style="font-family:monospace;font-size:12px;color:var(--text-2)">${esc(r.phone||'—')}</td>
+        <td style="font-size:12px;color:var(--text-2)">${esc(r.email||'—')}</td>
+        <td style="font-size:11px;color:var(--text-3)">${esc(r.fub_stage||'')}</td>
+        <td>${r.is_blocked ? '<span style="color:var(--red);font-weight:700;font-size:11px">🚫 YES</span>' : ''}</td>
+      </tr>`;
+    }).join('');
+
+    previewEl.style.display = 'block';
+
+    if (commit) {
+      statusEl.textContent = `✅ Import complete — ${data.inserted} added, ${data.updated} updated.`;
+      commitBtn.disabled = true; commitBtn.style.opacity = '0.4';
+      toast(`Import done! ${data.inserted} new contacts added.`, 'success');
+    } else {
+      statusEl.textContent = `Dry run complete — review below, then click Commit Import when ready.`;
+      // Enable commit button
+      commitBtn.disabled = false;
+      commitBtn.style.opacity = '1';
+      commitBtn.style.background = 'var(--red)';
+      commitBtn.style.color = '#fff';
+    }
+  } catch(e) {
+    statusEl.textContent = '❌ Error: ' + e.message;
+    toast('Import error: ' + e.message, 'error');
+  }
+}
+
+function importParseDOB(val) {
+  if (!val) return null;
+  const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  return null;
 }
 
 async function submitAddUser() {
