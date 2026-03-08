@@ -29,7 +29,8 @@ function broadcastSecurityEvent(payload) {
 }
 
 app.use(cors({ origin: '*' }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static('public'));
 // Serve Twilio Voice SDK from node_modules
@@ -394,10 +395,17 @@ app.delete('/api/people/:id/relationships/:relId', auth, async (req, res) => {
 // Upload / replace ID photo (accepts base64 JSON)
 app.post('/api/people/:id/id-photo', auth, async (req, res) => {
   try {
-    const { photoB64, photoName } = req.body;
+    let { photoB64, photoName } = req.body;
     if (!photoB64) return res.status(400).json({ error: 'photoB64 required' });
-    // Cap at ~2MB base64
-    if (photoB64.length > 3000000) return res.status(413).json({ error: 'Image too large (max ~2MB)' });
+
+    // Strip data URL prefix if present — store only the raw base64
+    if (photoB64.startsWith('data:')) {
+      photoB64 = photoB64.split(',')[1];
+    }
+
+    // ~7MB raw base64 max (covers ~5MB image files)
+    if (photoB64.length > 7000000) return res.status(413).json({ error: 'Image too large (max ~5MB)' });
+
     await pool.query(
       'UPDATE people SET id_photo_b64=$1, id_photo_name=$2, updated_at=NOW() WHERE id=$3',
       [photoB64, photoName || 'id-photo', req.params.id]
