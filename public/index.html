@@ -535,6 +535,56 @@
     .call-btn-end { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
     .call-btn-end:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
 
+    .call-btn-end { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+    .call-btn-end:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+
+    /* clickable contact name in call bar */
+    .call-contact-name.linked {
+      cursor: pointer; color: var(--accent);
+      text-decoration: underline; text-underline-offset: 3px;
+      text-decoration-style: dotted;
+    }
+    .call-contact-name.linked:hover { opacity: 0.8; }
+
+    /* unknown caller tray */
+    #call-unknown-tray {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding: 8px 16px; background: rgba(0,0,0,0.3);
+    }
+    #call-unknown-tray-inner {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    #call-unknown-tray-label {
+      font-size: 12px; color: var(--text-3); flex: 1; min-width: 120px;
+    }
+    .call-tray-btn {
+      font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 6px;
+      cursor: pointer; border: none; font-family: inherit; transition: all 0.15s;
+    }
+    .call-tray-btn.new  { background: var(--green); color: #000; }
+    .call-tray-btn.new:hover { opacity: 0.85; }
+    .call-tray-btn.add  { background: rgba(0,170,255,0.2); color: #00aaff; border: 1px solid rgba(0,170,255,0.4); }
+    .call-tray-btn.add:hover { background: rgba(0,170,255,0.35); }
+    .call-tray-btn.dismiss { background: transparent; color: var(--text-3); border: 1px solid var(--border); }
+    .call-tray-btn.dismiss:hover { color: var(--text); }
+    #call-tray-search-wrap { margin-top: 8px; }
+    #call-tray-search {
+      width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 6px;
+      background: var(--bg-3); border: 1px solid var(--border); color: var(--text);
+      font-size: 13px; font-family: inherit; outline: none;
+    }
+    #call-tray-search:focus { border-color: var(--accent); }
+    #call-tray-results {
+      margin-top: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto;
+    }
+    .call-tray-result {
+      padding: 7px 10px; border-radius: 6px; background: var(--bg-3);
+      cursor: pointer; font-size: 13px; color: var(--text);
+      display: flex; align-items: center; gap: 8px; transition: background 0.1s;
+    }
+    .call-tray-result:hover { background: var(--bg-5); }
+    .call-tray-result-stage { font-size: 10px; color: var(--text-3); margin-left: auto; }
+
     /* ── MAIN LAYOUT ──────────────────────────────────────────── */
     .app-body { display: flex; flex: 1; overflow: hidden; }
 
@@ -1131,6 +1181,7 @@
     </div>
     <div class="call-info">
       <div class="call-status-label" id="call-status-label">Incoming Call</div>
+      <!-- Clickable name if matched, plain if not -->
       <div class="call-contact-name" id="call-contact-name">Unknown Caller</div>
       <div class="call-number" id="call-number"></div>
     </div>
@@ -1143,6 +1194,20 @@
       <button class="call-btn call-btn-mute" id="mute-btn" onclick="toggleMute()">🎤 Mute</button>
       <button class="call-btn call-btn-hold" id="hold-btn" onclick="toggleHold()">⏸ Hold</button>
       <button class="call-btn call-btn-end" onclick="endCall()">✕ End</button>
+    </div>
+  </div>
+  <!-- Unknown caller action tray — shown after answering an unmatched number -->
+  <div id="call-unknown-tray" style="display:none">
+    <div id="call-unknown-tray-inner">
+      <span id="call-unknown-tray-label">📵 Caller not in Connect</span>
+      <button class="call-tray-btn new" onclick="callTrayCreateNew()">➕ New Contact</button>
+      <button class="call-tray-btn add" onclick="callTrayAddToExisting()">🔗 Add to Existing</button>
+      <button class="call-tray-btn dismiss" onclick="callTrayDismiss()">✕</button>
+    </div>
+    <!-- Add-to-existing search inline -->
+    <div id="call-tray-search-wrap" style="display:none">
+      <input id="call-tray-search" type="text" placeholder="Search contact name…" oninput="callTraySearch(this.value)" autocomplete="off">
+      <div id="call-tray-results"></div>
     </div>
   </div>
 </div>
@@ -2905,19 +2970,33 @@ function waitForTwilioReady(timeoutMs = 8000) {
   });
 }
 
+// ── INCOMING CALL — matched contact tracking ─────────────────────────
+let _incomingMatchedPerson = null; // person object if number matched, null if not
+let _incomingFromNumber   = null;  // raw From number for tray actions
+
 function handleIncomingCall(conn) {
   activeCall = conn;
-  const from = conn.parameters?.From || 'Unknown';
-  const matched = peopleData.find(p => p.phone && p.phone.replace(/\D/g,'') === from.replace(/\D/g,''));
-  const callerName = matched ? [matched.first_name, matched.last_name].filter(Boolean).join(' ') : from;
-  showCallBar('ringing', callerName, from);
+  _incomingFromNumber = conn.parameters?.From || null;
+  const from = _incomingFromNumber || 'Unknown';
+
+  // Match against peopleData (in-memory list already loaded)
+  _incomingMatchedPerson = peopleData.find(p => {
+    if (!p.phone) return false;
+    return p.phone.replace(/\D/g,'') === from.replace(/\D/g,'');
+  }) || null;
+
+  // Also check person_phones if not found in primary (best-effort)
+  const callerName = _incomingMatchedPerson
+    ? [_incomingMatchedPerson.first_name, _incomingMatchedPerson.last_name].filter(Boolean).join(' ')
+    : from;
+
+  showCallBar('ringing', callerName, from, _incomingMatchedPerson);
   if (window.neonGlow) window.neonGlow.ringing();
   TabAlert.ringing(callerName);
 
-  // ── Listen for remote hangup on the connection itself ──
   conn.on('disconnect', handleCallEnd);
-  conn.on('cancel', handleCallEnd);    // caller hung up before answer
-  conn.on('reject', handleCallEnd);    // call declined
+  conn.on('cancel', handleCallEnd);
+  conn.on('reject', handleCallEnd);
 
   try {
     const audio = new AudioContext();
@@ -2927,16 +3006,28 @@ function handleIncomingCall(conn) {
   } catch(e) {}
 }
 
-function showCallBar(state, name, number) {
-  const bar = document.getElementById('call-bar');
+function showCallBar(state, name, number, matchedPerson = null) {
+  const bar  = document.getElementById('call-bar');
   bar.className = '';
-  document.getElementById('call-contact-name').textContent = name || 'Unknown';
+
+  // Name — clickable if matched
+  const nameEl = document.getElementById('call-contact-name');
+  nameEl.textContent = name || 'Unknown';
+  nameEl.className = 'call-contact-name';
+  nameEl.onclick = null;
+  if (matchedPerson && state === 'ringing') {
+    nameEl.classList.add('linked');
+    nameEl.title = 'View contact file';
+    nameEl.onclick = (e) => { e.stopPropagation(); openContact(matchedPerson.id); };
+  }
+
   document.getElementById('call-number').textContent = formatPhone(number || '');
   document.getElementById('call-avatar').textContent = (name||'?').substring(0,2).toUpperCase();
   document.getElementById('call-status-label').textContent = state === 'ringing' ? 'Incoming Call' : 'On Call';
   document.getElementById('call-actions-incoming').style.display = state === 'ringing' ? 'flex' : 'none';
-  document.getElementById('call-actions-active').style.display = state === 'active' ? 'flex' : 'none';
+  document.getElementById('call-actions-active').style.display  = state === 'active'  ? 'flex' : 'none';
   document.getElementById('call-timer').style.display = state === 'active' ? 'inline' : 'none';
+  document.getElementById('call-unknown-tray').style.display = 'none';
   requestAnimationFrame(() => bar.classList.add('visible', state));
 }
 
@@ -2944,14 +3035,115 @@ function acceptCall() {
   if (!activeCall) return;
   activeCall.accept();
   if (window.neonGlow) window.neonGlow.callActive();
-  const _acceptName = document.getElementById('call-contact-name').textContent;
-  showCallBar('active', _acceptName, document.getElementById('call-number').textContent);
+
+  const name = document.getElementById('call-contact-name').textContent;
+  const num  = document.getElementById('call-number').textContent;
+
+  // Reset name to non-clickable for active state
+  const nameEl = document.getElementById('call-contact-name');
+  nameEl.classList.remove('linked');
+  nameEl.onclick = null;
+
+  showCallBar('active', name, num, null);
   startCallTimer();
   VoiceViz.start(activeCall);
-  TabAlert.active(_acceptName);
+  TabAlert.active(name);
+
+  // Navigate to matched contact or show unknown tray
+  if (_incomingMatchedPerson) {
+    openContact(_incomingMatchedPerson.id);
+  } else {
+    // Show the unknown caller tray
+    const tray = document.getElementById('call-unknown-tray');
+    const trayLabel = document.getElementById('call-unknown-tray-label');
+    trayLabel.textContent = `📵 ${formatPhone(_incomingFromNumber || '')} — not in Connect`;
+    document.getElementById('call-tray-search-wrap').style.display = 'none';
+    document.getElementById('call-tray-search').value = '';
+    document.getElementById('call-tray-results').innerHTML = '';
+    tray.style.display = '';
+  }
 }
+
 function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); TabAlert.clear(); }
 function endCall() { if (activeCall) activeCall.disconnect(); }
+
+// ── UNKNOWN CALLER TRAY ─────────────────────────────────────────────
+function callTrayDismiss() {
+  document.getElementById('call-unknown-tray').style.display = 'none';
+}
+
+function callTrayCreateNew() {
+  callTrayDismiss();
+  // Open Add Contact modal pre-filled with the phone number
+  const phone = _incomingFromNumber ? _incomingFromNumber.replace(/\D/g,'') : '';
+  showAddPersonModal(phone);
+}
+
+function callTrayAddToExisting() {
+  document.getElementById('call-tray-search-wrap').style.display = '';
+  document.getElementById('call-tray-search').focus();
+}
+
+function callTraySearch(q) {
+  const results = document.getElementById('call-tray-results');
+  if (!q.trim()) { results.innerHTML = ''; return; }
+  const matches = peopleData
+    .filter(p => {
+      const full = [p.first_name, p.last_name].filter(Boolean).join(' ').toLowerCase();
+      return full.includes(q.toLowerCase());
+    })
+    .slice(0, 8);
+  if (!matches.length) {
+    results.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:6px">No matches</div>';
+    return;
+  }
+  results.innerHTML = matches.map(p => {
+    const name = [p.first_name, p.last_name].filter(Boolean).join(' ');
+    return `<div class="call-tray-result" onclick="callTrayAttachNumber(${p.id},'${esc(name)}')">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--bg-5);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">${name.substring(0,2).toUpperCase()}</div>
+      <span>${esc(name)}</span>
+      <span class="call-tray-result-stage">${esc(p.stage||'')}</span>
+    </div>`;
+  }).join('');
+}
+
+async function callTrayAttachNumber(personId, personName) {
+  if (!_incomingFromNumber) return;
+  try {
+    const phone = _incomingFromNumber.replace(/\D/g,'');
+    await apiFetch(`/api/people/${personId}/phones`, {
+      method: 'POST',
+      body: JSON.stringify({ phone, label: 'mobile', is_primary: false })
+    });
+    callTrayDismiss();
+    toast(`Number added to ${personName}`, 'success');
+    openContact(personId);
+    // Refresh people list so future calls match
+    loadPeople(currentListId);
+  } catch(e) {
+    toast('Failed to add number: ' + e.message, 'error');
+  }
+}
+
+// showAddPersonModal pre-filled with phone
+function showAddPersonModal(prefillPhone) {
+  // Reuse existing add person flow but pre-fill phone if modal exists
+  const modal = document.getElementById('add-person-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    const phoneInput = modal.querySelector('input[name="phone"], #new-person-phone');
+    if (phoneInput && prefillPhone) phoneInput.value = prefillPhone;
+  } else {
+    // Fallback: navigate to people and open add
+    navigate('people', 'all');
+    setTimeout(() => {
+      const addBtn = document.querySelector('[onclick*="showAdd"], [onclick*="addPerson"]');
+      if (addBtn) addBtn.click();
+    }, 300);
+  }
+}
+
+
 
 function handleCallEnd() {
   if (!activeCall) return;             // guard against double-fire
@@ -2969,6 +3161,9 @@ function handleCallEnd() {
 function hideCallBar() {
   const bar = document.getElementById('call-bar');
   bar.classList.remove('visible');
+  document.getElementById('call-unknown-tray').style.display = 'none';
+  _incomingMatchedPerson = null;
+  _incomingFromNumber = null;
   setTimeout(() => { bar.className = ''; }, 350);
 }
 
