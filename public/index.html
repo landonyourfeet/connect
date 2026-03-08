@@ -2574,7 +2574,7 @@ function renderTimelineItem(act, hasConnector) {
     // 3) Expandable sections
     const audioSection = hasRecording && proxyUrl
       ? `<div class="call-audio-section" id="${cardId}-audio">
-           <audio controls id="${cardId}-audio-el" style="width:100%;height:36px;border-radius:6px;display:block">
+           <audio controls id="${cardId}-audio-el" data-call-id="${callIdSafe}" style="width:100%;height:36px;border-radius:6px;display:block">
              <source src="" type="audio/mpeg">
            </audio>
            <div id="${cardId}-audio-status" style="font-size:11px;color:var(--text-3);margin-top:4px;display:none"></div>
@@ -2697,12 +2697,17 @@ function toggleCallSection(cardId, section) {
     // Already loaded — don't re-fetch
     if (audioEl.dataset.loaded === '1') return;
 
-    // Extract call id from cardId (format: "call-card-{uuid}")
-    const callId = cardId.replace(/^call-card-/, '');
+    // Extract call_id from data attribute (act.call_id, not act.id)
+    const callId = audioEl.dataset.callId;
+    if (!callId) {
+      if (statusEl) { statusEl.textContent = '⚠️ No call ID found'; statusEl.style.display = 'block'; }
+      return;
+    }
     const tok    = localStorage.getItem('connect_token') || '';
 
     if (statusEl) { statusEl.textContent = '⏳ Loading audio…'; statusEl.style.display = 'block'; }
     audioEl.style.opacity = '0.4';
+    console.log('[Audio] Fetching recording for call_id:', callId);
 
     fetch(`/api/calls/${callId}/recording`, {
       headers: { 'Authorization': `Bearer ${tok}` }
