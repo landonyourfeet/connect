@@ -355,14 +355,15 @@
       font-family: 'Arial Black', 'Impact', sans-serif;
       font-size: clamp(32px, 4.5vw, 58px);
       font-weight: 900;
-      letter-spacing: 0.18em;
+      letter-spacing: 0.14em;
       color: #e8000a;
       text-transform: uppercase;
       line-height: 1;
-      width: 100%; text-align: center;
-      /* Rubber-stamp look */
+      white-space: nowrap;
+      display: inline-block;
+      /* Extra right padding absorbs trailing letter-spacing gap */
+      padding: 8px 20px 5px 20px;
       border: 5px solid #e8000a;
-      padding: 8px 20px 5px;
       border-radius: 4px;
       opacity: 0.88;
       text-shadow:
@@ -373,7 +374,6 @@
       box-shadow:
         inset 0 0 0 2px rgba(232,0,10,0.2),
         0 0 40px rgba(232,0,10,0.25);
-      box-sizing: border-box;
       animation: priv-glow 3s ease-in-out infinite;
     }
     @keyframes priv-glow {
@@ -1904,20 +1904,51 @@ let _privacyActive = false;
 
 function togglePrivacyBlur(force) {
   _privacyActive = (force !== undefined) ? force : !_privacyActive;
-  const overlay    = document.getElementById('privacy-overlay');
-  const indicator  = document.getElementById('privacy-indicator');
+  const overlay   = document.getElementById('privacy-overlay');
+  const indicator = document.getElementById('privacy-indicator');
   if (_privacyActive) {
     overlay?.classList.add('active');
     indicator?.classList.add('active');
   } else {
     overlay?.classList.remove('active');
     indicator?.classList.remove('active');
+    // Reset idle timer whenever screen is manually unlocked
+    _idleReset();
   }
 }
 
+// ── IDLE AUTO-BLUR — 60s of no mouse/keyboard activity ───────────────────────
+const IDLE_MS = 60 * 1000; // 1 minute
+let _idleTimer = null;
+
+function _idleReset() {
+  clearTimeout(_idleTimer);
+  // Don't restart timer if a call is active
+  if (activeCall) return;
+  _idleTimer = setTimeout(() => {
+    // Double-check no call is active before triggering
+    if (!activeCall && !_privacyActive) {
+      togglePrivacyBlur(true);
+    }
+  }, IDLE_MS);
+}
+
+// Listen on all activity events — mouse, keyboard, touch, scroll
+['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    // Any activity while blurred = unlock
+    if (_privacyActive) togglePrivacyBlur(false);
+    else _idleReset();
+  }, { passive: true });
+});
+
+// Start the timer on page load (after app is ready)
+document.addEventListener('DOMContentLoaded', _idleReset);
+// Also kick it off immediately in case DOMContentLoaded already fired
+setTimeout(_idleReset, 0);
+
 // Keyboard shortcut: backtick ` (fast single key, not in form fields)
 document.addEventListener('keydown', (e) => {
-  // Skip if typing in an input, textarea, or contenteditable
   const tag = document.activeElement?.tagName?.toLowerCase();
   const isEditable = tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable;
 
@@ -1927,7 +1958,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Also allow Escape to EXIT privacy mode (but not enter it)
+  // Escape to EXIT privacy mode
   if (e.key === 'Escape' && _privacyActive) {
     togglePrivacyBlur(false);
   }
@@ -3361,6 +3392,7 @@ function showCallBar(state, name, number, matchedPerson = null) {
 function acceptCall() {
   if (!activeCall) return;
   activeCall.accept();
+  clearTimeout(_idleTimer); // no auto-blur during calls
   if (window.neonGlow) window.neonGlow.callActive();
 
   const name = document.getElementById('call-contact-name').textContent;
@@ -3470,7 +3502,7 @@ function showAddPersonModal(prefillPhone) {
 
 
 function handleCallEnd() {
-  if (!activeCall) return;             // guard against double-fire
+  if (!activeCall) return;
   activeCall = null;
   VoiceViz.stop();
   TabAlert.clear();
@@ -3480,6 +3512,7 @@ function handleCallEnd() {
   hideCallBar();
   toast('Call ended · ' + duration, 'info');
   if (currentPersonId) triggerAiSummary();
+  _idleReset(); // restart idle timer now that call is done
 }
 
 function hideCallBar() {
