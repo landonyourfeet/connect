@@ -511,10 +511,20 @@ app.get('/api/activities', auth, async (req, res) => {
     if (type) { params.push(type); where.push(`a.type=$${params.length}`); }
     params.push(limit);
     const r = await pool.query(
-      `SELECT a.*, ag.name as agent_name
+      `SELECT
+         a.id, a.person_id, a.agent_id, a.call_id, a.type, a.body,
+         a.duration, a.direction, a.sms_status, a.sms_error, a.message_sid,
+         a.created_at,
+         ag.name AS agent_name,
+         c.transcript,
+         c.summary,
+         COALESCE(a.recording_url, c.recording_url) AS recording_url
        FROM activities a
-       LEFT JOIN agents ag ON ag.id::text=a.agent_id::text
-       WHERE ${where.join(' AND ')} ORDER BY a.created_at DESC LIMIT $${params.length}`,
+       LEFT JOIN agents ag ON ag.id::text = a.agent_id::text
+       LEFT JOIN calls c ON c.id::text = a.call_id::text
+       WHERE ${where.join(' AND ')}
+       ORDER BY a.created_at DESC
+       LIMIT $${params.length}`,
       params
     );
     res.json(r.rows);
@@ -880,8 +890,8 @@ app.post('/api/twilio/status', async (req, res) => {
       const call = r.rows[0];
       if (call) {
         pool.query(
-          'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration) VALUES($1,$2,$3,$4,$5,$6)',
-          [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', call.duration_seconds]
+          'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7)',
+          [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', call.duration_seconds, call.direction||'outbound']
         ).catch(() => {});
       }
     }
@@ -892,11 +902,20 @@ app.post('/api/twilio/status', async (req, res) => {
 app.post('/api/twilio/recording', async (req, res) => {
   res.sendStatus(200);
   try {
-    const { CallSid, RecordingUrl } = req.body;
-    const callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [CallSid]);
+    const { CallSid, ParentCallSid, RecordingUrl, RecordingSid } = req.body;
+    console.log('Recording webhook:', { CallSid, ParentCallSid, RecordingUrl: RecordingUrl?.substring(0,60), RecordingSid });
+    // Try matching by CallSid, then ParentCallSid (Dial recordings may send child SID)
+    let callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [CallSid]);
+    if (!callR.rows.length && ParentCallSid) {
+      callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [ParentCallSid]);
+    }
     const call = callR.rows[0];
-    if (!call) return;
-    await pool.query('UPDATE calls SET recording_url=$1 WHERE id=$2', [`${RecordingUrl}.mp3`, call.id]);
+    if (!call) {
+      console.log('Recording webhook: no call found for SID', CallSid, 'or parent', ParentCallSid);
+      return;
+    }
+    const recUrl = `${RecordingUrl}.mp3`;
+    await pool.query('UPDATE calls SET recording_url=$1 WHERE id=$2', [recUrl, call.id]);
 
     // Ensure activity row exists — recording webhook can arrive before status webhook
     const existingAct = await pool.query('SELECT id FROM activities WHERE call_id=$1 LIMIT 1', [call.id]);
@@ -930,7 +949,7 @@ app.post('/api/twilio/recording', async (req, res) => {
         } else {
           transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
         }
-      } catch (e) { console.error('Deepgram error:', e.message); }
+      } catch (e) { console.error('Deepgram error:', e.message, e.stack?.split('\n')[1] || ''); }
     }
     const grok = initGrok();
     if (grok && transcript.length > 20) {
@@ -952,7 +971,8 @@ app.post('/api/twilio/recording', async (req, res) => {
     await pool.query('UPDATE calls SET transcript=$1,summary=$2 WHERE id=$3', [transcript, summary, call.id]);
     // Always update the activity — even if blank, clear "Transcript processing..." placeholder
     const activityBody = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. No transcript available.');
-    await pool.query('UPDATE activities SET body=$1 WHERE call_id=$2', [activityBody, call.id]).catch(() => {});
+    // Also save recording_url directly on activity so JOIN isn't required to show it
+    await pool.query('UPDATE activities SET body=$1, recording_url=$2 WHERE call_id=$3', [activityBody, recUrl, call.id]).catch((e) => { console.error('Activity update error:', e.message); });
   } catch (e) { console.error('Recording webhook error:', e.message); }
 });
 
@@ -983,7 +1003,7 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
           } else {
             transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
           }
-        } catch(e) { console.error('Retry Deepgram error:', e.message); }
+        } catch(e) { console.error('Retry Deepgram error:', e.message, e.stack?.split('\n')[1] || ''); }
       }
       const grok = initGrok();
       if (grok && transcript.length > 20) {
@@ -1006,6 +1026,22 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
       const body = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. Transcript unavailable.');
       await pool.query('UPDATE activities SET body=$1 WHERE call_id=$2', [body, call.id]).catch(() => {});
     })();
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── RECORDING PROXY — serves Twilio recordings with embedded auth so browser audio player works ──
+app.get('/api/calls/:callId/recording', auth, async (req, res) => {
+  try {
+    const callR = await pool.query('SELECT recording_url FROM calls WHERE id=$1', [req.params.callId]);
+    const recUrl = callR.rows[0]?.recording_url;
+    if (!recUrl) return res.status(404).json({ error: 'No recording' });
+    const authedUrl = recUrl.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
+    const upstream = await fetch(authedUrl);
+    if (!upstream.ok) return res.status(502).json({ error: 'Could not fetch recording' });
+    res.set('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+    res.set('Cache-Control', 'private, max-age=3600');
+    const { Readable } = require('stream');
+    Readable.fromWeb(upstream.body).pipe(res);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1435,7 +1471,7 @@ app.get('/api/security/stream', auth, (req, res) => {
 app.get('/api/security/events', auth, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT se.*, p.first_name, p.last_name, p.id as person_id
+      SELECT se.*, p.first_name, p.last_name, p.id as person_id, p.stage
       FROM security_events se
       LEFT JOIN people p ON p.unifi_person_id = se.unifi_person_id
       ORDER BY se.triggered_at DESC LIMIT 50
