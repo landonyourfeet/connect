@@ -788,7 +788,10 @@
     .stage-past       { background: var(--bg-5); color: var(--text-2); }
     .stage-delinquent { background: rgba(59,158,255,0.12); color: #3b9eff; }
     .stage-resident   { background: rgba(0,232,240,0.1);  color: #00e8f0; }
-    .stage-evicting   { background: rgba(255,59,59,0.12); color: #ff3b3b; animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    .stage-evicting    { background: rgba(255,59,59,0.12); color: #ff3b3b; animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    .stage-caseworker  { background: rgba(168,85,247,0.12); color: #a855f7; }
+    .stage-contractor  { background: rgba(251,146,60,0.12); color: #fb923c; }
+    .stage-owner       { background: rgba(250,204,21,0.1);  color: #facc15; }
     .tag-chip { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; margin: 1px; background: var(--bg-5); color: var(--text-2); }
     .tag-eviction { background: var(--red-dim); color: var(--red); }
     .tag-delinquent { background: rgba(255,140,0,0.12); color: var(--amber); }
@@ -811,7 +814,9 @@
     .contact-big-avatar.stage-delinquent { border-color: var(--red); box-shadow: 0 0 20px var(--red-glow); }
     .contact-big-avatar.stage-evicting { border-color: #ff3b3b; box-shadow: 0 0 20px rgba(255,59,59,0.5); animation: glow-breathe-red 1.8s ease-in-out infinite; }
     .contact-big-avatar.stage-resident { border-color: #00e8f0; box-shadow: 0 0 16px rgba(0,232,240,0.4); }
-    .contact-big-avatar.stage-active { border-color: var(--green); }
+    .contact-big-avatar.stage-active     { border-color: var(--green); }
+    .contact-big-avatar.stage-caseworker { border-color: #a855f7; box-shadow: 0 0 14px rgba(168,85,247,0.4); }
+    .contact-big-avatar.stage-contractor { border-color: #fb923c; }
     .contact-record-name { font-family: var(--font-cond); font-size: 22px; font-weight: 700; letter-spacing: 0.01em; margin-bottom: 4px; }
     .contact-record-phone { font-family: var(--font-mono); font-size: 13px; color: var(--text-2); margin-bottom: 8px; cursor: pointer; transition: color 0.15s; }
     .contact-record-phone:hover { color: var(--green); }
@@ -1751,9 +1756,120 @@ async function openContact(personId) {
     // Load phones and household async after render
     loadPhones(person.id);
     loadHousehold(person.id);
+    loadSecurityDetections(personId);
+    loadCaseworkerPanel(personId, person.stage);
   } catch(e) {
     viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`;
   }
+}
+
+// ── CASEWORKER PANEL ─────────────────────────────────────────────────────────
+
+async function loadCaseworkerPanel(personId, stage) {
+  const list = document.getElementById(`cw-list-${personId}`);
+  if (!list) return;
+  try {
+    const cws = await apiFetch(`/api/people/${personId}/caseworkers`);
+    if (!cws.length) {
+      const isCW = (stage||'').toLowerCase() === 'caseworker';
+      list.innerHTML = `<div style="color:var(--text-3);font-size:12px">${isCW ? 'No residents linked yet' : 'No caseworker assigned'}</div>`;
+      return;
+    }
+    list.innerHTML = cws.map(cw => {
+      const name = [cw.first_name, cw.last_name].filter(Boolean).join(' ');
+      const isCW = (cw.stage||'').toLowerCase() === 'caseworker';
+      const label = isCW ? '🤝 Caseworker' : '👤 Resident';
+      const stageCol = isCW ? '#a855f7' : '#00e8f0';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="width:30px;height:30px;border-radius:50%;background:var(--bg-4);border:2px solid ${stageCol};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${name.substring(0,2).toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--text);cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-decoration-style:dotted"
+            onclick="openContact(${cw.id})">${esc(name)}</div>
+          <div style="font-size:10px;color:${stageCol}">${label}</div>
+        </div>
+        <button onclick="cwUnlink(${cw.rel_id}, ${personId})"
+          style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:14px;padding:2px 4px" title="Unlink">✕</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (list) list.innerHTML = '<div style="color:var(--text-3);font-size:12px">—</div>';
+  }
+}
+
+function cwShowSearch(personId) {
+  const wrap = document.getElementById(`cw-search-wrap-${personId}`);
+  if (!wrap) return;
+  const visible = wrap.style.display !== 'none';
+  wrap.style.display = visible ? 'none' : '';
+  if (!visible) document.getElementById(`cw-search-input-${personId}`)?.focus();
+}
+
+function cwSearchPeople(q, personId) {
+  const results = document.getElementById(`cw-search-results-${personId}`);
+  if (!results) return;
+  if (!q.trim()) { results.innerHTML = ''; return; }
+  const matches = peopleData
+    .filter(p => {
+      const full = [p.first_name, p.last_name].filter(Boolean).join(' ').toLowerCase();
+      return full.includes(q.toLowerCase()) && String(p.id) !== String(personId);
+    })
+    .slice(0, 8);
+  if (!matches.length) {
+    results.innerHTML = '<div style="font-size:11px;color:var(--text-3);padding:4px">No matches</div>';
+    return;
+  }
+  results.innerHTML = matches.map(p => {
+    const name = [p.first_name, p.last_name].filter(Boolean).join(' ');
+    const isCW = (p.stage||'').toLowerCase() === 'caseworker';
+    return `<div onclick="cwLink(${personId}, ${p.id})"
+      style="padding:6px 8px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;background:var(--bg-3);transition:background 0.1s"
+      onmouseover="this.style.background='var(--bg-5)'" onmouseout="this.style.background='var(--bg-3)'">
+      <span style="color:${isCW?'#a855f7':'var(--text-2)'}">${isCW?'🤝':'👤'}</span>
+      <span style="font-weight:600">${esc(name)}</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--text-3)">${esc(p.stage||'')}</span>
+    </div>`;
+  }).join('');
+}
+
+async function cwLink(personAId, personBId) {
+  try {
+    await apiFetch(`/api/people/${personAId}/relationships`, {
+      method: 'POST',
+      body: JSON.stringify({ relatedId: personBId, label: 'caseworker' })
+    });
+    // Reset search
+    const wrap = document.getElementById(`cw-search-wrap-${personAId}`);
+    if (wrap) { wrap.style.display = 'none'; }
+    const inp = document.getElementById(`cw-search-input-${personAId}`);
+    if (inp) inp.value = '';
+    const res = document.getElementById(`cw-search-results-${personAId}`);
+    if (res) res.innerHTML = '';
+    // Reload panel
+    await loadCaseworkerPanel(personAId, '');
+    toast('Caseworker linked', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function cwUnlink(relId, personId) {
+  if (!confirm('Remove this caseworker link?')) return;
+  try {
+    await apiFetch(`/api/people/${personId}/relationships/${relId}`, { method: 'DELETE' });
+    await loadCaseworkerPanel(personId, '');
+    toast('Unlinked', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function logLeaseViolation(personId) {
+  const note = prompt('Describe the lease violation (optional):');
+  if (note === null) return; // cancelled
+  try {
+    await apiFetch(`/api/people/${personId}/lease-violation`, {
+      method: 'POST',
+      body: JSON.stringify({ note })
+    });
+    toast('Lease violation logged — caseworker(s) notified via SMS', 'success');
+    loadActivities(personId);
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
 }
 
 // ── JIREH SECURITY PROFILE ───────────────────────────────────────────────
@@ -1914,7 +2030,7 @@ function renderContactRecord(person, activities, tasks) {
         <div class="detail-row">
           <span class="detail-label">Stage</span>
           <select class="stage-select" onchange="updatePersonStage('${person.id}',this.value)">
-            ${['Lead','Resident','Delinquent','Evicting','Past Tenant','Property Owner','Vendor'].map(st=>`<option value="${st}" ${stage===st?'selected':''}>${st}</option>`).join('')}
+            ${['Lead','Resident','Delinquent','Evicting','Past Tenant','Property Owner','Contractor','Caseworker'].map(st=>`<option value="${st}" ${stage===st?'selected':''}>${st}</option>`).join('')}
           </select>
         </div>
         ${person.email ? `<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value" style="font-size:12px;word-break:break-all">${esc(person.email)}</span></div>` : ''}
@@ -2049,6 +2165,29 @@ function renderContactRecord(person, activities, tasks) {
           ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--text-3)">No active flags</div>' : ''}
         </div>
       </div>
+            <!-- CASEWORKER PANEL -->
+      <div class="right-section" id="cw-panel-wrap-${person.id}">
+        <div class="right-section-header">
+          <span class="right-section-title" style="color:#a855f7">🤝 Caseworker</span>
+          <button onclick="cwShowSearch(${person.id})" style="background:none;border:none;color:#a855f7;font-size:11px;cursor:pointer;font-weight:700">+ Link</button>
+        </div>
+        <div id="cw-list-${person.id}" style="font-size:12px;color:var(--text-3)">Loading…</div>
+        <div id="cw-search-wrap-${person.id}" style="display:none;margin-top:8px">
+          <input id="cw-search-input-${person.id}" type="text" placeholder="Search by name…"
+            oninput="cwSearchPeople(this.value, ${person.id})"
+            style="width:100%;box-sizing:border-box;padding:6px 10px;border-radius:6px;background:var(--bg-3);border:1px solid var(--border);color:var(--text);font-size:12px;font-family:inherit;outline:none">
+          <div id="cw-search-results-${person.id}" style="margin-top:5px;display:flex;flex-direction:column;gap:3px;max-height:140px;overflow-y:auto"></div>
+        </div>
+        ${(stage==='Resident'||stage==='Delinquent'||stage==='Evicting') ? \`
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <button onclick="logLeaseViolation(\${person.id})"
+            style="width:100%;padding:7px;border-radius:6px;background:rgba(255,59,59,0.1);border:1px solid rgba(255,59,59,0.3);color:#ff3b3b;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit"
+            onmouseover="this.style.background='rgba(255,59,59,0.2)'" onmouseout="this.style.background='rgba(255,59,59,0.1)'">
+            🚨 Log Lease Violation
+          </button>
+        </div>\` : ''}
+      </div>
+
       <div class="right-section" id="security-detections-wrap">
         <div class="right-section-header">
           <span class="right-section-title" style="color:#ff3b3b">🔒 Security Profile</span>
@@ -3636,13 +3775,14 @@ function parseTags(tags) {
 }
 function stageClass(stage) {
   const s = (stage||'').toLowerCase();
-  if (s === 'evicting') return 'stage-evicting';
-  if (s === 'delinquent') return 'stage-delinquent';
-  if (s === 'resident') return 'stage-resident';
-  if (s.includes('lead')) return 'stage-lead';
-  if (s.includes('active')||s.includes('tenant')) return 'stage-active';
-  if (s.includes('past')) return 'stage-past';
-  return 'stage-lead';
+  if (s === 'evicting')          return 'stage-evicting';
+  if (s === 'delinquent')        return 'stage-delinquent';
+  if (s === 'resident')          return 'stage-resident';
+  if (s === 'caseworker')        return 'stage-caseworker';
+  if (s === 'contractor')        return 'stage-contractor';
+  if (s === 'property owner')    return 'stage-owner';
+  if (s.includes('past'))        return 'stage-past';
+  return 'stage-lead'; // Lead + anything else
 }
 
 function getStageBannerClass(stage) {
