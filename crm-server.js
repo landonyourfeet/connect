@@ -175,6 +175,82 @@ app.post('/api/people', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── CASEWORKER NOTIFICATION HELPER ────────────────────────────────────────────
+async function notifyCaseworkers(residentId, triggerType, agentId) {
+  try {
+    // Find all caseworkers linked to this resident
+    const rels = await pool.query(`
+      SELECT
+        CASE WHEN pr.person_id_a = $1 THEN pr.person_id_b ELSE pr.person_id_a END AS cw_id
+      FROM person_relationships pr
+      WHERE (pr.person_id_a = $1 OR pr.person_id_b = $1)
+        AND pr.label = 'caseworker'
+    `, [residentId]);
+
+    if (!rels.rows.length) return;
+
+    // Get resident info
+    const res = await pool.query('SELECT first_name, last_name, stage FROM people WHERE id=$1', [residentId]);
+    const resident = res.rows[0];
+    if (!resident) return;
+    const resName = [resident.first_name, resident.last_name].filter(Boolean).join(' ');
+
+    const msgs = {
+      delinquent:      `⚠️ OKCREAL Alert: ${resName} has been moved to Delinquent status. Your support may be needed.`,
+      lease_violation: `⚠️ OKCREAL Alert: ${resName} has received a lease violation. Your support may be needed.`,
+      evicting:        `⚠️ OKCREAL Alert: ${resName} has been moved to Eviction status. Your support may be needed.`,
+    };
+    const msg = msgs[triggerType] || `⚠️ OKCREAL Alert: Update on ${resName} — ${triggerType}.`;
+
+    for (const row of rels.rows) {
+      const cwId = row.cw_id;
+      // Get caseworker phone
+      const cwRes = await pool.query(`
+        SELECT p.id, p.first_name, p.last_name, pp.phone
+        FROM people p
+        LEFT JOIN person_phones pp ON pp.person_id = p.id AND pp.is_primary = true
+        WHERE p.id = $1
+      `, [cwId]);
+      const cw = cwRes.rows[0];
+      if (!cw) continue;
+
+      const cwName = [cw.first_name, cw.last_name].filter(Boolean).join(' ');
+
+      // Log activity on RESIDENT record
+      await pool.query(
+        `INSERT INTO activities (person_id, agent_id, type, body, direction)
+         VALUES ($1, $2, 'note', $3, 'internal')`,
+        [residentId, agentId || null, `📋 Caseworker ${cwName} notified: ${triggerType.replace('_',' ')}`]
+      );
+
+      // Log activity on CASEWORKER record
+      await pool.query(
+        `INSERT INTO activities (person_id, agent_id, type, body, direction)
+         VALUES ($1, $2, 'note', $3, 'internal')`,
+        [cwId, agentId || null, `📋 Notified re: resident ${resName} — ${triggerType.replace('_',' ')}`]
+      );
+
+      // Send SMS if caseworker has a phone
+      if (cw.phone) {
+        try {
+          const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+          const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+          const sent = await twilioClient.messages.create({
+            body: msg,
+            from: fromNum,
+            to: cw.phone.replace(/\D/g,'').replace(/^(\d{10})$/, '+1$1')
+          });
+          console.log(`[Caseworker] SMS sent to ${cwName} (${cw.phone}): ${sent.sid}`);
+        } catch(smsErr) {
+          console.warn(`[Caseworker] SMS failed for ${cwName}:`, smsErr.message);
+        }
+      }
+    }
+  } catch(e) {
+    console.error('[notifyCaseworkers] Error:', e.message);
+  }
+}
+
 app.put('/api/people/:id', auth, async (req, res) => {
   try {
     const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
@@ -194,7 +270,16 @@ app.put('/api/people/:id', auth, async (req, res) => {
        customFields ? JSON.stringify(customFields) : null,
        address||null, city||null, state||null, zip||null, req.params.id]
     );
-    res.json(r.rows[0]);
+    const updated = r.rows[0];
+
+    // Notify caseworkers on delinquent/evicting stage changes
+    if (stage && (stage === 'Delinquent' || stage === 'Evicting')) {
+      const agentId = req.user?.id || null;
+      const triggerType = stage === 'Delinquent' ? 'delinquent' : 'evicting';
+      notifyCaseworkers(req.params.id, triggerType, agentId).catch(e => console.warn('[CW trigger]', e.message));
+    }
+
+    res.json(updated);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -350,6 +435,42 @@ app.patch('/api/people/:id/security', auth, async (req, res) => {
       ]
     );
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST a lease violation — notifies caseworkers automatically
+app.post('/api/people/:id/lease-violation', auth, async (req, res) => {
+  try {
+    const { note } = req.body;
+    const agentId = req.user?.id || null;
+    const body = note ? `🚨 Lease Violation: ${note}` : '🚨 Lease Violation logged';
+    const act = await pool.query(
+      `INSERT INTO activities (person_id, agent_id, type, body, direction)
+       VALUES ($1, $2, 'note', $3, 'internal') RETURNING *`,
+      [req.params.id, agentId, body]
+    );
+    // Notify caseworkers
+    await notifyCaseworkers(req.params.id, 'lease_violation', agentId);
+    res.json(act.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET caseworkers for a resident (or residents for a caseworker)
+app.get('/api/people/:id/caseworkers', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT
+        p.id, p.first_name, p.last_name, p.email, p.stage,
+        pp.phone,
+        CASE WHEN pr.person_id_a = $1 THEN 'b' ELSE 'a' END AS role_side,
+        pr.id AS rel_id
+      FROM person_relationships pr
+      JOIN people p ON p.id = CASE WHEN pr.person_id_a = $1 THEN pr.person_id_b ELSE pr.person_id_a END
+      LEFT JOIN person_phones pp ON pp.person_id = p.id AND pp.is_primary = true
+      WHERE (pr.person_id_a = $1 OR pr.person_id_b = $1)
+        AND pr.label = 'caseworker'
+    `, [req.params.id]);
+    res.json(r.rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1078,6 +1199,7 @@ async function initDB() {
   `, 'create protect_cameras');
   // Migrate old stage names
   await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate stage Active Tenant->Resident').catch(()=>{});
+  await run(`UPDATE people SET stage='Contractor' WHERE stage='Vendor'`, 'migrate stage Vendor->Contractor').catch(()=>{});
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS city TEXT`, 'people.city');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS state TEXT`, 'people.state');
