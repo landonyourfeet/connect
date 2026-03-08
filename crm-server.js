@@ -24,6 +24,21 @@ app.get('/twilio-voice.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'node_modules/@twilio/voice-sdk/dist/twilio.min.js'));
 });
 
+// Serve favicon explicitly (Chrome needs correct MIME + cache headers)
+app.get('/favicon.svg', (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <rect width="64" height="64" rx="10" fill="#0a0a0f"/>
+    <text x="32" y="44" font-family="Arial Black,sans-serif" font-size="38" font-weight="900"
+      text-anchor="middle" fill="#e6e6e6">OK<tspan fill="#e63946">C</tspan></text>
+  </svg>`;
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(svg);
+});
+
+// Chrome fallback — redirect /favicon.ico to svg
+app.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
+
 const auth = async (req, res, next) => {
   const h = req.headers.authorization;
   if (!h?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
