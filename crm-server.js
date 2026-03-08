@@ -1305,29 +1305,34 @@ app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
 const uploadMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function fubParseCSV(raw) {
-  const lines = raw.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
-  if (!lines.length) return [];
-  const headers = fubCSVLine(lines[0]);
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    const vals = fubCSVLine(lines[i]);
-    const row = {};
-    headers.forEach((h,j) => { row[h.trim()] = (vals[j]||'').trim(); });
-    rows.push(row);
-  }
-  return rows;
-}
+  // Strip UTF-8 BOM, normalize line endings
+  const cleaned = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-function fubCSVLine(line) {
-  const result = []; let cur = '', inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
-    else if (ch === ',' && !inQ) { result.push(cur); cur=''; }
-    else cur += ch;
+  // RFC-4180 compliant parser — handles quoted fields with embedded newlines/commas
+  const rows2D = [[]];
+  let cur = '', inQ = false;
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === '"') {
+      if (!inQ) { inQ = true; continue; }
+      if (cleaned[i+1] === '"') { cur += '"'; i++; continue; } // escaped quote
+      inQ = false; continue;
+    }
+    if (!inQ && ch === ',')  { rows2D[rows2D.length-1].push(cur); cur = ''; continue; }
+    if (!inQ && ch === '\n') { rows2D[rows2D.length-1].push(cur); cur = ''; rows2D.push([]); continue; }
+    cur += ch;
   }
-  result.push(cur);
+  rows2D[rows2D.length-1].push(cur);
+
+  const headers = rows2D[0].map(h => h.trim());
+  const result = [];
+  for (let r = 1; r < rows2D.length; r++) {
+    const vals = rows2D[r];
+    if (vals.every(v => !v.trim())) continue;
+    const row = {};
+    headers.forEach((h, j) => { row[h] = (vals[j] || '').trim(); });
+    result.push(row);
+  }
   return result;
 }
 
