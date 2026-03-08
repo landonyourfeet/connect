@@ -497,8 +497,14 @@ app.post('/api/twilio/recording', async (req, res) => {
     const dg = initDeepgram();
     if (dg) {
       try {
+        // Twilio recording URLs require Basic Auth — embed credentials so Deepgram can fetch them
+        const rawUrl = `${RecordingUrl}.mp3`;
+        const authedUrl = rawUrl.replace(
+          'https://',
+          `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`
+        );
         const { result } = await dg.listen.prerecorded.transcribeUrl(
-          { url: `${RecordingUrl}.mp3` },
+          { url: authedUrl },
           { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true }
         );
         const utterances = result?.results?.utterances;
@@ -530,10 +536,63 @@ app.post('/api/twilio/recording', async (req, res) => {
       } catch (e) { console.error('Grok error:', e.message); }
     }
     await pool.query('UPDATE calls SET transcript=$1,summary=$2 WHERE id=$3', [transcript, summary, call.id]);
-    if (summary || transcript) {
-      pool.query('UPDATE activities SET body=$1 WHERE call_id=$2', [summary || transcript.substring(0, 200), call.id]).catch(() => {});
-    }
+    // Always update the activity — even if blank, clear "Transcript processing..." placeholder
+    const activityBody = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. No transcript available.');
+    await pool.query('UPDATE activities SET body=$1 WHERE call_id=$2', [activityBody, call.id]).catch(() => {});
   } catch (e) { console.error('Recording webhook error:', e.message); }
+});
+
+// Retry transcription for stuck "Transcript processing..." activities
+app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
+  try {
+    const callR = await pool.query('SELECT * FROM calls WHERE id=$1', [req.params.callId]);
+    const call = callR.rows[0];
+    if (!call?.recording_url) return res.status(404).json({ error: 'No recording found' });
+    res.json({ ok: true, message: 'Retrying transcription...' });
+    // Run async
+    (async () => {
+      let transcript = '', summary = '';
+      const dg = initDeepgram();
+      if (dg) {
+        try {
+          const authedUrl = call.recording_url.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
+          const { result } = await dg.listen.prerecorded.transcribeUrl(
+            { url: authedUrl },
+            { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true }
+          );
+          const utterances = result?.results?.utterances;
+          if (utterances?.length) {
+            transcript = utterances.map(u => {
+              const ts = `[${Math.floor(u.start/60)}:${String(Math.floor(u.start%60)).padStart(2,'0')}]`;
+              return `${ts} ${u.channel === 0 ? 'Agent' : 'Caller'}: ${u.transcript}`;
+            }).join('\n');
+          } else {
+            transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+          }
+        } catch(e) { console.error('Retry Deepgram error:', e.message); }
+      }
+      const grok = initGrok();
+      if (grok && transcript.length > 20) {
+        try {
+          const personR = call.person_id ? await pool.query('SELECT first_name,last_name FROM people WHERE id=$1', [call.person_id]) : null;
+          const agentR = call.agent_id ? await pool.query('SELECT name FROM agents WHERE id::text=$1', [call.agent_id]) : null;
+          const contactName = personR?.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'Unknown';
+          const agentName = agentR?.rows[0]?.name || 'Agent';
+          const completion = await grok.chat.completions.create({
+            model: 'grok-3', max_tokens: 200,
+            messages: [
+              { role: 'system', content: 'You summarize property management calls in 2-3 sentences. Focus on: payment commitments, maintenance issues, lease inquiries, delinquency resolutions, action items.' },
+              { role: 'user', content: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} call. Agent: ${agentName}. Contact: ${contactName}.\n\nTranscript:\n${transcript}` }
+            ]
+          });
+          summary = completion.choices[0]?.message?.content || '';
+        } catch(e) { console.error('Retry Grok error:', e.message); }
+      }
+      await pool.query('UPDATE calls SET transcript=$1,summary=$2 WHERE id=$3', [transcript, summary, call.id]);
+      const body = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. Transcript unavailable.');
+      await pool.query('UPDATE activities SET body=$1 WHERE call_id=$2', [body, call.id]).catch(() => {});
+    })();
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/twilio/voicemail', async (req, res) => {
