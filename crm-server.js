@@ -176,6 +176,30 @@ app.get('/api/people/:id', auth, async (req, res) => {
 app.post('/api/people', auth, async (req, res) => {
   try {
     const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
+
+    // ── Duplicate check ──────────────────────────────────────────────────────
+    const normPhone = phone ? (() => { const d = phone.replace(/\D/g,''); return d.length===10?'+1'+d:d.length===11&&d[0]==='1'?'+'+d:null; })() : null;
+    const dupeChecks = [];
+    if (normPhone) dupeChecks.push(
+      pool.query(`SELECT p.id,p.first_name,p.last_name,p.phone,p.email,p.stage FROM people p
+        LEFT JOIN person_phones pp ON pp.person_id=p.id
+        WHERE p.phone=$1 OR pp.phone=$1 LIMIT 1`, [normPhone])
+    );
+    if (email) dupeChecks.push(
+      pool.query(`SELECT id,first_name,last_name,phone,email,stage FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email])
+    );
+    for (const chk of await Promise.all(dupeChecks)) {
+      if (chk.rows[0]) {
+        const ex = chk.rows[0];
+        return res.status(409).json({
+          error: 'duplicate',
+          message: `A contact already exists with this ${normPhone && chk.rows[0] ? 'phone number' : 'email'}.`,
+          existing: { id: ex.id, name: [ex.first_name, ex.last_name].filter(Boolean).join(' '), phone: ex.phone, email: ex.email, stage: ex.stage }
+        });
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const r = await pool.query(
       'INSERT INTO people (first_name,last_name,phone,email,stage,source,background,tags,custom_fields,assigned_to,address,city,state,zip) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
       [firstName, lastName, phone||null, email||null, stage||'lead', source||null, background||null, tags||[], JSON.stringify(customFields||{}), assignedTo||null, address||null, city||null, state||null, zip||null]
@@ -1404,15 +1428,28 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
     const existingByEmail = new Map();
     const existingByPhone = new Map();
     const { rows: existing } = await pool.query(`
-      SELECT p.id, p.fub_id, p.email,
+      SELECT p.id, p.fub_id, p.email, p.phone AS main_phone,
              array_agg(pp.phone) FILTER (WHERE pp.phone IS NOT NULL) AS phones
       FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
       GROUP BY p.id
     `);
+    const normalizeForDedup = ph => {
+      if (!ph) return null;
+      const d = String(ph).replace(/\D/g,'');
+      if (d.length === 10) return '+1' + d;
+      if (d.length === 11 && d[0] === '1') return '+' + d;
+      return d || null;
+    };
     for (const p of existing) {
-      if (p.fub_id) existingByFubId.set(p.fub_id, p.id);
-      if (p.email)  existingByEmail.set(p.email.toLowerCase(), p.id);
-      for (const ph of (p.phones || [])) existingByPhone.set(ph, p.id);
+      if (p.fub_id) existingByFubId.set(String(p.fub_id).trim(), p.id);
+      if (p.email)  existingByEmail.set(p.email.toLowerCase().trim(), p.id);
+      // Index both the main phone column and all person_phones entries
+      const allPhones = [...(p.phones || [])];
+      if (p.main_phone) allPhones.push(p.main_phone);
+      for (const ph of allPhones) {
+        const norm = normalizeForDedup(ph);
+        if (norm) existingByPhone.set(norm, p.id);
+      }
     }
 
     let inserted = 0, updated = 0, skipped = 0, blocked = 0;
