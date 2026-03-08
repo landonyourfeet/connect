@@ -1983,9 +1983,38 @@ app.post('/api/admin/cameras', auth, adminOnly, async (req, res) => {
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+app.put('/api/admin/cameras/:mac', auth, adminOnly, async (req, res) => {
+  const { name, site } = req.body;
+  try {
+    const r = await pool.query(
+      `INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3)
+       ON CONFLICT (mac) DO UPDATE SET name=$2, site=COALESCE($3, protect_cameras.site) RETURNING *`,
+      [req.params.mac.toUpperCase(), name, site || null]
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.delete('/api/admin/cameras/:id', auth, adminOnly, async (req, res) => {
   await pool.query('DELETE FROM protect_cameras WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
+});
+// Seed protect_cameras from all known MACs in security_events
+app.post('/api/admin/cameras/discover', auth, adminOnly, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT DISTINCT camera_mac AS mac, site FROM security_events
+      WHERE camera_mac IS NOT NULL AND camera_mac != ''
+    `);
+    let added = 0;
+    for (const row of rows) {
+      const r = await pool.query(
+        `INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING RETURNING id`,
+        [row.mac.toUpperCase(), row.mac.toUpperCase(), row.site || 'Main']
+      );
+      if (r.rowCount) added++;
+    }
+    res.json({ discovered: rows.length, added });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── UniFi Protect Webhook receiver ───────────────────────────────────────
