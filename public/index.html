@@ -1483,7 +1483,42 @@
       </div>
 
       <!-- VIEW: Admin -->
-      <div class="view" id="view-admin"></div>
+      <div class="view" id="view-admin">
+        <!-- Agents and Call Lines — filled dynamically by loadAdmin() -->
+        <div id="admin-dynamic"></div>
+
+        <!-- ── FUB IMPORT — static HTML so file input works ──────────── -->
+        <div class="admin-section" id="admin-import-section">
+          <div class="admin-section-header">
+            <div class="admin-section-title">📥 Import Contacts (Follow Up Boss)</div>
+          </div>
+          <div style="padding:20px">
+            <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
+              Export your contacts from Follow Up Boss (Contacts → ··· → Export), then upload the CSV here.
+              Run a <strong>dry run</strong> first to preview what will be imported before committing.
+            </p>
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+              <div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2);overflow:hidden">
+                📂 <span id="import-filename">Choose CSV file…</span>
+                <input type="file" accept=".csv" id="import-file-input" onchange="importFileChosen(this)"
+                  style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer">
+              </div>
+              <button class="btn-ghost" onclick="runImport(false)" id="import-dryrun-btn" style="opacity:0.4">🔍 Dry Run Preview</button>
+              <button class="btn-primary" onclick="runImport(true)" id="import-commit-btn" style="opacity:0.4;background:var(--bg-5);color:var(--text-2);border:1px solid var(--border)">🚀 Commit Import</button>
+            </div>
+            <div id="import-status" style="display:none;font-size:13px;color:var(--text-3);margin-bottom:12px"></div>
+            <div id="import-preview" style="display:none">
+              <div id="import-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px"></div>
+              <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+                <table class="admin-table" id="import-preview-table">
+                  <thead><tr><th>Action</th><th>Name</th><th>Stage</th><th>Phone</th><th>Email</th><th>FUB Stage</th><th>Blocked?</th></tr></thead>
+                  <tbody id="import-preview-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- VIEW: Security Alerts -->
       <div class="view" id="view-security">
@@ -2938,7 +2973,7 @@ function setInboxFilter(f) {
 
 // ── ADMIN ──────────────────────────────────────────────────────────────
 async function loadAdmin() {
-  const viewEl = document.getElementById('view-admin');
+  const viewEl = document.getElementById('admin-dynamic');
   viewEl.innerHTML = '<div style="text-align:center;padding:80px"><div class="spinner"></div></div>';
   try {
     const [agents, callLines] = await Promise.all([
@@ -3000,46 +3035,6 @@ async function loadAdmin() {
             <td><span class="${l.is_active?'online-dot':'offline-dot'}"></span>${l.is_active?'Active':'Inactive'}</td>
           </tr>`).join('')}</tbody>
         </table>
-      </div>
-
-      <!-- ── FUB IMPORT ──────────────────────────────────────────── -->
-      <div class="admin-section">
-        <div class="admin-section-header">
-          <div class="admin-section-title">📥 Import Contacts (Follow Up Boss)</div>
-        </div>
-        <div style="padding:20px">
-          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
-            Export your contacts from Follow Up Boss (Contacts → ··· → Export), then upload the CSV here.
-            Run a <strong>dry run</strong> first to preview what will be imported before committing.
-          </p>
-
-          <!-- Upload row -->
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-            <div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2);overflow:hidden">
-              📂 <span id="import-filename">Choose CSV file…</span>
-              <input type="file" accept=".csv" id="import-file-input" onchange="importFileChosen(this)"
-                style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0">
-            </div>
-            <button class="btn-ghost" onclick="runImport(false)" id="import-dryrun-btn" style="opacity:0.4">🔍 Dry Run Preview</button>
-            <button class="btn-primary" onclick="runImport(true)" id="import-commit-btn" style="opacity:0.4;background:var(--bg-5);color:var(--text-2);border:1px solid var(--border)">🚀 Commit Import</button>
-          </div>
-
-          <!-- Progress / status -->
-          <div id="import-status" style="display:none;font-size:13px;color:var(--text-3);margin-bottom:12px"></div>
-
-          <!-- Preview table -->
-          <div id="import-preview" style="display:none">
-            <div id="import-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px"></div>
-            <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
-              <table class="admin-table" id="import-preview-table">
-                <thead><tr>
-                  <th>Action</th><th>Name</th><th>Stage</th><th>Phone</th><th>Email</th><th>FUB Stage</th><th>Blocked?</th>
-                </tr></thead>
-                <tbody id="import-preview-body"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
       </div>`;
 
   } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
