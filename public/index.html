@@ -1973,17 +1973,18 @@ function renderSmartListsNav() {
 async function loadPeople(listId = 'all') {
   const tbody = document.getElementById('people-tbody');
   tbody.innerHTML = '<tr class="loader-row"><td colspan="8"><div class="spinner"></div></td></tr>';
-  let url = '/api/people?limit=200';
+  let url = '/api/people?limit=5000';
   if (listId && listId !== 'all') url += `&smartListId=${listId}`;
-  if (searchQuery) url += `&q=${encodeURIComponent(searchQuery)}`;
+  if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
   try {
     const data = await api(url);
     peopleData = Array.isArray(data) ? data : (data.people || []);
+    const total = data.total ?? peopleData.length;
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
     document.getElementById('header-title').textContent = listName;
-    document.getElementById('people-count').innerHTML = `<strong>${peopleData.length}</strong> people`;
+    document.getElementById('people-count').innerHTML = `<strong>${total.toLocaleString()}</strong> people`;
     const badge = document.getElementById('badge-' + listId);
-    if (badge) badge.textContent = peopleData.length;
+    if (badge) badge.textContent = total;
     renderPeopleTable();
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</td></tr>`;
