@@ -1033,26 +1033,34 @@
     .ti-content.note-content { background: rgba(255,140,0,0.06); border-left: 2px solid var(--amber); padding: 8px 10px; border-radius: 0 var(--radius) var(--radius) 0; color: var(--text); }
 
     /* ── CALL CARDS ───────────────────────────────────────────── */
-    .call-summary-card { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-top: 4px; }
-    .call-summary-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .call-summary-card { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-top: 4px; }
+    .call-summary-meta { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
     .call-direction { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border-radius: 100px; }
     .call-inbound  { background: var(--blue-dim); color: var(--blue); }
     .call-outbound { background: var(--green-dim); color: var(--green); }
     .call-missed   { background: var(--red-dim); color: var(--red); }
     .call-duration { font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
-    .ai-summary-text { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 10px; }
+    /* AI Summary block */
+    .ai-summary-block { padding: 8px 12px 10px; border-top: 1px solid var(--border); }
+    .ai-summary-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; }
+    .ai-summary-text { font-size: 13px; color: var(--text); line-height: 1.6; }
     .ai-thinking-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--red-dim); border-radius: var(--radius); margin-bottom: 8px; animation: glow-breathe-red 2s ease-in-out infinite; }
     .ai-thinking-text { font-size: 12px; color: var(--red); font-weight: 500; }
     .thinking-dots span { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--red); margin: 0 1px; animation: dot-bounce 1.2s ease-in-out infinite; }
     .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
     .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
-    .call-expand-btn { background: none; padding: 0; font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 4px; transition: color 0.15s; }
-    .call-expand-btn:hover { color: var(--text); }
-    .call-expanded { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-    .call-expanded.open { display: block; }
-    .audio-player-wrap { margin-bottom: 10px; }
-    .audio-player-wrap audio { width: 100%; height: 32px; border-radius: var(--radius); }
-    .transcript-content { font-size: 12px; color: var(--text-2); line-height: 1.7; max-height: 200px; overflow-y: auto; padding: 8px; background: var(--bg-4); border-radius: var(--radius); }
+    /* Action row — Play Audio + View Transcript buttons */
+    .call-actions-row { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-4); }
+    .call-action-btn { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border-hi); background: var(--bg-3); color: var(--text-2); cursor: pointer; transition: all 0.15s; }
+    .call-action-btn:hover { background: var(--bg-5); color: var(--text); border-color: var(--text-3); }
+    .call-action-btn.active { background: rgba(99,102,241,0.15); color: #818cf8; border-color: rgba(99,102,241,0.4); }
+    /* Expandable sections */
+    .call-audio-section { display: none; padding: 10px 12px; border-top: 1px solid var(--border); }
+    .call-audio-section.open { display: block; }
+    .call-audio-section audio { width: 100%; height: 36px; border-radius: var(--radius); display: block; }
+    .call-transcript-section { display: none; border-top: 1px solid var(--border); }
+    .call-transcript-section.open { display: block; }
+    .transcript-content { font-size: 12px; color: var(--text-2); line-height: 1.7; max-height: 220px; overflow-y: auto; padding: 10px 12px; background: var(--bg-4); }
     .transcript-line { margin-bottom: 4px; }
     .transcript-speaker { font-weight: 700; color: var(--text); }
 
@@ -2521,26 +2529,54 @@ function renderTimelineItem(act, hasConnector) {
     const duration = (act.duration||act.duration_seconds) ? formatDuration(act.duration||act.duration_seconds) : '';
     const cardId = 'call-card-' + act.id;
     const noTranscript = !act.summary && !act.transcript;
-    const isProcessing = (act.body||act.content||'') === 'Transcript processing...';
     const hasRecording = !!act.recording_url;
-    // Use proxied recording URL to avoid Twilio auth requirement in browser
     const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording` : null;
+
+    // 1) AI Summary section
+    const summaryHtml = act.summary
+      ? `<div class="ai-summary-block">
+           <div class="ai-summary-label">🤖 AI Summary</div>
+           <div class="ai-summary-text">${esc(act.summary)}</div>
+         </div>`
+      : noTranscript
+        ? `<div class="ai-summary-block" style="padding:8px 12px 10px">
+             <span style="font-size:12px;color:var(--text-3);font-style:italic">${esc(act.body||act.content||'No summary available')}</span>
+             ${act.call_id ? `<button onclick="retryTranscript('${act.call_id}',this)" style="margin-left:8px;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:2px 9px;font-size:11px;font-weight:600;cursor:pointer">↻ Retry</button>` : ''}
+           </div>`
+        : '';
+
+    // 2) Action buttons row (only show buttons that have content)
+    const audioBtn  = hasRecording && proxyUrl
+      ? `<button class="call-action-btn" id="${cardId}-audio-btn" onclick="toggleCallSection('${cardId}','audio')">▶ Play Audio</button>`
+      : '';
+    const transcriptBtn = act.transcript
+      ? `<button class="call-action-btn" id="${cardId}-tx-btn" onclick="toggleCallSection('${cardId}','transcript')">📄 View Transcript</button>`
+      : '';
+    const actionsRow = (audioBtn || transcriptBtn)
+      ? `<div class="call-actions-row">${audioBtn}${transcriptBtn}</div>`
+      : '';
+
+    // 3) Expandable sections
+    const audioSection = hasRecording && proxyUrl
+      ? `<div class="call-audio-section" id="${cardId}-audio">
+           <audio controls src="${proxyUrl}" preload="none" style="width:100%;height:36px;border-radius:6px;display:block"></audio>
+         </div>`
+      : '';
+    const transcriptSection = act.transcript
+      ? `<div class="call-transcript-section" id="${cardId}-transcript">
+           <div class="transcript-content">${formatTranscript(act.transcript)}</div>
+         </div>`
+      : '';
+
     bodyHtml = `<div class="call-summary-card" id="${cardId}">
       <div class="call-summary-meta">
         <span class="call-direction call-${dir === 'inbound' ? 'inbound' : dir === 'missed' ? 'missed' : 'outbound'}">${dir === 'inbound' ? 'Inbound' : dir === 'missed' ? 'Missed' : 'Outbound'}</span>
         ${duration ? `<span class="call-duration">${duration}</span>` : ''}
       </div>
-      ${act.summary ? `<div class="ai-summary-text">${esc(act.summary)}</div>` : ''}
-      ${noTranscript ? `<div class="ti-content" style="color:var(--text-3);font-style:italic;display:flex;align-items:center;gap:10px">
-        <span>${esc(act.body||act.content||'No summary yet')}</span>
-        ${act.call_id ? `<button onclick="retryTranscript('${act.call_id}',this)" style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">↻ Retry</button>` : ''}
-      </div>` : ''}
-      ${(act.summary || act.transcript || hasRecording) ? `
-        <button class="call-expand-btn" onclick="toggleCallExpand('${cardId}')">▶ Recording & Transcript</button>
-        <div class="call-expanded" id="${cardId}-expanded">
-          ${hasRecording && proxyUrl ? `<div class="audio-player-wrap"><audio controls src="${proxyUrl}" preload="none"></audio></div>` : ''}
-          ${act.transcript ? `<div class="transcript-content">${formatTranscript(act.transcript)}</div>` : ''}
-        </div>` : ''}
+      ${summaryHtml}
+      ${actionsRow}
+      ${audioSection}
+      ${transcriptSection}
     </div>`;
 
   } else if (type === 'text' || type === 'sms') {
@@ -2627,6 +2663,15 @@ async function retrySms(activityId, personId) {
 }
 
 // ── TIMELINE HELPERS ─────────────────────────────────────────────────
+function toggleCallSection(cardId, section) {
+  const el  = document.getElementById(`${cardId}-${section}`);
+  const btn = document.getElementById(`${cardId}-${section}-btn`);
+  if (!el) return;
+  const isOpen = el.classList.toggle('open');
+  if (btn) btn.classList.toggle('active', isOpen);
+}
+
+// Legacy — keep for any old markup still in the DOM
 function toggleCallExpand(cardId) {
   document.getElementById(cardId + '-expanded')?.classList.toggle('open');
 }
