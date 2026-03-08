@@ -1936,22 +1936,41 @@ function secToggleDV() {
 async function secHandleIdUpload(event) {
   const file = event.target.files[0];
   if (!file || !_secPersonId) return;
-  if (file.size > 3 * 1024 * 1024) { toast('Image too large — max 3MB', 'error'); return; }
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    const b64 = e.target.result; // full data URL
-    try {
-      await api(`/api/people/${_secPersonId}/id-photo`, 'POST', { photoB64: b64, photoName: file.name });
-      const img = document.getElementById('sec-id-img');
-      const missing = document.getElementById('sec-id-missing');
-      const delBtn = document.getElementById('sec-id-del-btn');
-      img.src = b64; img.style.display = 'block';
-      missing.style.display = 'none'; delBtn.style.display = '';
-      toast('ID photo saved', 'success');
-    } catch(err) { toast('Upload failed', 'error'); }
-  };
-  reader.readAsDataURL(file);
-  event.target.value = ''; // reset so same file can be re-uploaded
+  if (file.size > 10 * 1024 * 1024) { toast('Image too large — max 10MB', 'error'); return; }
+
+  // Compress via canvas before uploading
+  const compressImage = (file) => new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const maxW = 800, maxH = 600;
+      let w = img.width, h = img.height;
+      if (w > maxW || h > maxH) {
+        const ratio = Math.min(maxW / w, maxH / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.src = url;
+  });
+
+  try {
+    const b64 = await compressImage(file); // full data URL, compressed
+    await api(`/api/people/${_secPersonId}/id-photo`, 'POST', { photoB64: b64, photoName: file.name });
+    const img = document.getElementById('sec-id-img');
+    const missing = document.getElementById('sec-id-missing');
+    const delBtn = document.getElementById('sec-id-del-btn');
+    img.src = b64; img.style.display = 'block';
+    missing.style.display = 'none'; delBtn.style.display = '';
+    toast('ID photo saved', 'success');
+  } catch(err) {
+    toast('Upload failed: ' + (err.message || 'unknown error'), 'error');
+  }
+  event.target.value = '';
 }
 
 async function secDeleteIdPhoto() {
