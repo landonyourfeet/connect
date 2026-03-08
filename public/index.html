@@ -297,8 +297,8 @@
     #privacy-overlay {
       display: none;
       position: fixed; inset: 0; z-index: 99998;
-      backdrop-filter: blur(6px) brightness(0.72) saturate(0.6);
-      -webkit-backdrop-filter: blur(6px) brightness(0.72) saturate(0.6);
+      backdrop-filter: blur(3.6px) brightness(0.72) saturate(0.6);
+      -webkit-backdrop-filter: blur(3.6px) brightness(0.72) saturate(0.6);
       background: repeating-linear-gradient(
         0deg,
         rgba(0,0,0,0.07) 0px, rgba(0,0,0,0.07) 1px,
@@ -342,6 +342,8 @@
       display: flex; flex-direction: column; align-items: center; gap: 0;
       animation: priv-stamp-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards;
       transform-origin: center;
+      /* Constrain to middle ~25% of the screen */
+      width: 40%; max-width: 480px; min-width: 260px;
     }
     @keyframes priv-stamp-in {
       0%   { transform: scale(1.35) rotate(-4deg); opacity: 0; }
@@ -351,28 +353,27 @@
 
     .priv-stamp-word {
       font-family: 'Arial Black', 'Impact', sans-serif;
-      font-size: clamp(64px, 10vw, 130px);
+      font-size: clamp(32px, 4.5vw, 58px);
       font-weight: 900;
       letter-spacing: 0.18em;
       color: #e8000a;
       text-transform: uppercase;
       line-height: 1;
+      width: 100%; text-align: center;
       /* Rubber-stamp look */
-      border: 8px solid #e8000a;
-      padding: 10px 32px 6px;
+      border: 5px solid #e8000a;
+      padding: 8px 20px 5px;
       border-radius: 4px;
       opacity: 0.88;
-      /* Rough stamp texture via text-shadow */
       text-shadow:
         1px 0 0 rgba(232,0,10,0.4),
         -1px 0 0 rgba(232,0,10,0.4),
         0 1px 0 rgba(232,0,10,0.3),
-        0 0 30px rgba(232,0,10,0.5);
+        0 0 20px rgba(232,0,10,0.5);
       box-shadow:
         inset 0 0 0 2px rgba(232,0,10,0.2),
         0 0 40px rgba(232,0,10,0.25);
-      /* Slight grain for that worn stamp feel */
-      mix-blend-mode: normal;
+      box-sizing: border-box;
       animation: priv-glow 3s ease-in-out infinite;
     }
     @keyframes priv-glow {
@@ -1341,7 +1342,6 @@
     <div class="priv-stamp">
       <div class="priv-stamp-word">CLASSIFIED</div>
       <div class="priv-stamp-sub">OKCREAL · CONFIDENTIAL RECORD</div>
-      <div class="priv-stamp-hint">Press ` to unlock</div>
     </div>
   </div>
   <div id="privacy-indicator" onclick="togglePrivacyBlur()" title="Privacy mode ON — click or press ` to unlock">🔒 PRIVACY</div>
@@ -1402,7 +1402,7 @@
           style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0.04em;transition:background 0.15s;margin:0 4px 2px"
           onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='transparent'">
           <span>🔒</span>
-          <span>CLASSIFIED</span>
+          <span>BLUR SCREEN</span>
           <span style="margin-left:auto;background:var(--bg-4);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:10px">` </span>
         </div>
         <!-- Theme toggle -->
