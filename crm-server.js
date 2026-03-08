@@ -930,15 +930,16 @@ app.post('/api/twilio/recording', async (req, res) => {
     const dg = initDeepgram();
     if (dg) {
       try {
-        // Twilio recording URLs require Basic Auth — embed credentials so Deepgram can fetch them
-        const rawUrl = `${RecordingUrl}.mp3`;
-        const authedUrl = rawUrl.replace(
-          'https://',
-          `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`
-        );
-        const { result } = await dg.listen.prerecorded.transcribeUrl(
-          { url: authedUrl },
-          { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true }
+        const rawUrl = `${recUrl}`;
+        // Download recording as buffer with Twilio Basic Auth, then send buffer to Deepgram
+        const authedUrl = rawUrl.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
+        const audioResp = await fetch(authedUrl);
+        if (!audioResp.ok) throw new Error(`Twilio fetch failed: ${audioResp.status}`);
+        const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+        console.log(`Deepgram: fetched ${audioBuffer.length} bytes, sending to transcription`);
+        const { result } = await dg.listen.prerecorded.transcribeFile(
+          audioBuffer,
+          { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true, mimetype: 'audio/mpeg' }
         );
         const utterances = result?.results?.utterances;
         if (utterances?.length) {
@@ -949,7 +950,10 @@ app.post('/api/twilio/recording', async (req, res) => {
         } else {
           transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
         }
+        console.log(`Deepgram: transcript length ${transcript.length}`);
       } catch (e) { console.error('Deepgram error:', e.message, e.stack?.split('\n')[1] || ''); }
+    } else {
+      console.warn('Deepgram: no API key set, skipping transcription');
     }
     const grok = initGrok();
     if (grok && transcript.length > 20) {
@@ -990,9 +994,13 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
       if (dg) {
         try {
           const authedUrl = call.recording_url.replace('https://', `https://${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}@`);
-          const { result } = await dg.listen.prerecorded.transcribeUrl(
-            { url: authedUrl },
-            { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true }
+          const audioResp = await fetch(authedUrl);
+          if (!audioResp.ok) throw new Error(`Twilio fetch failed: ${audioResp.status}`);
+          const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+          console.log(`Retry Deepgram: fetched ${audioBuffer.length} bytes`);
+          const { result } = await dg.listen.prerecorded.transcribeFile(
+            audioBuffer,
+            { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true, mimetype: 'audio/mpeg' }
           );
           const utterances = result?.results?.utterances;
           if (utterances?.length) {
