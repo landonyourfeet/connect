@@ -1244,6 +1244,15 @@ async function initDB() {
   // Migrate old stage names
   await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate stage Active Tenant->Resident').catch(()=>{});
   await run(`UPDATE people SET stage='Contractor' WHERE stage='Vendor'`, 'migrate stage Vendor->Contractor').catch(()=>{});
+  // Fix any security_events where event_link doesn't contain the event_id (was stored as list URL)
+  if (process.env.PROTECT_CLOUD_BASE_URL) {
+    await pool.query(`
+      UPDATE security_events
+      SET event_link = $1 || '/protect/events/event/' || event_id
+      WHERE event_id IS NOT NULL
+        AND (event_link IS NULL OR event_link NOT LIKE '%/event/%')
+    `, [process.env.PROTECT_CLOUD_BASE_URL]).catch(e => console.warn('Fix event_links:', e.message));
+  }
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS city TEXT`, 'people.city');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS state TEXT`, 'people.state');
@@ -1531,9 +1540,11 @@ app.post('/api/protect/webhook', async (req, res) => {
     const eventPath = alarm.eventPath || null;
     const localLink = alarm.eventLocalLink || null;
 
-    // Build cloud link if base URL configured
+    // Build cloud link — construct deep link from eventId first, fall back to eventPath/localLink
     const cloudBase = process.env.PROTECT_CLOUD_BASE_URL || '';
-    const cloudLink = cloudBase && eventPath ? `${cloudBase}${eventPath}` : localLink;
+    const cloudLink = cloudBase && eventId
+      ? `${cloudBase}/protect/events/event/${eventId}`
+      : (cloudBase && eventPath ? `${cloudBase}${eventPath}` : localLink);
 
     // Look up camera name
     const camRow = deviceMac
