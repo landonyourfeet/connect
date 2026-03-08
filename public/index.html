@@ -2544,7 +2544,8 @@ function renderTimelineItem(act, hasConnector) {
     const noTranscript = !act.summary && !act.transcript;
     const hasRecording = !!act.recording_url;
     const _tok = localStorage.getItem('connect_token') || '';
-    const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording?token=${encodeURIComponent(_tok)}` : null;
+    const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording` : null;
+    const callIdSafe = act.call_id || '';
 
     // 1) AI Summary section
     const summaryHtml = act.summary
@@ -2573,7 +2574,10 @@ function renderTimelineItem(act, hasConnector) {
     // 3) Expandable sections
     const audioSection = hasRecording && proxyUrl
       ? `<div class="call-audio-section" id="${cardId}-audio">
-           <audio controls src="${proxyUrl}" preload="none" style="width:100%;height:36px;border-radius:6px;display:block"></audio>
+           <audio controls id="${cardId}-audio-el" style="width:100%;height:36px;border-radius:6px;display:block">
+             <source src="" type="audio/mpeg">
+           </audio>
+           <div id="${cardId}-audio-status" style="font-size:11px;color:var(--text-3);margin-top:4px;display:none"></div>
          </div>`
       : '';
     const transcriptSection = act.transcript
@@ -2683,6 +2687,43 @@ function toggleCallSection(cardId, section) {
   if (!el) return;
   const isOpen = el.classList.toggle('open');
   if (btn) btn.classList.toggle('active', isOpen);
+
+  // When opening an audio section, fetch the recording and create a blob URL
+  if (isOpen && section === 'audio') {
+    const audioEl  = document.getElementById(`${cardId}-audio-el`);
+    const statusEl = document.getElementById(`${cardId}-audio-status`);
+    if (!audioEl) return;
+
+    // Already loaded — don't re-fetch
+    if (audioEl.dataset.loaded === '1') return;
+
+    // Extract call id from cardId (format: "call-card-{uuid}")
+    const callId = cardId.replace(/^call-card-/, '');
+    const tok    = localStorage.getItem('connect_token') || '';
+
+    if (statusEl) { statusEl.textContent = '⏳ Loading audio…'; statusEl.style.display = 'block'; }
+    audioEl.style.opacity = '0.4';
+
+    fetch(`/api/calls/${callId}/recording`, {
+      headers: { 'Authorization': `Bearer ${tok}` }
+    })
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.blob();
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      audioEl.src = url;
+      audioEl.dataset.loaded = '1';
+      audioEl.style.opacity = '1';
+      if (statusEl) statusEl.style.display = 'none';
+      audioEl.play().catch(() => {}); // autoplay on open
+    })
+    .catch(err => {
+      audioEl.style.opacity = '1';
+      if (statusEl) { statusEl.textContent = `⚠️ Could not load audio: ${err.message}`; statusEl.style.display = 'block'; }
+    });
+  }
 }
 
 // Legacy — keep for any old markup still in the DOM
