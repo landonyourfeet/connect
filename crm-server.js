@@ -140,6 +140,20 @@ app.get('/api/people', auth, async (req, res) => {
       `SELECT p.* FROM people p WHERE ${where.join(' AND ')} ORDER BY p.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
       params
     );
+    // Attach all phone numbers per person so frontend can match inbound calls correctly
+    if (r.rows.length) {
+      const ids = r.rows.map(p => p.id);
+      const phones = await pool.query(
+        `SELECT person_id, phone FROM person_phones WHERE person_id = ANY($1) AND (is_bad IS NULL OR is_bad=false)`,
+        [ids]
+      );
+      const phoneMap = {};
+      phones.rows.forEach(row => {
+        if (!phoneMap[row.person_id]) phoneMap[row.person_id] = [];
+        phoneMap[row.person_id].push(row.phone);
+      });
+      r.rows.forEach(p => { p.all_phones = phoneMap[p.id] || (p.phone ? [p.phone] : []); });
+    }
     res.json({ people: r.rows, total: parseInt(countR.rows[0].count) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -868,8 +882,24 @@ app.post('/api/twilio/inbound', async (req, res) => {
     const { To: toNum, From: fromNum, CallSid: callSid } = req.body;
     const lineR = await pool.query('SELECT * FROM call_lines WHERE twilio_number=$1', [toNum]);
     const line = lineR.rows[0];
-    const personR = await pool.query('SELECT * FROM people WHERE phone ILIKE $1 LIMIT 1', [fromNum]);
-    const person = personR.rows[0];
+    // Look up person by any phone number (primary or in person_phones)
+    const normalizedFrom = fromNum.replace(/\D/g,'');
+    let person = null;
+    const ppR = await pool.query(
+      `SELECT p.* FROM people p
+       JOIN person_phones pp ON pp.person_id = p.id
+       WHERE regexp_replace(pp.phone, '\\D', '', 'g') = $1
+         AND (pp.is_bad IS NULL OR pp.is_bad=false)
+       LIMIT 1`,
+      [normalizedFrom]
+    );
+    if (ppR.rows.length) {
+      person = ppR.rows[0];
+    } else {
+      // Fallback: people.phone column
+      const pR = await pool.query(`SELECT * FROM people WHERE regexp_replace(phone,'\\D','','g')=$1 LIMIT 1`, [normalizedFrom]);
+      person = pR.rows[0] || null;
+    }
     const callInsert = await pool.query(
       'INSERT INTO calls (twilio_call_sid,person_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
       [callSid, person?.id||null, line?.id||null, 'inbound', 'ringing', fromNum, toNum]
@@ -879,7 +909,6 @@ app.post('/api/twilio/inbound', async (req, res) => {
       const aR = await pool.query('SELECT a.* FROM agents a JOIN line_agents la ON la.agent_id::text=a.id::text WHERE la.line_id=$1 AND a.is_active=true', [line.id]);
       agents = aR.rows;
     }
-    // Fallback: ring ALL active agents if none assigned to this line
     if (agents.length === 0) {
       const aR = await pool.query('SELECT * FROM agents WHERE is_active=true');
       agents = aR.rows;
@@ -892,6 +921,9 @@ app.post('/api/twilio/inbound', async (req, res) => {
         record: 'record-from-ringing-dual',
         recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
         recordingStatusCallbackMethod: 'POST',
+        // action fires when the dial ends — this creates the activity row
+        action: `${process.env.APP_URL}/api/twilio/inbound-complete?callSid=${callSid}`,
+        method: 'POST',
         timeout: 30
       });
       agents.forEach(a => dial.client(a.id));
@@ -918,6 +950,28 @@ app.post('/api/twilio/status', async (req, res) => {
     }
     res.sendStatus(200);
   } catch (e) { console.error(e); res.sendStatus(200); }
+});
+
+// Fires when inbound <Dial> ends (action URL) — creates the activity for inbound calls
+app.post('/api/twilio/inbound-complete', async (req, res) => {
+  res.type('xml').send('<Response></Response>'); // must return TwiML
+  try {
+    const { callSid } = req.query;
+    const { DialCallDuration, DialCallStatus } = req.body;
+    const duration = parseInt(DialCallDuration) || 0;
+    const status = DialCallStatus || 'completed';
+    const r = await pool.query(
+      'UPDATE calls SET status=$1,duration_seconds=$2,ended_at=NOW() WHERE twilio_call_sid=$3 RETURNING *',
+      [status, duration, callSid]
+    );
+    const call = r.rows[0];
+    if (call && call.person_id) {
+      await pool.query(
+        'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+        [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', duration, 'inbound']
+      ).catch(() => {});
+    }
+  } catch (e) { console.error('inbound-complete error:', e.message); }
 });
 
 app.post('/api/twilio/recording', async (req, res) => {
