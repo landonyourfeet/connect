@@ -743,64 +743,23 @@
       height: 44px;
     }
     .sidebar-logo { padding: 20px 20px 16px; border-bottom: none; flex-shrink: 0; }
-    /* Connection status bar */
+    /* Connection status bar — 2px tall canvas organism */
     #conn-status-bar {
-      height: 4px;          /* FIXED — never changes */
+      height: 2px;
       width: 100%;
       flex-shrink: 0;
       position: relative;
-      overflow: visible;    /* allow glow to bleed out without layout shift */
-      background: var(--red);
-      transition: background 0.5s;
-    }
-    #conn-status-bar.connected {
+      overflow: visible;
       background: transparent;
     }
-    #conn-status-bar.connected::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg,
-        #ff0080, #ff4500, #ffaa00, #00ff88, #00ccff, #8844ff, #ff0080
-      );
-      background-size: 300% 100%;
-      animation: conn-flow 4s linear infinite;
-      box-shadow: 0 0 8px 1px rgba(0,232,180,0.6);
+    #sidebar.collapsed #conn-status-bar {
+      flex: 1;
+      height: auto;
     }
-    #conn-status-bar.status-busy {
-      background: transparent;
-    }
-    #conn-status-bar.status-busy::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: #f97316;
-      box-shadow: 0 0 10px 2px rgba(249,115,22,0.7);
-      animation: busy-breathe 2s ease-in-out infinite;
-    }
-    #conn-status-bar.status-offline {
-      background: #111;
-    }
-    #conn-status-bar.status-offline::before { display: none; }
-    @keyframes conn-flow {
-      0%   { background-position: 0% 0%; }
-      100% { background-position: 300% 0%; }
-    }
-    @keyframes busy-breathe {
-      0%,100% { opacity: 0.6; box-shadow: 0 0 6px 1px rgba(249,115,22,0.5); }
-      50%      { opacity: 1;   box-shadow: 0 0 14px 3px rgba(249,115,22,0.85); }
-    }
-    /* Voice-reactive mode — JS drives fill div only, bar stays 4px */
-    #conn-status-bar.voice-active {
-      background: transparent;
-    }
-    #conn-status-bar.voice-active::before { display: none; }
-    #conn-bar-voice {
-      position: absolute;
-      inset: 0;
-      border-radius: 0;
-      transform-origin: center center;
-      will-change: background, box-shadow, transform;
+    #jireh-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
     }
     .sidebar-logo .wordmark { font-family: var(--font-disp); font-size: 26px; letter-spacing: 0.02em; line-height: 1; }
     .sidebar-logo .wordmark span { color: var(--red); }
@@ -1396,7 +1355,7 @@
         <div class="sub">Connect</div>
       </div>
       <!-- Connection status bar -->
-      <div id="conn-status-bar" title="Offline"><div id="conn-bar-voice"></div></div>
+      <div id="conn-status-bar" title="Offline"><canvas id="jireh-canvas" width="256" height="2"></canvas></div>
       <div class="sidebar-user">
         <div class="user-avatar" id="sidebar-avatar">
           <span id="sidebar-initials">?</span>
@@ -1768,6 +1727,7 @@ async function launchApp() {
   await Promise.all([loadSmartLists(), loadInboxCount()]);
   navigate('people', 'all');
   initTwilio();
+  JirehOrganic.init();
 }
 
 function updateSidebarUser() {
@@ -1798,21 +1758,21 @@ function setStatus(s) {
 function updateConnBarForStatus(s) {
   const bar = document.getElementById('conn-status-bar');
   if (!bar) return;
-  // Remove all status overrides
   bar.classList.remove('status-busy', 'status-offline');
   if (s === 'busy') {
-    bar.classList.remove('connected');   // suppress rainbow while busy
+    bar.classList.remove('connected');
     bar.classList.add('status-busy');
+    JirehOrganic.setMode('busy');
   } else if (s === 'offline') {
     bar.classList.remove('connected');
     bar.classList.add('status-offline');
+    JirehOrganic.setMode('offline');
   } else {
-    // available — let the heartbeat logic restore 'connected' class
-    // force-check now so it snaps back immediately
     fetch('/health', { method: 'GET', cache: 'no-store' })
       .then(r => {
-        if (r.ok) bar.classList.add('connected');
-      }).catch(() => {});
+        if (r.ok) { bar.classList.add('connected'); JirehOrganic.setMode('idle'); }
+        else JirehOrganic.setMode('offline');
+      }).catch(() => { JirehOrganic.setMode('offline'); });
   }
 }
 function cycleStatus() {
@@ -3234,6 +3194,140 @@ function secDismiss()   { JirehSecurity.dismiss(); }
 function secViewEvent() { JirehSecurity.viewEvent(); }
 function secOpenFile()  { JirehSecurity.openFile(); }
 
+// ── JIREH ORGANIC — living light organism ───────────────────────────────
+const JirehOrganic = (() => {
+  // Irrational constants — ensures oscillators never re-sync
+  const φ = 1.6180339887498948, √2 = 1.4142135623730951;
+  const √3 = 1.7320508075688772, √5 = 2.2360679774997896;
+
+  // 5 bioluminescent blobs, each drifting at its own irrational speed
+  const blobs = [
+    { x:0.08, hue:200, speed: 0.000175 * φ,    hueV:0.09 * √2,  phase:0                },
+    { x:0.30, hue:255, speed:-0.000130 * √3,   hueV:0.11 * φ,   phase:Math.PI * √2     },
+    { x:0.54, hue:178, speed: 0.000205 / √5,   hueV:0.07 * √3,  phase:Math.PI / φ      },
+    { x:0.72, hue:232, speed:-0.000158 * √2,   hueV:0.13 / φ,   phase:Math.PI * 0.7    },
+    { x:0.91, hue:215, speed: 0.000092 * √5,   hueV:0.085* (Math.PI/4), phase:Math.PI*√3*0.5 },
+  ];
+  // Each blob gets 4 oscillator frequencies — all irrational multiples
+  const FREQS = [
+    [φ,√2,√3,√5,Math.PI],
+    [√3,φ,Math.PI/4,√2,√5],
+    [√5,Math.PI/3,φ,√3,√2],
+    [√2,√5,φ,Math.PI/5,√3],
+    [Math.PI,√3,√2,φ,√5],
+  ].map((arr,i) => ({
+    f1: 0.000310 * arr[i % 5],
+    f2: 0.000193 * arr[(i+1) % 5],
+    f3: 0.000071 * arr[(i+2) % 5],
+    fw: 0.000417 * arr[(i+3) % 5],
+  }));
+
+  let canvas = null, ctx = null, raf = null, lastTs = 0, t = 0;
+  let _mode = 'offline', _voice = 0, _smooth = 0;
+
+  const PALETTES = {
+    offline:  null,
+    idle:     { base:200, range:80,  sat:90, litBase:40 },
+    busy:     { base:22,  range:38,  sat:95, litBase:46 },
+    ringing:  { base:138, range:55,  sat:95, litBase:48 },
+    voice:    { base:185, range:115, sat:95, litBase:38 },
+  };
+
+  function draw() {
+    if (!canvas || !ctx) return;
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if (_mode === 'offline') {
+      // Ghost-breath: barely alive
+      const v = 0.014 + 0.007 * Math.sin(t * 0.00048 * φ) * Math.sin(t * 0.00031 * √2);
+      ctx.fillStyle = `rgba(170,0,35,${v.toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+
+    const pal = PALETTES[_mode] || PALETTES.idle;
+
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i];
+      const f = FREQS[i];
+
+      // Position: base drift + 3 irrational oscillators (sub-pixel wobble)
+      const dx = b.speed
+        + Math.sin(t * f.f1 + b.phase)           * 0.000088
+        + Math.sin(t * f.f2 + b.phase * φ)       * 0.000051
+        + Math.sin(t * f.f3 + b.phase * √2)      * 0.000024;
+      b.x = ((b.x + dx) % 1 + 1) % 1;
+
+      // Hue: slow organic walk, 3 oscillators at irrational ratios
+      const dh = b.hueV * (
+        Math.sin(t * f.f1 * 1.73 + b.phase)         * 0.55 +
+        Math.sin(t * f.f2 * 2.41 + b.phase * √3)    * 0.30 +
+        Math.sin(t * f.f3 * 3.14 + b.phase / φ)     * 0.15
+      );
+      b.hue = (b.hue + dh * 0.019 + 360) % 360;
+
+      // Constrain hue to palette range
+      const hue = pal.base + ((b.hue % pal.range) - pal.range / 2) * 0.75;
+
+      // Width breathes at its own irrational frequency
+      const wf = 0.17 + 0.08 * Math.abs(Math.sin(t * f.fw + b.phase));
+      const sigma = wf * W;
+      const xPx = b.x * W;
+
+      // Brightness + alpha shaped by voice or mode
+      const litMod = _mode === 'voice' ? _smooth * 22 : (_mode === 'ringing' ? 8 * Math.abs(Math.sin(t * 0.0025 * √3)) : 0);
+      const brt = (pal.litBase + litMod) | 0;
+      const alBase = _mode === 'voice' ? 0.25 + _smooth * 0.75 : 0.65 + 0.28 * Math.abs(Math.sin(t * f.f2 * 2.1 + b.phase));
+
+      const g = ctx.createLinearGradient(xPx - sigma * 2.4, 0, xPx + sigma * 2.4, 0);
+      const col = `hsla(${hue|0},${pal.sat}%,${brt}%,`;
+      g.addColorStop(0,    'transparent');
+      g.addColorStop(0.3,  col + (alBase * 0.38).toFixed(2) + ')');
+      g.addColorStop(0.5,  col + alBase.toFixed(2) + ')');
+      g.addColorStop(0.7,  col + (alBase * 0.38).toFixed(2) + ')');
+      g.addColorStop(1,    'transparent');
+
+      ctx.fillStyle = g;
+      ctx.fillRect(Math.max(0, xPx - sigma * 2.4), 0, Math.min(W, sigma * 4.8), H);
+    }
+
+    // Subtle top-sheen highlight
+    const sh = ctx.createLinearGradient(0, 0, 0, H);
+    sh.addColorStop(0, 'rgba(255,255,255,0.07)');
+    sh.addColorStop(1, 'rgba(0,0,0,0.12)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function loop(ts) {
+    raf = requestAnimationFrame(loop);
+    const dt = Math.min(ts - lastTs, 50);
+    lastTs = ts;
+    t += dt;
+    _smooth += (_voice - _smooth) * 0.10; // lag-smoothed voice level
+
+    // Keep canvas sized to its container every frame (handles collapse/expand)
+    if (canvas) {
+      const pw = (canvas.parentElement?.clientWidth  || 64)  | 0;
+      const ph = (canvas.parentElement?.clientHeight || 2)   | 0;
+      if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
+    }
+    draw();
+  }
+
+  return {
+    init() {
+      canvas = document.getElementById('jireh-canvas');
+      if (!canvas) return;
+      ctx = canvas.getContext('2d');
+      raf = requestAnimationFrame(loop);
+    },
+    setMode(m) { _mode = m; },
+    setVoice(v) { _voice = Math.max(0, Math.min(1, v)); },
+  };
+})();
+
 // ── JIREH — voice-reactive energy field ─────────────────────────────────
 const VoiceViz = (() => {
   let _ctx = null, _merger = null, _analyserL = null, _analyserR = null;
@@ -3275,16 +3369,8 @@ const VoiceViz = (() => {
     let level = 0;
     if (_analyserL && _dataL) level = Math.max(level, readLevel(_analyserL, _dataL));
     if (_analyserR && _dataR) level = Math.max(level, readLevel(_analyserR, _dataR));
-    level = level / 58; // normalize
-
-    const fill = document.getElementById('conn-bar-voice');
-    if (fill) {
-      const st = levelToStyle(level);
-      fill.style.background  = st.bg;
-      fill.style.boxShadow   = st.shadow;
-      fill.style.transform   = `scaleY(${st.scaleY.toFixed(2)})`;
-      fill.style.opacity     = '1';
-    }
+    level = level / 58; // normalize 0-1
+    JirehOrganic.setVoice(level);
     _raf = requestAnimationFrame(tick);
   }
 
@@ -3325,6 +3411,7 @@ const VoiceViz = (() => {
           bar.classList.remove('connected','status-busy','status-offline');
           bar.classList.add('voice-active');
         }
+        JirehOrganic.setMode('voice');
         tick();
         console.log('[Jireh] Active — local:', !!localStream, 'remote:', !!remoteStream);
       } catch(e) {
@@ -3337,16 +3424,10 @@ const VoiceViz = (() => {
       if (_raf) { cancelAnimationFrame(_raf); _raf = null; }
       try { _ctx?.close(); } catch(e) {}
       _ctx = _merger = _analyserL = _analyserR = _dataL = _dataR = null;
+      JirehOrganic.setVoice(0);
 
-      const bar  = document.getElementById('conn-status-bar');
-      const fill = document.getElementById('conn-bar-voice');
+      const bar = document.getElementById('conn-status-bar');
       if (bar) { bar.classList.remove('voice-active'); }
-      if (fill) {
-        fill.style.background  = '';
-        fill.style.boxShadow   = '';
-        fill.style.transform   = '';
-        fill.style.opacity     = '';
-      }
 
       updateConnBarForStatus(userStatus);
       console.log('[Jireh] Stopped');
@@ -3363,9 +3444,13 @@ const VoiceViz = (() => {
     if (online) {
       el.classList.add('connected');
       el.title = 'Connected';
+      if (!el.classList.contains('voice-active') && !el.classList.contains('status-busy') && !el.classList.contains('status-offline')) {
+        JirehOrganic.setMode('idle');
+      }
     } else {
       el.classList.remove('connected');
       el.title = 'Offline — check your connection';
+      if (!el.classList.contains('voice-active')) JirehOrganic.setMode('offline');
     }
   }
 
@@ -3457,6 +3542,7 @@ function handleIncomingCall(conn) {
 
   showCallBar('ringing', callerName, from, _incomingMatchedPerson);
   if (window.neonGlow) window.neonGlow.ringing();
+  JirehOrganic.setMode('ringing');
   TabAlert.ringing(callerName);
 
   conn.on('disconnect', handleCallEnd);
