@@ -417,7 +417,7 @@
     .sec-hist-card {
       background: var(--bg-2); border-radius: 10px;
       border: 1px solid var(--border); overflow: hidden;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s; flex-shrink: 0;
     }
     .sec-hist-card:hover { border-color: rgba(255,59,59,0.4); }
     .sec-hist-header {
@@ -2517,20 +2517,25 @@ function renderTimelineItem(act, hasConnector) {
     const dir = act.direction || 'outbound';
     const duration = (act.duration||act.duration_seconds) ? formatDuration(act.duration||act.duration_seconds) : '';
     const cardId = 'call-card-' + act.id;
+    const noTranscript = !act.summary && !act.transcript;
+    const isProcessing = (act.body||act.content||'') === 'Transcript processing...';
+    const hasRecording = !!act.recording_url;
+    // Use proxied recording URL to avoid Twilio auth requirement in browser
+    const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording` : null;
     bodyHtml = `<div class="call-summary-card" id="${cardId}">
       <div class="call-summary-meta">
         <span class="call-direction call-${dir === 'inbound' ? 'inbound' : dir === 'missed' ? 'missed' : 'outbound'}">${dir === 'inbound' ? 'Inbound' : dir === 'missed' ? 'Missed' : 'Outbound'}</span>
         ${duration ? `<span class="call-duration">${duration}</span>` : ''}
       </div>
       ${act.summary ? `<div class="ai-summary-text">${esc(act.summary)}</div>` : ''}
-      ${!act.summary ? `<div class="ti-content" style="color:var(--text-3);font-style:italic;display:flex;align-items:center;gap:10px">
-        <span>${act.body||act.content||'No summary yet'}</span>
-        ${(act.body||act.content||'') === 'Transcript processing...' && act.call_id ? `<button onclick="retryTranscript('${act.call_id}',this)" style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">↻ Retry</button>` : ''}
+      ${noTranscript ? `<div class="ti-content" style="color:var(--text-3);font-style:italic;display:flex;align-items:center;gap:10px">
+        <span>${esc(act.body||act.content||'No summary yet')}</span>
+        ${act.call_id ? `<button onclick="retryTranscript('${act.call_id}',this)" style="background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">↻ Retry</button>` : ''}
       </div>` : ''}
-      ${(act.summary || act.transcript || act.recording_url) ? `
+      ${(act.summary || act.transcript || hasRecording) ? `
         <button class="call-expand-btn" onclick="toggleCallExpand('${cardId}')">▶ Recording & Transcript</button>
         <div class="call-expanded" id="${cardId}-expanded">
-          ${act.recording_url ? `<div class="audio-player-wrap"><audio controls src="${act.recording_url}"></audio></div>` : ''}
+          ${hasRecording && proxyUrl ? `<div class="audio-player-wrap"><audio controls src="${proxyUrl}" preload="none"></audio></div>` : ''}
           ${act.transcript ? `<div class="transcript-content">${formatTranscript(act.transcript)}</div>` : ''}
         </div>` : ''}
     </div>`;
