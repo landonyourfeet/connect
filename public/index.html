@@ -1769,7 +1769,7 @@ async function loadCaseworkerPanel(personId, stage) {
   const list = document.getElementById(`cw-list-${personId}`);
   if (!list) return;
   try {
-    const cws = await apiFetch(`/api/people/${personId}/caseworkers`);
+    const cws = await api(`/api/people/${personId}/caseworkers`);
     if (!cws.length) {
       const isCW = (stage||'').toLowerCase() === 'caseworker';
       list.innerHTML = `<div style="color:var(--text-3);font-size:12px">${isCW ? 'No residents linked yet' : 'No caseworker assigned'}</div>`;
@@ -1833,10 +1833,7 @@ function cwSearchPeople(q, personId) {
 
 async function cwLink(personAId, personBId) {
   try {
-    await apiFetch(`/api/people/${personAId}/relationships`, {
-      method: 'POST',
-      body: JSON.stringify({ relatedId: personBId, label: 'caseworker' })
-    });
+    await api(`/api/people/${personAId}/relationships`, 'POST', { relatedPersonId: personBId, label: 'caseworker' });
     // Reset search
     const wrap = document.getElementById(`cw-search-wrap-${personAId}`);
     if (wrap) { wrap.style.display = 'none'; }
@@ -1853,7 +1850,7 @@ async function cwLink(personAId, personBId) {
 async function cwUnlink(relId, personId) {
   if (!confirm('Remove this caseworker link?')) return;
   try {
-    await apiFetch(`/api/people/${personId}/relationships/${relId}`, { method: 'DELETE' });
+    await api(`/api/people/${personId}/relationships/${relId}`, 'DELETE');
     await loadCaseworkerPanel(personId, '');
     toast('Unlinked', 'success');
   } catch(e) { toast('Failed: ' + e.message, 'error'); }
@@ -1863,10 +1860,7 @@ async function logLeaseViolation(personId) {
   const note = prompt('Describe the lease violation (optional):');
   if (note === null) return; // cancelled
   try {
-    await apiFetch(`/api/people/${personId}/lease-violation`, {
-      method: 'POST',
-      body: JSON.stringify({ note })
-    });
+    await api(`/api/people/${personId}/lease-violation`, 'POST', { note });
     toast('Lease violation logged — caseworker(s) notified via SMS', 'success');
     loadActivities(personId);
   } catch(e) { toast('Failed: ' + e.message, 'error'); }
@@ -1883,7 +1877,7 @@ async function loadSecurityDetections(personId) {
 
   // Load person data into fields
   try {
-    const person = await apiFetch(`/api/people/${personId}`);
+    const person = await api(`/api/people/${personId}`);
     // ID photo
     const img    = document.getElementById('sec-id-img');
     const missing = document.getElementById('sec-id-missing');
@@ -1907,7 +1901,7 @@ async function loadSecurityDetections(personId) {
 
   // Load camera detections
   try {
-    const events = await apiFetch('/api/security/events');
+    const events = await api('/api/security/events');
     const matched = (events || []).filter(e => String(e.person_id) === String(personId));
     const camWrap = document.getElementById('sec-cam-detections-wrap');
     const camList = document.getElementById('security-detections-list');
@@ -1947,10 +1941,7 @@ async function secHandleIdUpload(event) {
   reader.onload = async (e) => {
     const b64 = e.target.result; // full data URL
     try {
-      await apiFetch(`/api/people/${_secPersonId}/id-photo`, {
-        method: 'POST',
-        body: JSON.stringify({ photoB64: b64, photoName: file.name })
-      });
+      await api(`/api/people/${_secPersonId}/id-photo`, 'POST', { photoB64: b64, photoName: file.name });
       const img = document.getElementById('sec-id-img');
       const missing = document.getElementById('sec-id-missing');
       const delBtn = document.getElementById('sec-id-del-btn');
@@ -1967,7 +1958,7 @@ async function secDeleteIdPhoto() {
   if (!_secPersonId) return;
   if (!confirm('Remove ID photo?')) return;
   try {
-    await apiFetch(`/api/people/${_secPersonId}/id-photo`, { method: 'DELETE' });
+    await api(`/api/people/${_secPersonId}/id-photo`, 'DELETE');
     document.getElementById('sec-id-img').style.display = 'none';
     document.getElementById('sec-id-missing').style.display = 'flex';
     document.getElementById('sec-id-del-btn').style.display = 'none';
@@ -1981,14 +1972,11 @@ async function secSaveProfile() {
   const msg = document.getElementById('sec-saved-msg');
   btn.textContent = 'Saving…'; btn.disabled = true;
   try {
-    await apiFetch(`/api/people/${_secPersonId}/security`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        securityNotes:   document.getElementById('sec-bg-notes').value,
-        criminalHistory: document.getElementById('sec-criminal').value,
-        dvVictim:        document.getElementById('sec-dv-check').checked,
-        dvNotes:         document.getElementById('sec-dv-notes').value
-      })
+    await api(`/api/people/${_secPersonId}/security`, 'PATCH', {
+      securityNotes:   document.getElementById('sec-bg-notes').value,
+      criminalHistory: document.getElementById('sec-criminal').value,
+      dvVictim:        document.getElementById('sec-dv-check').checked,
+      dvNotes:         document.getElementById('sec-dv-notes').value
     });
     btn.textContent = 'Save Security Profile'; btn.disabled = false;
     btn.classList.add('saved');
@@ -2687,7 +2675,7 @@ async function loadSecurityAlertHistory() {
   container.innerHTML = '<div style="color:var(--text-3);font-size:13px">Loading…</div>';
 
   try {
-    const events = await apiFetch('/api/security/events');
+    const events = await api('/api/security/events');
     if (!events || !events.length) {
       container.innerHTML = `<div class="sec-hist-empty">
         <div style="font-size:40px">🛡</div>
@@ -2779,7 +2767,7 @@ function updateSecBadge(count) {
 // Call on login to show badge count immediately
 async function initSecBadge() {
   try {
-    const events = await apiFetch('/api/security/events');
+    const events = await api('/api/security/events');
     updateSecBadge((events || []).length);
   } catch(e) {}
 }
@@ -3250,10 +3238,7 @@ async function callTrayAttachNumber(personId, personName) {
   if (!_incomingFromNumber) return;
   try {
     const phone = _incomingFromNumber.replace(/\D/g,'');
-    await apiFetch(`/api/people/${personId}/phones`, {
-      method: 'POST',
-      body: JSON.stringify({ phone, label: 'mobile', is_primary: false })
-    });
+    await api(`/api/people/${personId}/phones`, 'POST', { phone, label: 'mobile', is_primary: false });
     callTrayDismiss();
     toast(`Number added to ${personName}`, 'success');
     openContact(personId);
