@@ -231,11 +231,11 @@
     .sidebar-logo { padding: 20px 20px 16px; border-bottom: none; flex-shrink: 0; }
     /* Connection status bar */
     #conn-status-bar {
-      height: 3px;
+      height: 4px;          /* FIXED — never changes */
       width: 100%;
       flex-shrink: 0;
       position: relative;
-      overflow: hidden;
+      overflow: visible;    /* allow glow to bleed out without layout shift */
       background: var(--red);
       transition: background 0.5s;
     }
@@ -276,17 +276,17 @@
       0%,100% { opacity: 0.6; box-shadow: 0 0 6px 1px rgba(249,115,22,0.5); }
       50%      { opacity: 1;   box-shadow: 0 0 14px 3px rgba(249,115,22,0.85); }
     }
-    /* Voice-reactive mode — JS drives this */
+    /* Voice-reactive mode — JS drives fill div only, bar stays 4px */
     #conn-status-bar.voice-active {
       background: transparent;
-      transition: height 0.04s ease, box-shadow 0.04s ease;
     }
     #conn-status-bar.voice-active::before { display: none; }
     #conn-bar-voice {
       position: absolute;
       inset: 0;
       border-radius: 0;
-      transition: opacity 0.04s, box-shadow 0.04s;
+      transform-origin: center center;
+      will-change: background, box-shadow, transform;
     }
     .sidebar-logo .wordmark { font-family: var(--font-disp); font-size: 26px; letter-spacing: 0.02em; line-height: 1; }
     .sidebar-logo .wordmark span { color: var(--red); }
@@ -1860,18 +1860,23 @@ const VoiceViz = (() => {
   let _raf = null, _dataL = null, _dataR = null, _active = false;
 
   function levelToStyle(level) {
-    const l = Math.pow(Math.min(level, 1), 0.55);
-    const glowR = Math.floor(l * 60);
-    const glowG = Math.floor(190 + l * 65);
-    const glowB = Math.floor(210 + l * 45);
-    const spread = 2 + Math.floor(l * 24);
-    const blur   = 3 + Math.floor(l * 36);
-    const alpha  = 0.25 + l * 0.75;
-    const h      = 3 + Math.floor(l * 5);
+    const l = Math.pow(Math.min(level, 1), 0.5);
+
+    // Blue (quiet) → cyan → white → orange → red (loud)
+    // Interpolate hue: 220° (blue) at 0 → 0° (red) at 1
+    const hue    = Math.round(220 - l * 220);
+    const sat    = 90 + Math.round(l * 10);
+    const lit    = 45 + Math.round(l * 25);
+    const spread = 1 + Math.round(l * 20);
+    const blur   = 2 + Math.round(l * 28);
+    const alpha  = 0.3 + l * 0.7;
+    // scaleY so the fill visually pulses in height without moving anything
+    const scaleY = 1 + l * 2.5;
+
     return {
-      bg:     `rgb(${glowR},${glowG},${glowB})`,
-      shadow: `0 0 ${blur}px ${spread}px rgba(0,222,240,${alpha.toFixed(2)})`,
-      h
+      bg:     `hsl(${hue}, ${sat}%, ${lit}%)`,
+      shadow: `0 0 ${blur}px ${spread}px hsla(${hue}, ${sat}%, ${lit}%, ${alpha.toFixed(2)})`,
+      scaleY
     };
   }
 
@@ -1892,13 +1897,12 @@ const VoiceViz = (() => {
     if (_analyserR && _dataR) level = Math.max(level, readLevel(_analyserR, _dataR));
     level = level / 58; // normalize
 
-    const bar  = document.getElementById('conn-status-bar');
     const fill = document.getElementById('conn-bar-voice');
-    if (bar && fill) {
+    if (fill) {
       const st = levelToStyle(level);
-      bar.style.height       = st.h + 'px';
       fill.style.background  = st.bg;
       fill.style.boxShadow   = st.shadow;
+      fill.style.transform   = `scaleY(${st.scaleY.toFixed(2)})`;
       fill.style.opacity     = '1';
     }
     _raf = requestAnimationFrame(tick);
@@ -1956,8 +1960,13 @@ const VoiceViz = (() => {
 
       const bar  = document.getElementById('conn-status-bar');
       const fill = document.getElementById('conn-bar-voice');
-      if (bar) { bar.classList.remove('voice-active'); bar.style.height = ''; }
-      if (fill) { fill.style.background = ''; fill.style.boxShadow = ''; }
+      if (bar) { bar.classList.remove('voice-active'); }
+      if (fill) {
+        fill.style.background  = '';
+        fill.style.boxShadow   = '';
+        fill.style.transform   = '';
+        fill.style.opacity     = '';
+      }
 
       updateConnBarForStatus(userStatus);
       console.log('[Jireh] Stopped');
