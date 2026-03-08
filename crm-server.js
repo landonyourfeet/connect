@@ -15,6 +15,19 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
+// ── JIREH SECURITY — SSE client registry ─────────────────────────────────
+const sseClients = new Set();
+function broadcastSecurityEvent(payload) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  let dead = [];
+  for (const client of sseClients) {
+    try { client.res.write(data); }
+    catch(e) { dead.push(client); }
+  }
+  dead.forEach(c => sseClients.delete(c));
+  console.log(`[Jireh] Broadcast to ${sseClients.size} client(s):`, payload.eventId || payload.type);
+}
+
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -24,7 +37,20 @@ app.get('/twilio-voice.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'node_modules/@twilio/voice-sdk/dist/twilio.min.js'));
 });
 
-// Serve favicon explicitly (Chrome needs correct MIME + cache headers)
+// ── FAVICON — serve PNG + ICO directly (Chrome ignores SVG-only setups) ──
+const _pngBuf = Buffer.from('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', 'base64');
+const _icoBuf = Buffer.from('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', 'base64');
+
+app.get('/favicon.png', (req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(_pngBuf);
+});
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Content-Type', 'image/x-icon');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(_icoBuf);
+});
 app.get('/favicon.svg', (req, res) => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
     <rect width="64" height="64" rx="10" fill="#0a0a0f"/>
@@ -35,9 +61,6 @@ app.get('/favicon.svg', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.send(svg);
 });
-
-// Chrome fallback — redirect /favicon.ico to svg
-app.get('/favicon.ico', (req, res) => res.redirect('/favicon.svg'));
 
 const auth = async (req, res, next) => {
   const h = req.headers.authorization;
@@ -81,13 +104,35 @@ app.get('/api/auth/me', auth, (req, res) => {
 // ─── PEOPLE ───────────────────────────────────────────────────────────────────
 app.get('/api/people', auth, async (req, res) => {
   try {
-    const { search, stage, limit = 50, offset = 0 } = req.query;
+    const { search, stage, tags, smartListId, limit = 50, offset = 0 } = req.query;
     let where = ['1=1']; let params = [];
     if (search) {
       params.push(`%${search}%`);
       where.push(`(p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length} OR p.phone ILIKE $${params.length} OR p.email ILIKE $${params.length})`);
     }
     if (stage) { params.push(stage); where.push(`p.stage=$${params.length}`); }
+    if (tags) {
+      // tags=Delinquent,Eviction — must have ALL specified tags
+      const tagList = tags.split(',').map(t=>t.trim()).filter(Boolean);
+      for (const tag of tagList) { params.push(tag); where.push(`$${params.length}=ANY(p.tags)`); }
+    }
+    // Smart list — load filters from DB and apply
+    if (smartListId) {
+      const listR = await pool.query('SELECT filters FROM smart_lists WHERE id=$1', [smartListId]);
+      if (listR.rows[0]?.filters) {
+        const f = listR.rows[0].filters;
+        if (f.stage)  { params.push(f.stage); where.push(`p.stage=$${params.length}`); }
+        if (f.tags?.length) {
+          for (const tag of f.tags) { params.push(tag); where.push(`$${params.length}=ANY(p.tags)`); }
+        }
+        if (f.source) { params.push(f.source); where.push(`p.source=$${params.length}`); }
+        if (f.has_phone) where.push(`p.phone IS NOT NULL AND p.phone!=''`);
+        if (f.no_activity_days) {
+          params.push(parseInt(f.no_activity_days));
+          where.push(`(SELECT MAX(created_at) FROM activities WHERE person_id=p.id) < NOW()-INTERVAL '1 day'*$${params.length} OR NOT EXISTS (SELECT 1 FROM activities WHERE person_id=p.id)`);
+        }
+      }
+    }
     const countR = await pool.query(`SELECT COUNT(*) FROM people p WHERE ${where.join(' AND ')}`, params);
     params.push(limit, offset);
     const r = await pool.query(
@@ -352,6 +397,36 @@ app.get('/api/smart-lists', auth, async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM smart_lists ORDER BY sort_order');
     res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/smart-lists', auth, async (req, res) => {
+  try {
+    const { name, filters = {} } = req.body;
+    const maxOrder = await pool.query('SELECT COALESCE(MAX(sort_order),0)+1 as n FROM smart_lists');
+    const r = await pool.query(
+      'INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) RETURNING *',
+      [name, JSON.stringify(filters), maxOrder.rows[0].n]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/smart-lists/:id', auth, async (req, res) => {
+  try {
+    const { name, filters } = req.body;
+    const r = await pool.query(
+      'UPDATE smart_lists SET name=COALESCE($1,name), filters=COALESCE($2::jsonb,filters) WHERE id=$3 RETURNING *',
+      [name||null, filters ? JSON.stringify(filters) : null, req.params.id]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/smart-lists/:id', auth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM smart_lists WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -911,6 +986,35 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to TEXT`, 'people.assigned_to');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS unifi_person_id TEXT`, 'people.unifi_person_id');
+
+  // ── Security events table ──
+  await run(`
+    CREATE TABLE IF NOT EXISTS security_events (
+      id            SERIAL PRIMARY KEY,
+      event_id      TEXT UNIQUE,
+      unifi_person_id TEXT,
+      camera_mac    TEXT,
+      camera_name   TEXT,
+      site          TEXT,
+      event_link    TEXT,
+      thumbnail_b64 TEXT,
+      triggered_at  TIMESTAMPTZ DEFAULT NOW(),
+      alarm_name    TEXT,
+      raw_payload   TEXT,
+      dismissed     BOOLEAN DEFAULT FALSE
+    )
+  `, 'create security_events');
+
+  // ── Camera name mapping table ──
+  await run(`
+    CREATE TABLE IF NOT EXISTS protect_cameras (
+      id    SERIAL PRIMARY KEY,
+      mac   TEXT UNIQUE NOT NULL,
+      name  TEXT NOT NULL,
+      site  TEXT DEFAULT 'Main'
+    )
+  `, 'create protect_cameras');
   // Migrate old stage names
   await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate stage Active Tenant->Resident').catch(()=>{});
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
@@ -1082,11 +1186,13 @@ async function initDB() {
   // Seed call line + link admin agent to it
   try {
     // Remove duplicate lines, keep only the oldest
+    // Dedup: keep the row with the smallest id (text sort) per twilio_number
     await pool.query(`
-      DELETE FROM call_lines WHERE id NOT IN (
-        SELECT MIN(id::text)::uuid FROM call_lines GROUP BY twilio_number
+      DELETE FROM call_lines
+      WHERE id::text NOT IN (
+        SELECT MIN(id::text) FROM call_lines GROUP BY twilio_number
       )
-    `).catch(() => {});
+    `).catch(e => console.warn('[DB] dedup call_lines:', e.message));
     // Insert line if not exists
     await pool.query(`
       INSERT INTO call_lines (name,twilio_number,description)
@@ -1109,6 +1215,159 @@ async function initDB() {
 
   console.log('[DB] Init complete');
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// JIREH SECURITY — UniFi Protect Webhook + SSE
+// ══════════════════════════════════════════════════════════════════════════
+
+// SSE stream — browsers connect here for real-time security events
+app.get('/api/security/stream', auth, (req, res) => {
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+  res.flushHeaders();
+  res.write(':ok\n\n'); // initial ping
+
+  const client = { res, agentId: req.agent?.id };
+  sseClients.add(client);
+
+  // Keepalive ping every 25s
+  const ping = setInterval(() => {
+    try { res.write(':ping\n\n'); } catch(e) { clearInterval(ping); sseClients.delete(client); }
+  }, 25000);
+
+  req.on('close', () => { clearInterval(ping); sseClients.delete(client); });
+});
+
+// Recent security events (last 50)
+app.get('/api/security/events', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT se.*, p.first_name, p.last_name, p.id as person_id
+      FROM security_events se
+      LEFT JOIN people p ON p.unifi_person_id = se.unifi_person_id
+      ORDER BY se.triggered_at DESC LIMIT 50
+    `);
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Camera name mapping (admin)
+app.get('/api/admin/cameras', auth, adminOnly, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT * FROM protect_cameras ORDER BY site, name');
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/cameras', auth, adminOnly, async (req, res) => {
+  const { mac, name, site } = req.body;
+  try {
+    const r = await pool.query(
+      `INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3)
+       ON CONFLICT (mac) DO UPDATE SET name=$2, site=$3 RETURNING *`,
+      [mac.toUpperCase(), name, site || 'Main']
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/cameras/:id', auth, adminOnly, async (req, res) => {
+  await pool.query('DELETE FROM protect_cameras WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// ── UniFi Protect Webhook receiver ───────────────────────────────────────
+// Set Delivery URL in UniFi Protect to:
+//   https://connect.okcreal.com/api/protect/webhook?token=YOUR_SECRET
+app.post('/api/protect/webhook', async (req, res) => {
+  // Token verification
+  const secret = process.env.PROTECT_WEBHOOK_SECRET;
+  if (secret) {
+    const provided = req.query.token || req.headers['x-webhook-token'];
+    if (provided !== secret) {
+      console.warn('[Jireh] Webhook rejected — bad token');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+
+  try {
+    const body = req.body;
+    const alarm  = body?.alarm || {};
+    const trigger = alarm.triggers?.[0] || {};
+    const eventId  = trigger.eventId || body.eventId || null;
+    const deviceMac = (trigger.device || '').toUpperCase();
+    const ts        = trigger.timestamp || body.timestamp || Date.now();
+    const eventPath = alarm.eventPath || null;
+    const localLink = alarm.eventLocalLink || null;
+
+    // Build cloud link if base URL configured
+    const cloudBase = process.env.PROTECT_CLOUD_BASE_URL || '';
+    const cloudLink = cloudBase && eventPath ? `${cloudBase}${eventPath}` : localLink;
+
+    // Look up camera name
+    const camRow = deviceMac
+      ? await pool.query('SELECT name, site FROM protect_cameras WHERE mac=$1', [deviceMac]).then(r=>r.rows[0])
+      : null;
+    const cameraName = camRow?.name || deviceMac || 'Unknown Camera';
+    const site       = camRow?.site || alarm.name || '';
+
+    // Detect unifi_person_id from trigger metadata
+    const personId = trigger.personId || trigger.metadata?.personId
+      || trigger.metadata?.face?.personId || null;
+
+    // Thumbnail (Base64 string if "Use Thumbnails" enabled in Protect)
+    const thumbnail = body.thumbnail || alarm.thumbnail || null;
+
+    // Match to a contact
+    let matchedPerson = null;
+    if (personId) {
+      const pRow = await pool.query(
+        'SELECT id, first_name, last_name, stage FROM people WHERE unifi_person_id=$1 LIMIT 1',
+        [personId]
+      );
+      matchedPerson = pRow.rows[0] || null;
+    }
+
+    // Store event
+    await pool.query(`
+      INSERT INTO security_events
+        (event_id, unifi_person_id, camera_mac, camera_name, site,
+         event_link, thumbnail_b64, triggered_at, alarm_name, raw_payload)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      ON CONFLICT (event_id) DO NOTHING
+    `, [
+      eventId, personId, deviceMac, cameraName, site,
+      cloudLink || localLink,
+      thumbnail ? thumbnail.substring(0, 500000) : null, // cap at ~375KB
+      new Date(typeof ts === 'number' && ts > 1e12 ? ts : ts * 1000),
+      alarm.name || 'Watchlist',
+      JSON.stringify(body).substring(0, 10000)
+    ]).catch(e => console.warn('[Jireh] Insert event:', e.message));
+
+    // Broadcast to all connected agents
+    const alertPayload = {
+      type:         'poi_detected',
+      eventId,
+      cameraName,
+      site,
+      triggeredAt:  ts,
+      eventLink:    cloudLink || localLink,
+      thumbnail:    thumbnail || null,
+      alarmName:    alarm.name || 'Watchlist',
+      person: matchedPerson ? {
+        id:        matchedPerson.id,
+        name:      `${matchedPerson.first_name||''} ${matchedPerson.last_name||''}`.trim(),
+        stage:     matchedPerson.stage
+      } : null
+    };
+    broadcastSecurityEvent(alertPayload);
+
+    res.json({ ok: true, matched: !!matchedPerson });
+  } catch(e) {
+    console.error('[Jireh] Webhook error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 initDB().then(() => {
   app.listen(PORT, () => {
