@@ -1376,24 +1376,27 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
     const raw = req.file.buffer.toString('utf8');
     const csvRows = fubParseCSV(raw);
 
+    // Helper: truncate to safe length (TEXT cols are unlimited after migration, but be safe)
+    const trunc = (s, n=1000) => s ? String(s).substring(0, n) : s;
+
     const contacts = csvRows.map(row => ({
-      first_name:  row['First Name'] || (row['Name']||'').split(' ')[0] || '',
-      last_name:   row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '',
-      fub_id:      row['ID'] || null,
-      email:       (row['Email 1'] || row['Email'] || '').toLowerCase() || null,
+      first_name:  trunc(row['First Name'] || (row['Name']||'').split(' ')[0] || '', 200),
+      last_name:   trunc(row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '', 200),
+      fub_id:      trunc(row['ID'] || null, 100),
+      email:       trunc((row['Email 1'] || row['Email'] || '').toLowerCase() || null, 300),
       phone:       fubNormalizePhone(row['Phone 1'] || row['Phone']),
-      phone_type:  row['Phone 1 - Type'] || 'mobile',
-      fub_stage:   row['Stage'] || '',
+      phone_type:  trunc(row['Phone 1 - Type'] || 'mobile', 50),
+      fub_stage:   trunc(row['Stage'] || '', 100),
       stage:       fubMapStage(row['Stage']),
       is_blocked:  fubIsBlocked(row['Stage']),
-      source:      row['Lead Source'] || null,
+      source:      trunc(row['Lead Source'] || null, 200),
       tags:        row['Tags'] ? row['Tags'].split(',').map(t=>t.trim()).filter(Boolean) : [],
       notes:       [row['Notes'],row['Description'],row['Background']].filter(Boolean).join('\n\n') || null,
       dob:         fubParseDOB(row['DOB:'] || row['Birthday'] || row['DOB']),
-      address:     row['Property Address'] || row['Address'] || null,
-      city:        row['Property City'] || row['City'] || null,
-      state:       row['Property State'] || row['State'] || null,
-      zip:         row['Property Postal Code'] || row['Zip'] || null,
+      address:     trunc(row['Property Address'] || row['Address'] || null, 300),
+      city:        trunc(row['Property City'] || row['City'] || null, 100),
+      state:       trunc(row['Property State'] || row['State'] || null, 50),
+      zip:         trunc(row['Property Postal Code'] || row['Zip'] || null, 20),
     })).filter(c => c.first_name);
 
     // Load existing for dedup
@@ -1641,6 +1644,15 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dob DATE`, 'people.dob');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE`, 'people.is_blocked');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS notes TEXT`, 'people.notes');
+  // Widen any VARCHAR columns to TEXT so long FUB values don't error
+  await run(`ALTER TABLE people ALTER COLUMN first_name TYPE TEXT`, 'people.first_name->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN last_name TYPE TEXT`, 'people.last_name->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN phone TYPE TEXT`, 'people.phone->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN email TYPE TEXT`, 'people.email->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN stage TYPE TEXT`, 'people.stage->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN source TYPE TEXT`, 'people.source->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN background TYPE TEXT`, 'people.background->TEXT');
+  await run(`ALTER TABLE people ALTER COLUMN assigned_to TYPE TEXT`, 'people.assigned_to->TEXT');
   await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'calls.inbox_cleared');
   await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`, 'calls.created_at');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'activities.inbox_cleared');
