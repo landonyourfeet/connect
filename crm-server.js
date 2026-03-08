@@ -93,29 +93,40 @@ app.get('/api/people/:id', auth, async (req, res) => {
 
 app.post('/api/people', auth, async (req, res) => {
   try {
-    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo } = req.body;
+    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
     const r = await pool.query(
-      'INSERT INTO people (first_name,last_name,phone,email,stage,source,background,tags,custom_fields,assigned_to) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *',
-      [firstName, lastName, phone, email, stage||'lead', source||null, background||null, tags||[], JSON.stringify(customFields||{}), assignedTo||null]
+      'INSERT INTO people (first_name,last_name,phone,email,stage,source,background,tags,custom_fields,assigned_to,address,city,state,zip) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
+      [firstName, lastName, phone||null, email||null, stage||'lead', source||null, background||null, tags||[], JSON.stringify(customFields||{}), assignedTo||null, address||null, city||null, state||null, zip||null]
     );
+    // If phone provided, also seed into person_phones
+    if (phone && r.rows[0]) {
+      await pool.query(
+        'INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING',
+        [r.rows[0].id, phone.replace(/[^0-9+]/g,''), 'mobile']
+      ).catch(()=>{});
+    }
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/people/:id', auth, async (req, res) => {
   try {
-    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo } = req.body;
+    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
     const r = await pool.query(
       `UPDATE people SET
         first_name=COALESCE($1,first_name), last_name=COALESCE($2,last_name),
         phone=COALESCE($3,phone), email=COALESCE($4,email),
         stage=COALESCE($5,stage), source=COALESCE($6,source),
         background=COALESCE($7,background), tags=COALESCE($8,tags),
-        custom_fields=custom_fields||COALESCE($9,'{}')
-       WHERE id=$10 RETURNING *`,
+        custom_fields=custom_fields||COALESCE($9,'{}'),
+        address=COALESCE($10,address), city=COALESCE($11,city),
+        state=COALESCE($12,state), zip=COALESCE($13,zip),
+        updated_at=NOW()
+       WHERE id=$14 RETURNING *`,
       [firstName||null, lastName||null, phone||null, email||null, stage||null,
        source||null, background||null, tags||null,
-       customFields ? JSON.stringify(customFields) : '{}', req.params.id]
+       customFields ? JSON.stringify(customFields) : '{}',
+       address||null, city||null, state||null, zip||null, req.params.id]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -126,6 +137,125 @@ app.delete('/api/people/:id', auth, async (req, res) => {
     await pool.query('DELETE FROM people WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── PERSON PHONES ────────────────────────────────────────────────────────────
+app.get('/api/people/:id/phones', auth, async (req, res) => {
+  try {
+    // Also migrate people.phone into person_phones if not there yet
+    const existing = await pool.query('SELECT COUNT(*) FROM person_phones WHERE person_id=$1', [req.params.id]);
+    if (parseInt(existing.rows[0].count) === 0) {
+      const p = await pool.query('SELECT phone FROM people WHERE id=$1', [req.params.id]);
+      if (p.rows[0]?.phone) {
+        await pool.query('INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING',
+          [req.params.id, p.rows[0].phone, 'mobile']).catch(()=>{});
+      }
+    }
+    const r = await pool.query('SELECT * FROM person_phones WHERE person_id=$1 ORDER BY is_primary DESC, id ASC', [req.params.id]);
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/people/:id/phones', auth, async (req, res) => {
+  try {
+    const { phone, label, isPrimary } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Phone required' });
+    const clean = phone.replace(/[^0-9+]/g,'');
+    if (isPrimary) await pool.query('UPDATE person_phones SET is_primary=FALSE WHERE person_id=$1', [req.params.id]);
+    const r = await pool.query(
+      'INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,$4) RETURNING *',
+      [req.params.id, clean, label||'mobile', !!isPrimary]
+    );
+    if (isPrimary) await pool.query('UPDATE people SET phone=$1 WHERE id=$2', [clean, req.params.id]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/people/:id/phones/:phoneId', auth, async (req, res) => {
+  try {
+    const { label, isPrimary, isBad } = req.body;
+    if (isPrimary) await pool.query('UPDATE person_phones SET is_primary=FALSE WHERE person_id=$1', [req.params.id]);
+    const r = await pool.query(
+      `UPDATE person_phones SET
+         label=COALESCE($1,label), is_primary=COALESCE($2,is_primary), is_bad=COALESCE($3,is_bad)
+       WHERE id=$4 AND person_id=$5 RETURNING *`,
+      [label||null, isPrimary!=null?isPrimary:null, isBad!=null?isBad:null, req.params.phoneId, req.params.id]
+    );
+    if (isPrimary && r.rows[0]) await pool.query('UPDATE people SET phone=$1 WHERE id=$2', [r.rows[0].phone, req.params.id]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/people/:id/phones/:phoneId', auth, async (req, res) => {
+  try {
+    const del = await pool.query('DELETE FROM person_phones WHERE id=$1 AND person_id=$2 RETURNING *', [req.params.phoneId, req.params.id]);
+    // If we deleted the primary, promote the next one
+    if (del.rows[0]?.is_primary) {
+      const next = await pool.query('SELECT * FROM person_phones WHERE person_id=$1 ORDER BY id ASC LIMIT 1', [req.params.id]);
+      if (next.rows[0]) {
+        await pool.query('UPDATE person_phones SET is_primary=TRUE WHERE id=$1', [next.rows[0].id]);
+        await pool.query('UPDATE people SET phone=$1 WHERE id=$2', [next.rows[0].phone, req.params.id]);
+      }
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── HOUSEHOLD / RELATIONSHIPS ────────────────────────────────────────────────
+app.get('/api/people/:id/relationships', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT pr.id, pr.label,
+        CASE WHEN pr.person_id_a=$1 THEN pr.person_id_b ELSE pr.person_id_a END AS related_id,
+        p.first_name, p.last_name, p.phone, p.stage, p.email
+      FROM person_relationships pr
+      JOIN people p ON p.id = CASE WHEN pr.person_id_a=$1 THEN pr.person_id_b ELSE pr.person_id_a END
+      WHERE pr.person_id_a=$1 OR pr.person_id_b=$1
+    `, [req.params.id]);
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/people/:id/relationships', auth, async (req, res) => {
+  try {
+    const { relatedPersonId, label } = req.body;
+    if (!relatedPersonId) return res.status(400).json({ error: 'relatedPersonId required' });
+    const a = Math.min(parseInt(req.params.id), parseInt(relatedPersonId));
+    const b = Math.max(parseInt(req.params.id), parseInt(relatedPersonId));
+    const r = await pool.query(
+      'INSERT INTO person_relationships (person_id_a,person_id_b,label) VALUES($1,$2,$3) ON CONFLICT(person_id_a,person_id_b) DO UPDATE SET label=$3 RETURNING *',
+      [a, b, label||'household']
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/people/:id/relationships/:relId', auth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM person_relationships WHERE id=$1', [req.params.relId]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Household combined timeline — all activities for a person + their household members
+app.get('/api/people/:id/household-activities', auth, async (req, res) => {
+  try {
+    const memberIds = [req.params.id];
+    const rels = await pool.query(`
+      SELECT CASE WHEN person_id_a=$1 THEN person_id_b ELSE person_id_a END AS related_id
+      FROM person_relationships WHERE person_id_a=$1 OR person_id_b=$1
+    `, [req.params.id]);
+    rels.rows.forEach(r => memberIds.push(r.related_id));
+    const placeholders = memberIds.map((_,i) => `$${i+1}`).join(',');
+    const r = await pool.query(`
+      SELECT a.*, p.first_name, p.last_name
+      FROM activities a
+      JOIN people p ON p.id = a.person_id
+      WHERE a.person_id IN (${placeholders})
+      ORDER BY a.created_at DESC LIMIT 100
+    `, memberIds);
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── ACTIVITIES ───────────────────────────────────────────────────────────────
@@ -614,6 +744,11 @@ app.post('/api/twilio/voicemail', async (req, res) => {
 });
 
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
+// ─── CONFIG / CLIENT KEYS ─────────────────────────────────────────────────────
+app.get('/api/config/maps-key', auth, (req, res) => {
+  res.json({ key: process.env.GOOGLE_MAPS_API_KEY || null });
+});
+
 app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
   try {
     const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,is_active,created_at FROM agents ORDER BY name');
@@ -751,6 +886,38 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to TEXT`, 'people.assigned_to');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS city TEXT`, 'people.city');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS state TEXT`, 'people.state');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS zip TEXT`, 'people.zip');
+
+  // Multi-phone support
+  await run(`
+    CREATE TABLE IF NOT EXISTS person_phones (
+      id          SERIAL PRIMARY KEY,
+      person_id   INTEGER REFERENCES people(id) ON DELETE CASCADE,
+      phone       TEXT NOT NULL,
+      label       TEXT DEFAULT 'mobile',
+      is_primary  BOOLEAN DEFAULT FALSE,
+      is_bad      BOOLEAN DEFAULT FALSE,
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create person_phones');
+  await run(`CREATE INDEX IF NOT EXISTS idx_person_phones_person ON person_phones(person_id)`, 'idx_person_phones');
+
+  // Household / relationship support
+  await run(`
+    CREATE TABLE IF NOT EXISTS person_relationships (
+      id              SERIAL PRIMARY KEY,
+      person_id_a     INTEGER REFERENCES people(id) ON DELETE CASCADE,
+      person_id_b     INTEGER REFERENCES people(id) ON DELETE CASCADE,
+      label           TEXT DEFAULT 'household',
+      created_at      TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(person_id_a, person_id_b)
+    )
+  `, 'create person_relationships');
+  await run(`CREATE INDEX IF NOT EXISTS idx_rels_a ON person_relationships(person_id_a)`, 'idx_rels_a');
+  await run(`CREATE INDEX IF NOT EXISTS idx_rels_b ON person_relationships(person_id_b)`, 'idx_rels_b');
 
   await run(`
     CREATE TABLE IF NOT EXISTS call_lines (
