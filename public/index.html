@@ -414,45 +414,49 @@
 
 
     /* ── SECURITY ALERT HISTORY ──────────────────────────────────── */
+    /* ── Watchlist Alert Cards ── */
+    .sec-hist-day-label { font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-3); padding:8px 0 4px; margin-top:4px; }
+    .sec-hist-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:60px 20px; color:var(--text-3); text-align:center; }
     .sec-hist-card {
-      background: var(--bg-2); border-radius: 10px;
+      background: var(--bg-2); border-radius: 12px;
       border: 1px solid var(--border); overflow: hidden;
-      transition: border-color 0.15s; flex-shrink: 0;
+      transition: border-color 0.15s, box-shadow 0.15s; flex-shrink: 0;
+      display: flex; gap: 0;
     }
-    .sec-hist-card:hover { border-color: rgba(255,59,59,0.4); }
-    .sec-hist-header {
-      display: flex; align-items: center; gap: 12px;
-      padding: 12px 14px; border-bottom: 1px solid var(--border);
-      background: rgba(255,59,59,0.04);
+    .sec-hist-card:hover { border-color: rgba(255,59,59,0.5); box-shadow: 0 2px 16px rgba(255,59,59,0.08); }
+    /* Left: thumbnail strip */
+    .sec-hist-thumb-col {
+      width: 140px; flex-shrink: 0; position: relative; background: var(--bg);
+      border-right: 1px solid var(--border);
     }
     .sec-hist-thumb {
-      width: 60px; height: 44px; object-fit: cover; border-radius: 6px;
-      border: 1px solid rgba(255,59,59,0.3); flex-shrink: 0;
+      width: 140px; height: 100%; min-height: 90px; object-fit: cover; display: block;
     }
     .sec-hist-thumb-ph {
-      width: 60px; height: 44px; background: var(--bg); border-radius: 6px;
-      border: 1px solid var(--border); display: flex; align-items: center;
-      justify-content: center; font-size: 22px; flex-shrink: 0;
+      width: 140px; min-height: 90px; height: 100%; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; font-size: 32px;
     }
-    .sec-hist-meta { flex: 1; min-width: 0; }
-    .sec-hist-cam { font-size: 13px; font-weight: 700; color: var(--text); white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-    .sec-hist-time { font-size: 11px; color: var(--text-3); margin-top: 2px; }
-    .sec-hist-site { font-size: 10px; font-weight: 700; letter-spacing:0.1em; text-transform:uppercase; color:#ff3b3b; opacity:0.8; }
-    .sec-hist-body { padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
-    .sec-hist-person { flex: 1; min-width: 0; }
-    .sec-hist-name { font-size: 13px; font-weight: 600; color: var(--text); }
-    .sec-hist-unknown { font-size: 12px; color: var(--text-3); font-style: italic; }
-    .sec-hist-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    /* Right: content */
+    .sec-hist-content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px 14px; gap: 6px; }
+    .sec-hist-row1 { display: flex; align-items: flex-start; gap: 8px; }
+    .sec-hist-cam-block { flex: 1; min-width: 0; }
+    .sec-hist-site { font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #ff3b3b; margin-bottom: 1px; }
+    .sec-hist-cam { font-size: 13px; font-weight: 700; color: var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sec-hist-time { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+    .sec-hist-divider { height: 1px; background: var(--border); margin: 2px 0; }
+    .sec-hist-person-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sec-hist-name { font-size: 14px; font-weight: 700; color: var(--text); }
+    .sec-hist-unknown { font-size: 13px; color: var(--text-3); font-style: italic; }
+    .sec-hist-stage { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+    .sec-hist-actions { display: flex; gap: 6px; margin-top: 4px; }
     .sec-hist-btn {
-      font-size: 11px; padding: 5px 11px; border-radius: 6px; font-weight: 600;
-      cursor: pointer; border: none; font-family: inherit; transition: all 0.15s;
+      font-size: 12px; padding: 6px 14px; border-radius: 7px; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap;
     }
-    .sec-hist-btn.footage { background:rgba(255,59,59,0.15); color:#ff3b3b; border:1px solid rgba(255,59,59,0.3); }
-    .sec-hist-btn.footage:hover { background:rgba(255,59,59,0.3); }
+    .sec-hist-btn.footage { background:rgba(255,59,59,0.15); color:#ff3b3b; border:1px solid rgba(255,59,59,0.35); }
+    .sec-hist-btn.footage:hover { background:rgba(255,59,59,0.28); }
     .sec-hist-btn.open { background:var(--bg-3); color:var(--text); border:1px solid var(--border); }
     .sec-hist-btn.open:hover { border-color:var(--accent); color:var(--accent); }
-    .sec-hist-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:60px 20px; color:var(--text-3); text-align:center; }
-    .sec-hist-day-label { font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-3); padding:6px 0 4px; margin-top:4px; }
 
     /* ── SECURITY PROFILE PANEL ──────────────────────────────────── */
     .sec-profile-section { display: flex; flex-direction: column; gap: 14px; }
@@ -3729,47 +3733,50 @@ async function loadSecurityAlertHistory() {
           ? (e.thumbnail_b64.startsWith('data:') ? e.thumbnail_b64 : `data:image/jpeg;base64,${e.thumbnail_b64}`)
           : null;
         const thumb = thumbSrc
-          ? `<img class="sec-hist-thumb" src="${thumbSrc.substring(0, 100000)}" onerror="this.outerHTML='<div class=sec-hist-thumb-ph>📷</div>'">`
+          ? `<img class="sec-hist-thumb" src="${thumbSrc.substring(0,100000)}" onerror="this.outerHTML='<div class=sec-hist-thumb-ph>📷</div>'">`
           : `<div class="sec-hist-thumb-ph">📷</div>`;
 
-        // Show friendly name or format MAC as readable
+        // Friendly camera name or formatted MAC
         const camDisplay = (e.camera_name && e.camera_name !== e.camera_mac)
           ? e.camera_name
           : (e.camera_mac ? `Camera (${e.camera_mac.match(/.{2}/g).join(':')})` : 'Unknown Camera');
 
-        const siteLabel = e.site && e.site !== 'Watchlist' ? `<div class="sec-hist-site">${esc(e.site)}</div>` : '';
+        const siteLabel = e.site && e.site !== 'Watchlist'
+          ? `<div class="sec-hist-site">📍 ${esc(e.site)}</div>` : '';
 
+        // Person info
         let personHTML = '';
         let openBtn = '';
         if (e.first_name || e.last_name) {
           const fullName = [e.first_name, e.last_name].filter(Boolean).join(' ');
           const stageColor = {
             'Resident':'rgba(0,210,210,0.15)','Evicting':'rgba(255,59,59,0.15)',
-            'Delinquent':'rgba(59,158,255,0.15)'
+            'Delinquent':'rgba(59,158,255,0.15)','Lead':'rgba(255,200,0,0.12)'
           }[e.stage] || 'rgba(255,255,255,0.08)';
-          const stageText = { 'Resident':'#00d2d2','Evicting':'#ff3b3b','Delinquent':'#3b9eff' }[e.stage] || 'var(--text-3)';
-          personHTML = `<div class="sec-hist-name">${esc(fullName)}</div>
+          const stageText = {
+            'Resident':'#00d2d2','Evicting':'#ff3b3b','Delinquent':'#3b9eff','Lead':'#ffc800'
+          }[e.stage] || 'var(--text-3)';
+          personHTML = `<div class="sec-hist-name">👤 ${esc(fullName)}</div>
             ${e.stage ? `<span class="sec-hist-stage" style="background:${stageColor};color:${stageText}">${esc(e.stage)}</span>` : ''}`;
-          openBtn = `<button class="sec-hist-btn open" onclick="navigate('person',${e.person_id})">Open File</button>`;
+          openBtn = `<button class="sec-hist-btn open" onclick="navigate('person',${e.person_id})">Open Contact</button>`;
         } else {
-          personHTML = `<div class="sec-hist-unknown">Unknown individual</div>`;
+          personHTML = `<div class="sec-hist-unknown">👤 Unknown individual</div>`;
         }
 
         const footageBtn = e.event_link
-          ? `<button class="sec-hist-btn footage" onclick="window.open('${e.event_link}','_blank')">📹 Footage</button>`
+          ? `<button class="sec-hist-btn footage" onclick="window.open('${esc(e.event_link)}','_blank')">📹 View Footage</button>`
           : '';
 
         html += `<div class="sec-hist-card">
-          <div class="sec-hist-header">
-            ${thumb}
-            <div class="sec-hist-meta">
+          <div class="sec-hist-thumb-col">${thumb}</div>
+          <div class="sec-hist-content">
+            <div class="sec-hist-cam-block">
               ${siteLabel}
-              <div class="sec-hist-cam">${esc(camDisplay)}</div>
+              <div class="sec-hist-cam">📷 ${esc(camDisplay)}</div>
               <div class="sec-hist-time">${timeStr} &nbsp;·&nbsp; ${agoStr}</div>
             </div>
-          </div>
-          <div class="sec-hist-body">
-            <div class="sec-hist-person">${personHTML}</div>
+            <div class="sec-hist-divider"></div>
+            <div class="sec-hist-person-row">${personHTML}</div>
             <div class="sec-hist-actions">${footageBtn}${openBtn}</div>
           </div>
         </div>`;
