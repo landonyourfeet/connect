@@ -3255,11 +3255,11 @@ const JirehOrganic = (() => {
     let voiceHueRange = pal.range;
     let voiceGlowBoost = 0;
     if (_mode === 'voice') {
-      const heat = Math.pow(_smooth, 1.6); // power curve — slow ramp, fast burn
-      // 0 → cool teal/blue (195), 0.5 → amber (28), 1 → alarm red (0)
-      voiceHueBase  = heat < 0.5
-        ? 195 - (heat / 0.5) * 167          // 195 → 28 in first half
-        : 28  - ((heat - 0.5) / 0.5) * 28;  // 28 → 0 in second half
+      const heat = Math.pow(_smooth, 3.2); // steep curve — stays cool until genuinely loud
+      // 0 → cool teal/blue (195), 0.75 → amber (28), 1 → alarm red (0)
+      voiceHueBase  = heat < 0.75
+        ? 195 - (heat / 0.75) * 167          // 195 → 28 in first 75%
+        : 28  - ((heat - 0.75) / 0.25) * 28; // 28 → 0 only in final 25% (yelling)
       voiceHueRange = 40 + (1 - heat) * 80; // range narrows as it reddens (more focused color)
       voiceGlowBoost = heat;
     }
@@ -3394,7 +3394,7 @@ const VoiceViz = (() => {
     let level = 0;
     if (_analyserL && _dataL) level = Math.max(level, readLevel(_analyserL, _dataL));
     if (_analyserR && _dataR) level = Math.max(level, readLevel(_analyserR, _dataR));
-    level = level / 58; // normalize 0-1
+    level = level / 90; // normalize — higher divisor means louder needed to hit 1.0
     JirehOrganic.setVoice(level);
     _raf = requestAnimationFrame(tick);
   }
