@@ -1020,6 +1020,7 @@
     .ti-icon-wrap { flex-shrink: 0; position: relative; }
     .ti-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; }
     .ti-call     { background: var(--green-dim); color: var(--green); }
+    .ti-call-inbound { background: var(--blue-dim) !important; color: var(--blue) !important; }
     .ti-text     { background: var(--blue-dim); color: var(--blue); }
     .ti-note     { background: var(--amber-dim); color: var(--amber); }
     .ti-activity { background: var(--bg-5); color: var(--text-3); }
@@ -2524,8 +2525,10 @@ function renderTimelineItem(act, hasConnector) {
   let bodyHtml = `<div class="ti-content">${esc(act.body||act.content||act.note||'')}</div>`;
 
   if (type === 'call') {
-    iconCls = 'ti-call'; iconChar = '📞'; typeLabel = 'Call';
     const dir = act.direction || 'outbound';
+    iconCls = dir === 'inbound' ? 'ti-call ti-call-inbound' : 'ti-call';
+    iconChar = dir === 'inbound' ? '📲' : '📞';
+    typeLabel = 'Call';
     const duration = (act.duration||act.duration_seconds) ? formatDuration(act.duration||act.duration_seconds) : '';
     const cardId = 'call-card-' + act.id;
     const noTranscript = !act.summary && !act.transcript;
@@ -3389,14 +3392,14 @@ function handleIncomingCall(conn) {
   activeCall = conn;
   _incomingFromNumber = conn.parameters?.From || null;
   const from = _incomingFromNumber || 'Unknown';
+  const normalizedFrom = from.replace(/\D/g,'');
 
-  // Match against peopleData (in-memory list already loaded)
+  // Match against ALL phone numbers (all_phones array added by server, or fallback to p.phone)
   _incomingMatchedPerson = peopleData.find(p => {
-    if (!p.phone) return false;
-    return p.phone.replace(/\D/g,'') === from.replace(/\D/g,'');
+    const phones = p.all_phones?.length ? p.all_phones : (p.phone ? [p.phone] : []);
+    return phones.some(ph => ph.replace(/\D/g,'') === normalizedFrom);
   }) || null;
 
-  // Also check person_phones if not found in primary (best-effort)
   const callerName = _incomingMatchedPerson
     ? [_incomingMatchedPerson.first_name, _incomingMatchedPerson.last_name].filter(Boolean).join(' ')
     : from;
@@ -3421,24 +3424,38 @@ function showCallBar(state, name, number, matchedPerson = null) {
   const bar  = document.getElementById('call-bar');
   bar.className = '';
 
-  // Name — clickable if matched
+  // Name — clickable if matched in BOTH ringing and active states
   const nameEl = document.getElementById('call-contact-name');
   nameEl.textContent = name || 'Unknown';
   nameEl.className = 'call-contact-name';
   nameEl.onclick = null;
-  if (matchedPerson && state === 'ringing') {
+  if (matchedPerson) {
     nameEl.classList.add('linked');
-    nameEl.title = 'View contact file';
+    nameEl.title = 'Open contact file';
     nameEl.onclick = (e) => { e.stopPropagation(); openContact(matchedPerson.id); };
   }
 
   document.getElementById('call-number').textContent = formatPhone(number || '');
   document.getElementById('call-avatar').textContent = (name||'?').substring(0,2).toUpperCase();
-  document.getElementById('call-status-label').textContent = state === 'ringing' ? 'Incoming Call' : 'On Call';
+  document.getElementById('call-status-label').textContent = state === 'ringing' ? '📲 Incoming Call' : '📞 On Call';
   document.getElementById('call-actions-incoming').style.display = state === 'ringing' ? 'flex' : 'none';
   document.getElementById('call-actions-active').style.display  = state === 'active'  ? 'flex' : 'none';
   document.getElementById('call-timer').style.display = state === 'active' ? 'inline' : 'none';
-  document.getElementById('call-unknown-tray').style.display = 'none';
+
+  // Unknown caller tray — show during RINGING and ACTIVE if no match
+  const tray = document.getElementById('call-unknown-tray');
+  if (!matchedPerson && _incomingFromNumber) {
+    document.getElementById('call-unknown-tray-label').textContent = `Unknown: ${formatPhone(_incomingFromNumber)}`;
+    if (state === 'ringing') {
+      document.getElementById('call-tray-search-wrap').style.display = 'none';
+      document.getElementById('call-tray-search').value = '';
+      document.getElementById('call-tray-results').innerHTML = '';
+    }
+    tray.style.display = '';
+  } else {
+    tray.style.display = 'none';
+  }
+
   requestAnimationFrame(() => bar.classList.add('visible', state));
 }
 
@@ -3451,29 +3468,17 @@ function acceptCall() {
   const name = document.getElementById('call-contact-name').textContent;
   const num  = document.getElementById('call-number').textContent;
 
-  // Reset name to non-clickable for active state
-  const nameEl = document.getElementById('call-contact-name');
-  nameEl.classList.remove('linked');
-  nameEl.onclick = null;
-
-  showCallBar('active', name, num, null);
+  // Pass matched person so name stays clickable during active call
+  showCallBar('active', name, num, _incomingMatchedPerson);
   startCallTimer();
   VoiceViz.start(activeCall);
   TabAlert.active(name);
 
-  // Navigate to matched contact or show unknown tray
+  // Auto-navigate to contact file when answering a known caller
   if (_incomingMatchedPerson) {
     openContact(_incomingMatchedPerson.id);
-  } else {
-    // Show the unknown caller tray
-    const tray = document.getElementById('call-unknown-tray');
-    const trayLabel = document.getElementById('call-unknown-tray-label');
-    trayLabel.textContent = `📵 ${formatPhone(_incomingFromNumber || '')} — not in Connect`;
-    document.getElementById('call-tray-search-wrap').style.display = 'none';
-    document.getElementById('call-tray-search').value = '';
-    document.getElementById('call-tray-results').innerHTML = '';
-    tray.style.display = '';
   }
+  // Unknown caller tray stays visible (was set during ringing) — agent can still create/link
 }
 
 function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); TabAlert.clear(); }
