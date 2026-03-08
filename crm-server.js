@@ -145,7 +145,13 @@ app.get('/api/people', auth, async (req, res) => {
 
 app.get('/api/people/:id', auth, async (req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM people WHERE id=$1', [req.params.id]);
+    const r = await pool.query(`
+      SELECT id, first_name, last_name, phone, email, stage, source, background, tags,
+             custom_fields, address, city, state, zip, assigned_to, unifi_person_id,
+             id_photo_b64, id_photo_name, security_notes, criminal_history,
+             dv_victim, dv_notes, created_at, updated_at
+      FROM people WHERE id=$1
+    `, [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -298,6 +304,55 @@ app.delete('/api/people/:id/relationships/:relId', auth, async (req, res) => {
 });
 
 // Household combined timeline — all activities for a person + their household members
+// ── SECURITY PROFILE ─────────────────────────────────────────────────────
+
+// Upload / replace ID photo (accepts base64 JSON)
+app.post('/api/people/:id/id-photo', auth, async (req, res) => {
+  try {
+    const { photoB64, photoName } = req.body;
+    if (!photoB64) return res.status(400).json({ error: 'photoB64 required' });
+    // Cap at ~2MB base64
+    if (photoB64.length > 3000000) return res.status(413).json({ error: 'Image too large (max ~2MB)' });
+    await pool.query(
+      'UPDATE people SET id_photo_b64=$1, id_photo_name=$2, updated_at=NOW() WHERE id=$3',
+      [photoB64, photoName || 'id-photo', req.params.id]
+    );
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete ID photo
+app.delete('/api/people/:id/id-photo', auth, async (req, res) => {
+  try {
+    await pool.query('UPDATE people SET id_photo_b64=NULL, id_photo_name=NULL, updated_at=NOW() WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save security profile (notes, criminal history, DV)
+app.patch('/api/people/:id/security', auth, async (req, res) => {
+  try {
+    const { securityNotes, criminalHistory, dvVictim, dvNotes } = req.body;
+    await pool.query(
+      `UPDATE people SET
+        security_notes = COALESCE($1, security_notes),
+        criminal_history = COALESCE($2, criminal_history),
+        dv_victim = COALESCE($3, dv_victim),
+        dv_notes = COALESCE($4, dv_notes),
+        updated_at = NOW()
+       WHERE id=$5`,
+      [
+        securityNotes !== undefined ? securityNotes : null,
+        criminalHistory !== undefined ? criminalHistory : null,
+        dvVictim !== undefined ? dvVictim : null,
+        dvNotes !== undefined ? dvNotes : null,
+        req.params.id
+      ]
+    );
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/people/:id/household-activities', auth, async (req, res) => {
   try {
     const memberIds = [parseInt(req.params.id)];
@@ -987,6 +1042,12 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS unifi_person_id TEXT`, 'people.unifi_person_id');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS id_photo_b64 TEXT`, 'people.id_photo_b64');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS id_photo_name TEXT`, 'people.id_photo_name');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS security_notes TEXT`, 'people.security_notes');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS criminal_history TEXT`, 'people.criminal_history');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dv_victim BOOLEAN DEFAULT FALSE`, 'people.dv_victim');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dv_notes TEXT`, 'people.dv_notes');
 
   // ── Security events table ──
   await run(`
