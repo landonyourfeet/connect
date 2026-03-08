@@ -638,6 +638,16 @@ app.post('/api/twilio/recording', async (req, res) => {
     const call = callR.rows[0];
     if (!call) return;
     await pool.query('UPDATE calls SET recording_url=$1 WHERE id=$2', [`${RecordingUrl}.mp3`, call.id]);
+
+    // Ensure activity row exists — recording webhook can arrive before status webhook
+    const existingAct = await pool.query('SELECT id FROM activities WHERE call_id=$1 LIMIT 1', [call.id]);
+    if (existingAct.rows.length === 0) {
+      await pool.query(
+        'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+        [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', call.duration_seconds||0, call.direction||'outbound']
+      ).catch(()=>{});
+    }
+
     let transcript = '', summary = '';
     const dg = initDeepgram();
     if (dg) {
@@ -901,6 +911,8 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to TEXT`, 'people.assigned_to');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
+  // Migrate old stage names
+  await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate stage Active Tenant->Resident').catch(()=>{});
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS city TEXT`, 'people.city');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS state TEXT`, 'people.state');
