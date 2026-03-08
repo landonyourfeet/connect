@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate icon" type="image/png" href="/favicon.png">
   <script src="/twilio-voice.js"></script>
   <style>
     /* ── DESIGN TOKENS ────────────────────────────────────────── */
@@ -227,7 +228,35 @@
       background: var(--bg-2); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden;
     }
-    .sidebar-logo { padding: 20px 20px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .sidebar-logo { padding: 20px 20px 16px; border-bottom: none; flex-shrink: 0; }
+    /* Connection status bar */
+    #conn-status-bar {
+      height: 3px;
+      width: 100%;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+      background: var(--red);
+      transition: background 0.5s;
+    }
+    #conn-status-bar.connected {
+      background: transparent;
+    }
+    #conn-status-bar.connected::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg,
+        #ff0080, #ff4500, #ffaa00, #00ff88, #00ccff, #8844ff, #ff0080
+      );
+      background-size: 300% 100%;
+      animation: conn-flow 4s linear infinite;
+      box-shadow: 0 0 8px 1px rgba(0,232,180,0.6);
+    }
+    @keyframes conn-flow {
+      0%   { background-position: 0% 0%; }
+      100% { background-position: 300% 0%; }
+    }
     .sidebar-logo .wordmark { font-family: var(--font-disp); font-size: 26px; letter-spacing: 0.02em; line-height: 1; }
     .sidebar-logo .wordmark span { color: var(--red); }
     .sidebar-logo .sub { font-family: var(--font-cond); font-size: 10px; letter-spacing: 0.25em; color: var(--text-3); text-transform: uppercase; margin-top: 3px; }
@@ -720,6 +749,8 @@
         <div class="wordmark">OKC<span style="color:var(--red)">REAL</span></div>
         <div class="sub">Connect</div>
       </div>
+      <!-- Connection status bar -->
+      <div id="conn-status-bar" title="Offline"></div>
       <div class="sidebar-user">
         <div class="user-avatar" id="sidebar-avatar">
           <span id="sidebar-initials">?</span>
@@ -1684,6 +1715,41 @@ async function submitAddUser() {
     loadAdmin();
   } catch(e) { toast('Error: ' + e.message, 'error'); }
 }
+
+// ── CONNECTION STATUS ───────────────────────────────────────────────────
+(function() {
+  const bar = () => document.getElementById('conn-status-bar');
+  function setConnected(online) {
+    const el = bar();
+    if (!el) return;
+    if (online) {
+      el.classList.add('connected');
+      el.title = 'Connected';
+    } else {
+      el.classList.remove('connected');
+      el.title = 'Offline — check your connection';
+    }
+  }
+
+  // Initial state
+  setConnected(navigator.onLine);
+
+  // Browser events
+  window.addEventListener('online',  () => setConnected(true));
+  window.addEventListener('offline', () => setConnected(false));
+
+  // Active heartbeat — ping the health endpoint every 20s
+  async function heartbeat() {
+    try {
+      const r = await fetch('/health', { method: 'GET', cache: 'no-store' });
+      setConnected(r.ok);
+    } catch(e) {
+      setConnected(false);
+    }
+  }
+  heartbeat();
+  setInterval(heartbeat, 20000);
+})();
 
 // ── TWILIO ─────────────────────────────────────────────────────────────
 async function initTwilio() {
