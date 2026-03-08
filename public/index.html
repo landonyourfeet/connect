@@ -2123,7 +2123,7 @@ async function loadSecurityDetections(personId) {
       return `<div class="sec-det-row">
         ${thumb}
         <div class="sec-det-info">
-          <div class="sec-det-cam">${esc(e.camera_name || 'Unknown Camera')}</div>
+          <div class="sec-det-cam">${esc((e.camera_name && e.camera_name !== e.camera_mac) ? e.camera_name : (e.camera_mac ? `Camera (${e.camera_mac.match(/.{2}/g).join(':')})` : 'Unknown Camera'))}</div>
           <div class="sec-det-meta">${e.site ? esc(e.site) + ' · ' : ''}${ago}</div>
           ${link}
         </div>
