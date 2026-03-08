@@ -293,7 +293,40 @@
     #app { display: none; height: 100vh; flex-direction: column; }
     #app.visible { display: flex; }
 
-    /* ── FLOATING CALL BAR ────────────────────────────────────── */
+    /* ── PRIVACY BLUR MODE ─────────────────────────────────────── */
+    #privacy-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 99998;
+      backdrop-filter: blur(28px) brightness(0.4);
+      -webkit-backdrop-filter: blur(28px) brightness(0.4);
+      background: rgba(0,0,0,0.55);
+      align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px;
+    }
+    #privacy-overlay.active { display: flex; }
+    #privacy-overlay .priv-icon { font-size: 52px; animation: priv-pulse 2s ease-in-out infinite; }
+    #privacy-overlay .priv-label {
+      font-size: 18px; font-weight: 800; letter-spacing: 0.2em;
+      text-transform: uppercase; color: rgba(255,255,255,0.85);
+    }
+    #privacy-overlay .priv-hint {
+      font-size: 12px; color: rgba(255,255,255,0.4);
+      letter-spacing: 0.08em;
+    }
+    @keyframes priv-pulse {
+      0%,100% { opacity: 0.7; transform: scale(1); }
+      50%      { opacity: 1;   transform: scale(1.08); }
+    }
+    #privacy-indicator {
+      display: none; position: fixed; top: 12px; right: 16px; z-index: 99997;
+      background: rgba(255,59,59,0.15); border: 1px solid rgba(255,59,59,0.4);
+      color: #ff3b3b; font-size: 11px; font-weight: 700; padding: 4px 10px;
+      border-radius: 20px; letter-spacing: 0.06em; cursor: pointer;
+      backdrop-filter: blur(8px);
+    }
+    #privacy-indicator.active { display: block; }
+
+
     /* ── SECURITY ALERT HISTORY ──────────────────────────────────── */
     .sec-hist-card {
       background: var(--bg-2); border-radius: 10px;
@@ -1218,6 +1251,14 @@
 </div>
 
 <!-- APP SHELL -->
+  <!-- PRIVACY BLUR OVERLAY — toggle with backtick ` -->
+  <div id="privacy-overlay" onclick="togglePrivacyBlur()">
+    <div class="priv-icon">🔒</div>
+    <div class="priv-label">Privacy Mode</div>
+    <div class="priv-hint">Press  `  to unlock</div>
+  </div>
+  <div id="privacy-indicator" onclick="togglePrivacyBlur()" title="Privacy mode ON — click or press ` to unlock">🔒 PRIVACY</div>
+
 <div id="app">
   <div class="app-body">
 
@@ -1269,6 +1310,14 @@
         </div>
       </div>
       <div class="sidebar-bottom">
+        <!-- Privacy blur shortcut hint -->
+        <div onclick="togglePrivacyBlur()" title="Press ` to toggle privacy blur"
+          style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0.04em;transition:background 0.15s;margin:0 4px 2px"
+          onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='transparent'">
+          <span>🔒</span>
+          <span>PRIVACY BLUR</span>
+          <span style="margin-left:auto;background:var(--bg-4);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:10px">` </span>
+        </div>
         <!-- Theme toggle -->
         <div class="theme-toggle-wrap" onclick="toggleTheme()" title="Switch theme">
           <span class="theme-toggle-icon" id="theme-icon">🌙</span>
@@ -1581,8 +1630,8 @@ function updateSidebarUser() {
   document.getElementById('sidebar-initials').textContent = initials;
   document.getElementById('sidebar-name').textContent = currentUser.name || currentUser.email;
   setStatus('available');
-  JirehSecurity.connect();
-  initSecBadge();
+  // Defer so JirehSecurity const is fully initialized before calling
+  setTimeout(() => { JirehSecurity.connect(); initSecBadge(); }, 0);
 }
 
 if (authToken && currentUser) launchApp();
@@ -1762,6 +1811,40 @@ async function openContact(personId) {
     viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`;
   }
 }
+
+// ── PRIVACY BLUR MODE ────────────────────────────────────────────────────────
+let _privacyActive = false;
+
+function togglePrivacyBlur(force) {
+  _privacyActive = (force !== undefined) ? force : !_privacyActive;
+  const overlay    = document.getElementById('privacy-overlay');
+  const indicator  = document.getElementById('privacy-indicator');
+  if (_privacyActive) {
+    overlay?.classList.add('active');
+    indicator?.classList.add('active');
+  } else {
+    overlay?.classList.remove('active');
+    indicator?.classList.remove('active');
+  }
+}
+
+// Keyboard shortcut: backtick ` (fast single key, not in form fields)
+document.addEventListener('keydown', (e) => {
+  // Skip if typing in an input, textarea, or contenteditable
+  const tag = document.activeElement?.tagName?.toLowerCase();
+  const isEditable = tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable;
+
+  if (e.key === '`' && !isEditable) {
+    e.preventDefault();
+    togglePrivacyBlur();
+    return;
+  }
+
+  // Also allow Escape to EXIT privacy mode (but not enter it)
+  if (e.key === 'Escape' && _privacyActive) {
+    togglePrivacyBlur(false);
+  }
+});
 
 // ── CASEWORKER PANEL ─────────────────────────────────────────────────────────
 
