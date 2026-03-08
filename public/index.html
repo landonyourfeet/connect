@@ -712,6 +712,35 @@
       width: var(--sidebar-w); flex-shrink: 0;
       background: var(--bg-2); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden;
+      transition: width 0.22s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* ── SIDEBAR COLLAPSED ───────────────────────────────────── */
+    #sidebar.collapsed {
+      width: 64px;
+    }
+    #sidebar.collapsed .sidebar-logo,
+    #sidebar.collapsed .sidebar-user,
+    #sidebar.collapsed .sidebar-nav,
+    #sidebar.collapsed .sidebar-bottom { display: none; }
+    #sidebar.collapsed #conn-status-bar {
+      flex: 1;
+      height: auto;
+    }
+    /* Toggle button always visible */
+    #sidebar-toggle-btn {
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      height: 40px; width: 100%;
+      background: none; border: none; border-top: 1px solid var(--border);
+      color: var(--text-3); cursor: pointer; font-size: 14px;
+      transition: color 0.15s, background 0.15s;
+    }
+    #sidebar-toggle-btn:hover { color: var(--text); background: var(--bg-3); }
+    #sidebar.collapsed #sidebar-toggle-btn {
+      border-top: none;
+      border-bottom: 1px solid var(--border);
+      height: 44px;
     }
     .sidebar-logo { padding: 20px 20px 16px; border-bottom: none; flex-shrink: 0; }
     /* Connection status bar */
@@ -1360,6 +1389,8 @@
 
     <!-- SIDEBAR -->
     <nav id="sidebar">
+      <!-- Collapse / Expand toggle -->
+      <button id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar">‹‹</button>
       <div class="sidebar-logo">
         <div class="wordmark">OKC<span style="color:var(--red)">REAL</span></div>
         <div class="sub">Connect</div>
@@ -1660,6 +1691,25 @@ function toggleTheme() {
   const current = document.documentElement.getAttribute('data-theme');
   applyTheme(current === 'light' ? 'dark' : 'light');
 }
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const btn = document.getElementById('sidebar-toggle-btn');
+  const collapsed = sidebar.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '›› ' : '‹‹';
+  btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  localStorage.setItem('sidebar_collapsed', collapsed ? '1' : '0');
+}
+
+// Restore sidebar state on load
+(function() {
+  if (localStorage.getItem('sidebar_collapsed') === '1') {
+    const sidebar = document.getElementById('sidebar');
+    const btn = document.getElementById('sidebar-toggle-btn');
+    if (sidebar) { sidebar.classList.add('collapsed'); }
+    if (btn) { btn.textContent = '›› '; btn.title = 'Expand sidebar'; }
+  }
+})();
 
 let userStatus = 'available';
 
@@ -2533,7 +2583,8 @@ function renderTimelineItem(act, hasConnector) {
     const cardId = 'call-card-' + act.id;
     const noTranscript = !act.summary && !act.transcript;
     const hasRecording = !!act.recording_url;
-    const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording` : null;
+    const _tok = localStorage.getItem('connect_token') || '';
+    const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording?token=${encodeURIComponent(_tok)}` : null;
 
     // 1) AI Summary section
     const summaryHtml = act.summary
