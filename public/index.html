@@ -3319,10 +3319,11 @@ const _origHandleCallEnd = handleCallEnd;
 handleCallEnd = function() {
   _origHandleCallEnd.call(this);
   if (PD.active && !PD.waitingToCall) {
-    // Small delay so AI summary / timeline can start loading
     setTimeout(pdAdvance, 1200);
   }
 };
+
+function toggleAddUserForm() {
   const f = document.getElementById('add-user-form');
   if (!f) return;
   f.style.display = f.style.display === 'none' ? 'block' : 'none';
