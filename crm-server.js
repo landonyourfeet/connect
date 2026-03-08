@@ -133,14 +133,14 @@ app.put('/api/people/:id', auth, async (req, res) => {
         phone=COALESCE($3,phone), email=COALESCE($4,email),
         stage=COALESCE($5,stage), source=COALESCE($6,source),
         background=COALESCE($7,background), tags=COALESCE($8,tags),
-        custom_fields=custom_fields||COALESCE($9,'{}'),
+        custom_fields=custom_fields||COALESCE($9::jsonb,'{}'),
         address=COALESCE($10,address), city=COALESCE($11,city),
         state=COALESCE($12,state), zip=COALESCE($13,zip),
         updated_at=NOW()
        WHERE id=$14 RETURNING *`,
       [firstName||null, lastName||null, phone||null, email||null, stage||null,
        source||null, background||null, tags||null,
-       customFields ? JSON.stringify(customFields) : '{}',
+       customFields ? JSON.stringify(customFields) : null,
        address||null, city||null, state||null, zip||null, req.params.id]
     );
     res.json(r.rows[0]);
@@ -255,12 +255,12 @@ app.delete('/api/people/:id/relationships/:relId', auth, async (req, res) => {
 // Household combined timeline — all activities for a person + their household members
 app.get('/api/people/:id/household-activities', auth, async (req, res) => {
   try {
-    const memberIds = [req.params.id];
+    const memberIds = [parseInt(req.params.id)];
     const rels = await pool.query(`
       SELECT CASE WHEN person_id_a=$1 THEN person_id_b ELSE person_id_a END AS related_id
       FROM person_relationships WHERE person_id_a=$1 OR person_id_b=$1
     `, [req.params.id]);
-    rels.rows.forEach(r => memberIds.push(r.related_id));
+    rels.rows.forEach(r => memberIds.push(parseInt(r.related_id)));
     const placeholders = memberIds.map((_,i) => `$${i+1}`).join(',');
     const r = await pool.query(`
       SELECT a.*, p.first_name, p.last_name
