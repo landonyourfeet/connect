@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const multer  = require('multer');
 const path = require('path');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -1301,16 +1302,99 @@ app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
 
 // Also expose without /admin prefix for frontend compatibility
 // ── FUB IMPORT ────────────────────────────────────────────────────────────────
-app.post('/api/import/fub', auth, async (req, res) => {
-  try {
-    const { contacts = [], commit = false } = req.body;
-    if (!Array.isArray(contacts) || !contacts.length) return res.status(400).json({ error: 'No contacts provided' });
+const uploadMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
-    // Load existing for dedup: fub_id, email, phone
+function fubParseCSV(raw) {
+  const lines = raw.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  if (!lines.length) return [];
+  const headers = fubCSVLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = fubCSVLine(lines[i]);
+    const row = {};
+    headers.forEach((h,j) => { row[h.trim()] = (vals[j]||'').trim(); });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function fubCSVLine(line) {
+  const result = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
+    else if (ch === ',' && !inQ) { result.push(cur); cur=''; }
+    else cur += ch;
+  }
+  result.push(cur);
+  return result;
+}
+
+function fubMapStage(s) {
+  const v = (s||'').toLowerCase().trim();
+  if (!v) return 'Lead';
+  if (['hot','warm','cold','nurture','active','rental prospect','prospect','new',
+       'uncontacted','attempted contact','pre-approval','showing scheduled'].includes(v)) return 'Lead';
+  if (['past client','past tenant','past buyer','past seller','closed','purchased','sold'].includes(v)) return 'Past Tenant';
+  if (['owner','property owner','landlord'].includes(v)) return 'Property Owner';
+  if (['resident','tenant','active tenant','current tenant'].includes(v)) return 'Resident';
+  if (['contractor','vendor','maintenance'].includes(v)) return 'Contractor';
+  if (['caseworker','case worker','social worker','hap','section 8'].includes(v)) return 'Caseworker';
+  return 'Lead';
+}
+
+function fubIsBlocked(s) {
+  return ['trash','do not contact','dnc','spam','blocked'].includes((s||'').toLowerCase().trim());
+}
+
+function fubNormalizePhone(ph) {
+  if (!ph) return null;
+  const d = ph.replace(/\D/g,'');
+  if (d.length===10) return '+1'+d;
+  if (d.length===11 && d[0]==='1') return '+'+d;
+  return null;
+}
+
+function fubParseDOB(val) {
+  if (!val) return null;
+  const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  return null;
+}
+
+app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded' });
+    const commit = req.body.commit === '1';
+    const raw = req.file.buffer.toString('utf8');
+    const csvRows = fubParseCSV(raw);
+
+    const contacts = csvRows.map(row => ({
+      first_name:  row['First Name'] || (row['Name']||'').split(' ')[0] || '',
+      last_name:   row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '',
+      fub_id:      row['ID'] || null,
+      email:       (row['Email 1'] || row['Email'] || '').toLowerCase() || null,
+      phone:       fubNormalizePhone(row['Phone 1'] || row['Phone']),
+      phone_type:  row['Phone 1 - Type'] || 'mobile',
+      fub_stage:   row['Stage'] || '',
+      stage:       fubMapStage(row['Stage']),
+      is_blocked:  fubIsBlocked(row['Stage']),
+      source:      row['Lead Source'] || null,
+      tags:        row['Tags'] ? row['Tags'].split(',').map(t=>t.trim()).filter(Boolean) : [],
+      notes:       [row['Notes'],row['Description'],row['Background']].filter(Boolean).join('\n\n') || null,
+      dob:         fubParseDOB(row['DOB:'] || row['Birthday'] || row['DOB']),
+      address:     row['Property Address'] || row['Address'] || null,
+      city:        row['Property City'] || row['City'] || null,
+      state:       row['Property State'] || row['State'] || null,
+      zip:         row['Property Postal Code'] || row['Zip'] || null,
+    })).filter(c => c.first_name);
+
+    // Load existing for dedup
     const existingByFubId = new Map();
     const existingByEmail = new Map();
     const existingByPhone = new Map();
-
     const { rows: existing } = await pool.query(`
       SELECT p.id, p.fub_id, p.email,
              array_agg(pp.phone) FILTER (WHERE pp.phone IS NOT NULL) AS phones
@@ -1328,12 +1412,10 @@ app.post('/api/import/fub', auth, async (req, res) => {
 
     for (const c of contacts) {
       if (!c.first_name) { skipped++; continue; }
-
-      const email = c.email ? c.email.toLowerCase() : null;
       let existingId = null;
-      if (c.fub_id && existingByFubId.has(c.fub_id))   existingId = existingByFubId.get(c.fub_id);
-      else if (email && existingByEmail.has(email))      existingId = existingByEmail.get(email);
-      else if (c.phone && existingByPhone.has(c.phone))  existingId = existingByPhone.get(c.phone);
+      if (c.fub_id && existingByFubId.has(c.fub_id))        existingId = existingByFubId.get(c.fub_id);
+      else if (c.email && existingByEmail.has(c.email))      existingId = existingByEmail.get(c.email);
+      else if (c.phone && existingByPhone.has(c.phone))      existingId = existingByPhone.get(c.phone);
 
       const name = `${c.first_name} ${c.last_name||''}`.trim();
       if (c.is_blocked) blocked++;
@@ -1342,11 +1424,8 @@ app.post('/api/import/fub', auth, async (req, res) => {
         updated++;
         preview.push({ action:'update', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
         if (commit) {
-          await pool.query(`
-            UPDATE people SET
-              fub_id=COALESCE(fub_id,$1), dob=COALESCE(dob,$2), source=COALESCE(source,$3),
-              notes=COALESCE(NULLIF(notes,''),$4), is_blocked=is_blocked OR $5, updated_at=NOW()
-            WHERE id=$6`,
+          await pool.query(`UPDATE people SET fub_id=COALESCE(fub_id,$1), dob=COALESCE(dob,$2), source=COALESCE(source,$3),
+            notes=COALESCE(NULLIF(notes,''),$4), is_blocked=is_blocked OR $5, updated_at=NOW() WHERE id=$6`,
             [c.fub_id, c.dob||null, c.source||null, c.notes||null, c.is_blocked, existingId]);
           if (c.phone) await pool.query(
             `INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`,
@@ -1357,12 +1436,10 @@ app.post('/api/import/fub', auth, async (req, res) => {
         preview.push({ action:'insert', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
         if (commit) {
           const { rows:[np] } = await pool.query(`
-            INSERT INTO people
-              (first_name,last_name,email,stage,source,assigned_to,tags,notes,dob,fub_id,is_blocked,address,city,state,zip)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
-            [c.first_name, c.last_name||null, email||null, c.stage, c.source||null,
-             c.assigned_to||null, c.tags||[], c.notes||null, c.dob||null,
-             c.fub_id||null, c.is_blocked||false,
+            INSERT INTO people (first_name,last_name,email,stage,source,tags,notes,dob,fub_id,is_blocked,address,city,state,zip)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+            [c.first_name, c.last_name||null, c.email||null, c.stage, c.source||null,
+             c.tags||[], c.notes||null, c.dob||null, c.fub_id||null, c.is_blocked||false,
              c.address||null, c.city||null, c.state||null, c.zip||null]);
           if (c.phone && np) await pool.query(
             `INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES ($1,$2,$3,true) ON CONFLICT DO NOTHING`,
@@ -1371,8 +1448,7 @@ app.post('/api/import/fub', auth, async (req, res) => {
       }
     }
 
-    // Cap preview at 200 rows for response size
-    res.json({ inserted, updated, skipped, blocked, commit, preview: preview.slice(0, 200) });
+    res.json({ inserted, updated, skipped, blocked, commit, total: contacts.length, preview: preview.slice(0, 200) });
   } catch(e) { console.error('FUB import error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
