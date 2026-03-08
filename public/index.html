@@ -344,6 +344,43 @@
     .detail-value { font-size: 13px; color: var(--text); flex: 1; word-break: break-word; }
     .stage-select { background: var(--bg-4); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; color: var(--text); font-size: 12px; font-weight: 500; width: 100%; cursor: pointer; }
     .stage-select:focus { border-color: var(--border-hi); }
+    /* Phone rows */
+    .phone-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .phone-row:last-child { border-bottom: none; }
+    .phone-row.bad-number { opacity: 0.45; }
+    .phone-label-badge { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; background: var(--bg-4); color: var(--text-3); border-radius: 4px; padding: 2px 5px; flex-shrink: 0; }
+    .phone-primary-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .phone-bad-icon { font-size: 11px; color: var(--red); flex-shrink: 0; }
+    .phone-num-text { font-family: var(--font-mono); font-size: 12px; color: var(--text); flex: 1; cursor: pointer; }
+    .phone-num-text:hover { color: var(--green); }
+    .phone-action-btn { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 4px; transition: color 0.15s, background 0.15s; }
+    .phone-action-btn:hover { color: var(--text); background: var(--bg-4); }
+    .add-phone-row { display: flex; gap: 6px; margin-top: 8px; }
+    .add-phone-row input, .add-phone-row select { background: var(--bg-4); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-size: 12px; }
+    .add-phone-row input { flex: 1; }
+    .add-phone-row select { width: 80px; }
+    /* Phone picker modal */
+    .phone-picker-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 90000; display: flex; align-items: center; justify-content: center; }
+    .phone-picker-box { background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 280px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+    .phone-picker-title { font-family: var(--font-cond); font-size: 15px; font-weight: 700; margin-bottom: 14px; color: var(--text); }
+    .phone-picker-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.12s; margin-bottom: 4px; }
+    .phone-picker-option:hover { background: var(--bg-3); }
+    .phone-picker-option.bad { opacity: 0.4; pointer-events: none; }
+    /* Household section */
+    .household-member { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; }
+    .household-member:last-child { border-bottom: none; }
+    .household-member:hover .hh-name { color: var(--blue); }
+    .hh-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+    .hh-name { font-size: 13px; font-weight: 600; flex: 1; transition: color 0.15s; }
+    .hh-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; }
+    .hh-remove { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 4px; }
+    .hh-remove:hover { color: var(--red); background: rgba(220,38,38,0.1); }
+    /* Address autocomplete */
+    .pac-container { z-index: 99999 !important; background: var(--bg-2) !important; border: 1px solid var(--border) !important; border-radius: 8px !important; box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important; }
+    .pac-item { padding: 8px 12px !important; color: var(--text) !important; font-size: 12px !important; cursor: pointer !important; border-top: 1px solid var(--border) !important; }
+    .pac-item:hover { background: var(--bg-3) !important; }
+    .pac-item-query { color: var(--text) !important; font-weight: 600 !important; }
+    .pac-matched { color: var(--blue) !important; }
     .tags-container { display: flex; flex-wrap: wrap; gap: 4px; }
 
     /* ── TIMELINE ─────────────────────────────────────────────── */
@@ -608,6 +645,23 @@
     .text-muted { color: var(--text-2); }
     .text-mono  { font-family: var(--font-mono); }
   </style>
+  <!-- Google Maps Places Autocomplete — key loaded from server -->
+  <script>
+    function initGoogleMaps() { window._googleMapsReady = true; }
+    async function loadGoogleMaps() {
+      try {
+        const r = await fetch('/api/config/maps-key');
+        if (!r.ok) return;
+        const { key } = await r.json();
+        if (!key) return;
+        const sc = document.createElement('script');
+        sc.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initGoogleMaps`;
+        sc.async = true; sc.defer = true;
+        document.head.appendChild(sc);
+      } catch(e) {}
+    }
+    loadGoogleMaps();
+  </script>
 </head>
 <body>
 <div id="app-glow-border"></div>
@@ -1061,6 +1115,9 @@ async function openContact(personId) {
       api(`/api/tasks?personId=${personId}`)
     ]);
     renderContactRecord(person, activities || [], tasks || []);
+    // Load phones and household async after render
+    loadPhones(person.id);
+    loadHousehold(person.id);
   } catch(e) {
     viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`;
   }
@@ -1079,27 +1136,104 @@ function renderContactRecord(person, activities, tasks) {
       <div class="contact-card-top">
         <div class="contact-big-avatar ${stageClass(stage)}">${initials}</div>
         <div class="contact-record-name">${esc(name)}</div>
-        <div class="contact-record-phone" onclick="quickCall('${person.id}','${person.phone}','${esc(name)}')">${formatPhone(person.phone)}</div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:6px">${esc(person.stage||'Lead')}</div>
         ${person.email ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:8px">${esc(person.email)}</div>` : ''}
         <div class="contact-quick-actions">
-          <button class="cqa-btn cqa-call" onclick="quickCall('${person.id}','${person.phone}','${esc(name)}')">📞 Call</button>
-          <button class="cqa-btn cqa-text" onclick="openTextCompose()">💬 Text</button>
+          <button class="cqa-btn cqa-call" onclick="pickPhoneAndCall('${person.id}','${esc(name)}')">📞 Call</button>
+          <button class="cqa-btn cqa-text" onclick="pickPhoneAndText('${person.id}','${esc(name)}')">💬 Text</button>
           <button class="cqa-btn cqa-note" onclick="openNoteCompose()">📝 Note</button>
           <button class="cqa-btn" onclick="confirmDeleteLead('${person.id}','${esc(name)}')" style="background:rgba(220,38,38,0.12);color:#f87171;border:1px solid rgba(220,38,38,0.25)" title="Delete contact">🗑 Delete</button>
         </div>
       </div>
+
+      <!-- DETAILS -->
       <div class="contact-section">
         <div class="contact-section-title">Details</div>
         <div class="detail-row">
           <span class="detail-label">Stage</span>
           <select class="stage-select" onchange="updatePersonStage('${person.id}',this.value)">
-            ${['Lead','Active Tenant','Past Tenant','Property Owner','Vendor','Delinquent'].map(s=>`<option value="${s}" ${stage===s?'selected':''}>${s}</option>`).join('')}
+            ${['Lead','Active Tenant','Past Tenant','Property Owner','Vendor','Delinquent'].map(st=>`<option value="${st}" ${stage===st?'selected':''}>${st}</option>`).join('')}
           </select>
         </div>
-        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value"><span class="phone-mono">${formatPhone(person.phone)}</span></span></div>
         ${person.email ? `<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value" style="font-size:12px;word-break:break-all">${esc(person.email)}</span></div>` : ''}
         <div class="detail-row"><span class="detail-label">Source</span><span class="detail-value" style="font-size:12px;color:var(--text-2)">${esc(person.source||'—')}</span></div>
       </div>
+
+      <!-- PHONE NUMBERS -->
+      <div class="contact-section" id="phones-section-${person.id}">
+        <div class="contact-section-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Phone Numbers</span>
+          <button onclick="toggleAddPhone('${person.id}')" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-weight:600">+ Add</button>
+        </div>
+        <div id="phones-list-${person.id}"><div style="font-size:12px;color:var(--text-3)">Loading…</div></div>
+        <div id="add-phone-form-${person.id}" style="display:none;margin-top:8px">
+          <div class="add-phone-row">
+            <input id="new-phone-num-${person.id}" type="tel" placeholder="(405) 555-0100">
+            <select id="new-phone-label-${person.id}">
+              <option value="mobile">Mobile</option>
+              <option value="home">Home</option>
+              <option value="work">Work</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button onclick="addPhone('${person.id}')" class="btn-primary" style="font-size:11px;padding:5px 12px">Save</button>
+            <button onclick="toggleAddPhone('${person.id}')" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADDRESS -->
+      <div class="contact-section" id="address-section-${person.id}">
+        <div class="contact-section-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Address</span>
+          <button onclick="toggleEditAddress('${person.id}')" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-weight:600" id="edit-addr-btn-${person.id}">Edit</button>
+        </div>
+        <div id="address-display-${person.id}">
+          ${(person.address||person.city||person.state||person.zip) ? `
+            <div style="font-size:12px;color:var(--text-2);line-height:1.6">
+              ${person.address ? `<div>${esc(person.address)}</div>` : ''}
+              ${(person.city||person.state||person.zip) ? `<div>${[person.city,person.state,person.zip].filter(Boolean).map(esc).join(', ')}</div>` : ''}
+            </div>
+          ` : `<div style="font-size:12px;color:var(--text-3)">No address on file</div>`}
+        </div>
+        <div id="address-edit-${person.id}" style="display:none">
+          <input id="addr-street-${person.id}" type="text" placeholder="Street address" value="${esc(person.address||'')}"
+            style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;margin-bottom:5px;box-sizing:border-box">
+          <div style="display:grid;grid-template-columns:1fr 60px 80px;gap:5px;margin-bottom:6px">
+            <input id="addr-city-${person.id}" type="text" placeholder="City" value="${esc(person.city||'')}"
+              style="background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+            <input id="addr-state-${person.id}" type="text" placeholder="ST" value="${esc(person.state||'')}" maxlength="2"
+              style="background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;text-transform:uppercase">
+            <input id="addr-zip-${person.id}" type="text" placeholder="ZIP" value="${esc(person.zip||'')}" maxlength="10"
+              style="background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+          </div>
+          <div style="display:flex;gap:6px">
+            <button onclick="saveAddress('${person.id}')" class="btn-primary" style="font-size:11px;padding:5px 12px">Save</button>
+            <button onclick="toggleEditAddress('${person.id}')" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- HOUSEHOLD -->
+      <div class="contact-section" id="household-section-${person.id}">
+        <div class="contact-section-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Household</span>
+          <button onclick="toggleAddHousehold('${person.id}')" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-weight:600">+ Link</button>
+        </div>
+        <div id="household-list-${person.id}"><div style="font-size:12px;color:var(--text-3)">Loading…</div></div>
+        <div id="add-household-form-${person.id}" style="display:none;margin-top:8px">
+          <input id="hh-search-${person.id}" type="text" placeholder="Search by name or phone…"
+            oninput="searchHouseholdCandidates('${person.id}')"
+            style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;margin-bottom:5px;box-sizing:border-box">
+          <div id="hh-results-${person.id}" style="max-height:120px;overflow-y:auto"></div>
+          <button onclick="toggleAddHousehold('${person.id}')" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;margin-top:5px">Cancel</button>
+        </div>
+        <div style="margin-top:8px">
+          <button onclick="viewHouseholdTimeline('${person.id}')" id="hh-timeline-btn-${person.id}" style="display:none;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.25);color:#818cf8;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;width:100%">👥 View Household Timeline</button>
+        </div>
+      </div>
+
       ${tags.length ? `<div class="contact-section"><div class="contact-section-title">Tags</div><div class="tags-container">${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join('')}</div></div>` : ''}
       ${renderCustomFieldsHTML(person)}
       <div class="contact-section" style="border-bottom:none">
@@ -1321,7 +1455,8 @@ function setComposeTab(tab) {
   else { input.placeholder = 'What happened on this call?'; btn.textContent = 'Log Call'; }
 }
 function openNoteCompose() { setComposeTab('note'); document.getElementById('compose-input')?.focus(); }
-function openTextCompose() { setComposeTab('text'); document.getElementById('compose-input')?.focus(); }
+function openTextCompose() {
+  window._selectedTextPhone = window._selectedTextPhone || null; setComposeTab('text'); document.getElementById('compose-input')?.focus(); }
 
 async function submitCompose() {
   const content = document.getElementById('compose-input').value.trim();
@@ -1331,11 +1466,20 @@ async function submitCompose() {
 
   try {
     if (composeTab === 'text') {
-      // Actually send the SMS via Twilio
-      const person = await api(`/api/people/${currentPersonId}`);
-      if (!person.phone) { toast('Contact has no phone number', 'error'); return; }
+      // Use selected phone if picker was used, otherwise fall back to primary
+      let toPhone = window._selectedTextPhone || null;
+      window._selectedTextPhone = null;
+      if (!toPhone) {
+        const primary = _personPhones.find(p => p.is_primary && !p.is_bad) || _personPhones.find(p => !p.is_bad);
+        if (primary) toPhone = primary.phone;
+        else {
+          const person = await api(`/api/people/${currentPersonId}`);
+          toPhone = person?.phone;
+        }
+      }
+      if (!toPhone) { toast('Contact has no valid phone number', 'error'); return; }
       await api('/api/twilio/sms', 'POST', {
-        to: person.phone,
+        to: toPhone,
         body: content,
         personId: currentPersonId
       });
@@ -1715,6 +1859,305 @@ async function triggerAiSummary() {
     } catch(e) { document.body.classList.remove('ai-thinking'); }
   };
   setTimeout(poll, 8000); // give Twilio time to fire recording webhook
+}
+
+// ── PHONE NUMBERS ───────────────────────────────────────────────────────
+let _personPhones = [];  // cached for current contact
+
+async function loadPhones(personId) {
+  try {
+    const phones = await api(`/api/people/${personId}/phones`);
+    _personPhones = phones || [];
+    renderPhonesList(personId, phones);
+  } catch(e) { _personPhones = []; }
+}
+
+function renderPhonesList(personId, phones) {
+  const el = document.getElementById(`phones-list-${personId}`);
+  if (!el) return;
+  if (!phones || !phones.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">No numbers yet</div>';
+    return;
+  }
+  el.innerHTML = phones.map(p => `
+    <div class="phone-row ${p.is_bad ? 'bad-number' : ''}" id="phone-row-${p.id}">
+      ${p.is_primary ? '<span class="phone-primary-dot" title="Primary"></span>' : '<span style="width:6px;flex-shrink:0"></span>'}
+      <span class="phone-num-text" onclick="pickCallSinglePhone('${personId}','${p.phone}')">${formatPhone(p.phone)}</span>
+      <span class="phone-label-badge">${p.label||'mobile'}</span>
+      ${p.is_bad ? '<span class="phone-bad-icon" title="Bad number">⚠</span>' : ''}
+      <button class="phone-action-btn" onclick="toggleBadPhone(${p.id},'${personId}',${p.is_bad})" title="${p.is_bad ? 'Mark as good' : 'Mark as bad/disconnected'}">
+        ${p.is_bad ? '✓' : '⚠'}
+      </button>
+      ${!p.is_primary ? `<button class="phone-action-btn" onclick="makePrimaryPhone(${p.id},'${personId}')" title="Set as primary">★</button>` : ''}
+      <button class="phone-action-btn" onclick="deletePhone(${p.id},'${personId}')" title="Remove" style="color:var(--red)">✕</button>
+    </div>
+  `).join('');
+}
+
+function toggleAddPhone(personId) {
+  const f = document.getElementById(`add-phone-form-${personId}`);
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById(`new-phone-num-${personId}`)?.focus();
+}
+
+async function addPhone(personId) {
+  const numEl = document.getElementById(`new-phone-num-${personId}`);
+  const labelEl = document.getElementById(`new-phone-label-${personId}`);
+  const phone = numEl?.value?.trim();
+  if (!phone) { toast('Enter a phone number', 'error'); return; }
+  try {
+    const isFirst = _personPhones.length === 0;
+    await api(`/api/people/${personId}/phones`, 'POST', { phone, label: labelEl?.value||'mobile', isPrimary: isFirst });
+    numEl.value = '';
+    toast('Phone added ✓', 'success');
+    loadPhones(personId);
+    toggleAddPhone(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deletePhone(phoneId, personId) {
+  try {
+    await api(`/api/people/${personId}/phones/${phoneId}`, 'DELETE');
+    loadPhones(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleBadPhone(phoneId, personId, isBad) {
+  try {
+    await api(`/api/people/${personId}/phones/${phoneId}`, 'PUT', { isBad: !isBad });
+    loadPhones(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function makePrimaryPhone(phoneId, personId) {
+  try {
+    await api(`/api/people/${personId}/phones/${phoneId}`, 'PUT', { isPrimary: true });
+    loadPhones(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── PHONE PICKER (call/text with multiple phones) ──────────────────────
+function showPhonePicker(personId, personName, mode) {
+  const phones = _personPhones.filter(p => !p.is_bad);
+  if (phones.length === 0) { toast('No valid phone numbers on file', 'error'); return; }
+  if (phones.length === 1) {
+    if (mode === 'call') quickCall(personId, phones[0].phone, personName);
+    else openTextComposeWithPhone(phones[0].phone);
+    return;
+  }
+  // Show picker
+  const existing = document.getElementById('phone-picker-overlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'phone-picker-overlay';
+  overlay.className = 'phone-picker-overlay';
+  overlay.innerHTML = `
+    <div class="phone-picker-box">
+      <div class="phone-picker-title">${mode === 'call' ? '📞 Choose number to call' : '💬 Choose number to text'}</div>
+      ${phones.map(p => `
+        <div class="phone-picker-option" onclick="pickPhone('${personId}','${p.phone}','${esc(personName)}','${mode}')">
+          <span style="font-family:var(--font-mono);font-size:14px;font-weight:600;flex:1">${formatPhone(p.phone)}</span>
+          <span class="phone-label-badge">${p.label||'mobile'}</span>
+          ${p.is_primary ? '<span style="color:var(--green);font-size:11px">Primary</span>' : ''}
+        </div>
+      `).join('')}
+      <button onclick="document.getElementById('phone-picker-overlay').remove()" style="margin-top:10px;width:100%;background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:8px;font-size:13px;cursor:pointer">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function pickPhone(personId, phone, name, mode) {
+  document.getElementById('phone-picker-overlay')?.remove();
+  if (mode === 'call') quickCall(personId, phone, name);
+  else openTextComposeWithPhone(phone);
+}
+
+function pickPhoneAndCall(personId, personName) {
+  if (_personPhones.length > 0) showPhonePicker(personId, personName, 'call');
+  else {
+    const p = peopleData.find(p=>String(p.id)===String(personId));
+    if (p?.phone) quickCall(personId, p.phone, personName);
+    else toast('No phone number on file', 'error');
+  }
+}
+
+function pickPhoneAndText(personId, personName) {
+  if (_personPhones.length > 0) showPhonePicker(personId, personName, 'text');
+  else openTextCompose();
+}
+
+function pickCallSinglePhone(personId, phone) {
+  const p = peopleData.find(x=>String(x.id)===String(personId));
+  quickCall(personId, phone, p ? [p.first_name, p.last_name].filter(Boolean).join(' ') : '');
+}
+
+function openTextComposeWithPhone(phone) {
+  // Store the selected phone so submitCompose can use it
+  window._selectedTextPhone = phone;
+  openTextCompose();
+}
+
+// ── ADDRESS ──────────────────────────────────────────────────────────────
+let _addressAutocomplete = null;
+
+function toggleEditAddress(personId) {
+  const disp = document.getElementById(`address-display-${personId}`);
+  const edit = document.getElementById(`address-edit-${personId}`);
+  const btn  = document.getElementById(`edit-addr-btn-${personId}`);
+  if (!disp || !edit) return;
+  const isEditing = edit.style.display !== 'none';
+  disp.style.display = isEditing ? 'block' : 'none';
+  edit.style.display = isEditing ? 'none' : 'block';
+  btn.textContent = isEditing ? 'Edit' : 'Cancel';
+  if (!isEditing) initAddressAutocomplete(personId);
+}
+
+function initAddressAutocomplete(personId) {
+  if (!window.google?.maps?.places) return;
+  const input = document.getElementById(`addr-street-${personId}`);
+  if (!input || input._autocompleteInit) return;
+  input._autocompleteInit = true;
+  const ac = new google.maps.places.Autocomplete(input, {
+    types: ['address'],
+    componentRestrictions: { country: 'us' }
+  });
+  ac.addListener('place_changed', () => {
+    const place = ac.getPlace();
+    if (!place.address_components) return;
+    let streetNum = '', route = '', city = '', state = '', zip = '';
+    for (const c of place.address_components) {
+      if (c.types.includes('street_number')) streetNum = c.short_name;
+      if (c.types.includes('route')) route = c.long_name;
+      if (c.types.includes('locality')) city = c.long_name;
+      if (c.types.includes('administrative_area_level_1')) state = c.short_name;
+      if (c.types.includes('postal_code')) zip = c.short_name;
+    }
+    input.value = [streetNum, route].filter(Boolean).join(' ');
+    const cityEl = document.getElementById(`addr-city-${personId}`);
+    const stateEl = document.getElementById(`addr-state-${personId}`);
+    const zipEl = document.getElementById(`addr-zip-${personId}`);
+    if (cityEl) cityEl.value = city;
+    if (stateEl) stateEl.value = state;
+    if (zipEl) zipEl.value = zip;
+  });
+}
+
+async function saveAddress(personId) {
+  const address = document.getElementById(`addr-street-${personId}`)?.value?.trim()||'';
+  const city    = document.getElementById(`addr-city-${personId}`)?.value?.trim()||'';
+  const state   = document.getElementById(`addr-state-${personId}`)?.value?.trim().toUpperCase()||'';
+  const zip     = document.getElementById(`addr-zip-${personId}`)?.value?.trim()||'';
+  try {
+    await api(`/api/people/${personId}`, 'PUT', { address: address||null, city: city||null, state: state||null, zip: zip||null });
+    toast('Address saved ✓', 'success');
+    // Refresh display
+    const dispEl = document.getElementById(`address-display-${personId}`);
+    if (dispEl) {
+      dispEl.innerHTML = (address||city||state||zip) ? `
+        <div style="font-size:12px;color:var(--text-2);line-height:1.6">
+          ${address ? `<div>${esc(address)}</div>` : ''}
+          ${(city||state||zip) ? `<div>${[city,state,zip].filter(Boolean).join(', ')}</div>` : ''}
+        </div>` : '<div style="font-size:12px;color:var(--text-3)">No address on file</div>';
+    }
+    toggleEditAddress(personId);
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── HOUSEHOLD ─────────────────────────────────────────────────────────────
+async function loadHousehold(personId) {
+  try {
+    const rels = await api(`/api/people/${personId}/relationships`);
+    renderHouseholdList(personId, rels||[]);
+  } catch(e) {}
+}
+
+function renderHouseholdList(personId, rels) {
+  const el = document.getElementById(`household-list-${personId}`);
+  const btn = document.getElementById(`hh-timeline-btn-${personId}`);
+  if (!el) return;
+  if (!rels.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">No household members linked</div>';
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  if (btn) btn.style.display = 'block';
+  el.innerHTML = rels.map(r => {
+    const hhName = [r.first_name, r.last_name].filter(Boolean).join(' ');
+    const initials = hhName.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    return `
+      <div class="household-member" onclick="navigate('contact',${r.related_id})">
+        <div class="hh-avatar">${initials}</div>
+        <div style="flex:1">
+          <div class="hh-name">${esc(hhName)}</div>
+          <div class="hh-label">${r.label||'Household'} · ${r.stage||'Lead'}</div>
+        </div>
+        <button class="hh-remove" onclick="event.stopPropagation();removeHouseholdMember(${r.id},'${personId}')" title="Unlink">✕</button>
+      </div>`;
+  }).join('');
+}
+
+function toggleAddHousehold(personId) {
+  const f = document.getElementById(`add-household-form-${personId}`);
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById(`hh-search-${personId}`)?.focus();
+}
+
+let _hhSearchTimer = null;
+async function searchHouseholdCandidates(personId) {
+  clearTimeout(_hhSearchTimer);
+  _hhSearchTimer = setTimeout(async () => {
+    const q = document.getElementById(`hh-search-${personId}`)?.value?.trim();
+    const resultsEl = document.getElementById(`hh-results-${personId}`);
+    if (!q || q.length < 2) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+    try {
+      const { people } = await api(`/api/people?search=${encodeURIComponent(q)}&limit=10`);
+      if (!resultsEl) return;
+      const filtered = (people||[]).filter(p => String(p.id) !== String(personId));
+      if (!filtered.length) { resultsEl.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:6px">No results</div>'; return; }
+      resultsEl.innerHTML = filtered.map(p => {
+        const n = [p.first_name,p.last_name].filter(Boolean).join(' ');
+        return `<div onclick="addHouseholdMember('${personId}',${p.id},'${esc(n)}')"
+          style="padding:7px 8px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px"
+          onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background=''">
+          <div style="width:24px;height:24px;border-radius:50%;background:var(--bg-5);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${n.substring(0,2).toUpperCase()}</div>
+          <div><div style="font-weight:600">${esc(n)}</div><div style="color:var(--text-3);font-size:11px">${formatPhone(p.phone)}</div></div>
+        </div>`;
+      }).join('');
+    } catch(e) {}
+  }, 300);
+}
+
+async function addHouseholdMember(personId, relatedId, relatedName) {
+  try {
+    await api(`/api/people/${personId}/relationships`, 'POST', { relatedPersonId: relatedId, label: 'household' });
+    toast(`Linked ${relatedName} to household ✓`, 'success');
+    toggleAddHousehold(personId);
+    loadHousehold(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function removeHouseholdMember(relId, personId) {
+  try {
+    await api(`/api/people/${personId}/relationships/${relId}`, 'DELETE');
+    loadHousehold(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function viewHouseholdTimeline(personId) {
+  try {
+    const activities = await api(`/api/people/${personId}/household-activities`);
+    const scroll = document.getElementById('timeline-scroll');
+    if (!scroll) return;
+    scroll.innerHTML = `
+      <div style="padding:8px 16px 4px;font-size:11px;font-weight:700;color:var(--blue);letter-spacing:0.1em;text-transform:uppercase">
+        👥 Household Timeline
+        <button onclick="loadActivities(currentPersonId)" style="float:right;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px">← Back to contact</button>
+      </div>
+      ${renderTimelineHTML(activities)}`;
+  } catch(e) { toast('Could not load household timeline', 'error'); }
 }
 
 // ── DELETE LEAD ────────────────────────────────────────────────────────
