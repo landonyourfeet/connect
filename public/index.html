@@ -3231,9 +3231,10 @@ async function loadAdmin() {
   const viewEl = document.getElementById('admin-dynamic');
   viewEl.innerHTML = '<div style="text-align:center;padding:80px"><div class="spinner"></div></div>';
   try {
-    const [agents, callLines] = await Promise.all([
+    const [agents, callLines, cameras] = await Promise.all([
       api('/api/agents'),
-      api('/api/call-lines').catch(() => [])
+      api('/api/call-lines').catch(() => []),
+      api('/api/admin/cameras').catch(() => [])
     ]);
     viewEl.innerHTML = `
       <div class="admin-section">
@@ -3290,9 +3291,52 @@ async function loadAdmin() {
             <td><span class="${l.is_active?'online-dot':'offline-dot'}"></span>${l.is_active?'Active':'Inactive'}</td>
           </tr>`).join('')}</tbody>
         </table>
-      </div>`;
+      </div>
 
-  } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <div class="admin-section-title">📷 Camera Names</div>
+          <button onclick="discoverCameras()" style="padding:5px 12px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-weight:600">🔍 Auto-Discover</button>
+        </div>
+        <div style="padding:0 0 8px">
+          ${cameras.length === 0 ? `<div style="padding:20px;font-size:13px;color:var(--text-3);text-align:center">
+            No cameras yet. Click <strong>Auto-Discover</strong> to populate from security events.
+          </div>` : `<table class="admin-table">
+            <thead><tr><th>MAC Address</th><th>Friendly Name</th><th>Site</th><th></th></tr></thead>
+            <tbody>${cameras.map(c=>`<tr id="cam-row-${c.id}">
+              <td style="font-family:monospace;font-size:11px;color:var(--text-3)">${esc(c.mac)}</td>
+              <td><input type="text" value="${esc(c.name||c.mac)}" id="cam-name-${c.id}"
+                style="background:var(--bg-3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box"
+                onkeydown="if(event.key==='Enter')saveCameraName('${c.mac}','${c.id}')"></td>
+              <td style="color:var(--text-3);font-size:12px">${esc(c.site||'')}</td>
+              <td><button onclick="saveCameraName('${c.mac}','${c.id}')"
+                style="padding:4px 10px;font-size:11px;font-weight:700;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer">Save</button></td>
+            </tr>`).join('')}</tbody>
+          </table>`}
+        </div>
+      </div>`;\n\n  } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
+}
+
+// ── CAMERA NAME ADMIN ─────────────────────────────────────────────────────────
+async function saveCameraName(mac, id) {
+  const input = document.getElementById(`cam-name-${id}`);
+  if (!input) return;
+  const name = input.value.trim();
+  if (!name) { toast('Enter a name', 'error'); return; }
+  try {
+    await api(`/api/admin/cameras/${encodeURIComponent(mac)}`, 'PUT', { name });
+    toast(`Camera renamed to "${name}" ✓`, 'success');
+    input.style.borderColor = 'var(--green)';
+    setTimeout(() => { input.style.borderColor = ''; }, 1500);
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function discoverCameras() {
+  try {
+    const r = await api('/api/admin/cameras/discover', 'POST');
+    toast(`Discovered ${r.discovered} cameras, added ${r.added} new ✓`, 'success');
+    loadAdmin();
+  } catch(e) { toast('Discover failed: ' + e.message, 'error'); }
 }
 
 // ── POWER DIALER ──────────────────────────────────────────────────────────────
