@@ -1909,8 +1909,11 @@ async function loadSecurityDetections(personId) {
     camWrap.style.display = '';
     camList.innerHTML = matched.slice(0, 8).map(e => {
       const ago = timeAgo(new Date(e.triggered_at));
-      const thumb = e.thumbnail_b64
-        ? `<img class="sec-det-thumb" src="data:image/jpeg;base64,${e.thumbnail_b64.substring(0,50000)}" onerror="this.style.display='none'">`
+      const thumbSrc = e.thumbnail_b64
+        ? (e.thumbnail_b64.startsWith('data:') ? e.thumbnail_b64 : `data:image/jpeg;base64,${e.thumbnail_b64}`)
+        : null;
+      const thumb = thumbSrc
+        ? `<img class="sec-det-thumb" src="${thumbSrc.substring(0, 100000)}" onerror="this.style.display='none'">`
         : `<div style="width:38px;height:38px;border-radius:4px;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📷</div>`;
       const link = e.event_link ? `<a class="sec-det-link" href="${e.event_link}" target="_blank">View Footage →</a>` : '';
       return `<div class="sec-det-row">
@@ -2724,11 +2727,19 @@ async function loadSecurityAlertHistory() {
         const timeStr = t.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
         const agoStr  = timeAgo(t);
 
-        const thumb = e.thumbnail_b64
-          ? `<img class="sec-hist-thumb" src="data:image/jpeg;base64,${e.thumbnail_b64.substring(0,50000)}" onerror="this.className='sec-hist-thumb-ph';this.innerHTML='📷'">`
+        const thumbSrc = e.thumbnail_b64
+          ? (e.thumbnail_b64.startsWith('data:') ? e.thumbnail_b64 : `data:image/jpeg;base64,${e.thumbnail_b64}`)
+          : null;
+        const thumb = thumbSrc
+          ? `<img class="sec-hist-thumb" src="${thumbSrc.substring(0, 100000)}" onerror="this.outerHTML='<div class=sec-hist-thumb-ph>📷</div>'">`
           : `<div class="sec-hist-thumb-ph">📷</div>`;
 
-        const siteLabel = e.site ? `<div class="sec-hist-site">${esc(e.site)}</div>` : '';
+        // Show friendly name or format MAC as readable
+        const camDisplay = (e.camera_name && e.camera_name !== e.camera_mac)
+          ? e.camera_name
+          : (e.camera_mac ? `Camera (${e.camera_mac.match(/.{2}/g).join(':')})` : 'Unknown Camera');
+
+        const siteLabel = e.site && e.site !== 'Watchlist' ? `<div class="sec-hist-site">${esc(e.site)}</div>` : '';
 
         let personHTML = '';
         let openBtn = '';
@@ -2755,7 +2766,7 @@ async function loadSecurityAlertHistory() {
             ${thumb}
             <div class="sec-hist-meta">
               ${siteLabel}
-              <div class="sec-hist-cam">${esc(e.camera_name || 'Unknown Camera')}</div>
+              <div class="sec-hist-cam">${esc(camDisplay)}</div>
               <div class="sec-hist-time">${timeStr} &nbsp;·&nbsp; ${agoStr}</div>
             </div>
           </div>
