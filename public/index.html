@@ -1537,6 +1537,108 @@
   </div><!-- /app-body -->
 </div><!-- /app -->
 
+<!-- ── POWER DIALER OVERLAY ──────────────────────────────────────────────── -->
+<style>
+  #power-dialer {
+    display: none;
+    position: fixed;
+    bottom: 90px; right: 24px;
+    width: 320px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    z-index: 9000;
+    overflow: hidden;
+    font-family: inherit;
+  }
+  #power-dialer.visible { display: block; }
+  .pd-header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 12px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .pd-title { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
+  .pd-progress { font-size: 11px; color: var(--text-3); }
+  .pd-progress strong { color: var(--text); }
+  .pd-contact {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .pd-contact-name { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .pd-contact-phone { font-size: 12px; color: var(--text-3); font-family: monospace; }
+  .pd-status {
+    padding: 8px 16px;
+    font-size: 12px; font-weight: 600;
+    min-height: 32px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .pd-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .pd-status-dot.calling { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pd-pulse 1s infinite; }
+  .pd-status-dot.paused  { background: var(--amber); }
+  .pd-status-dot.waiting { background: var(--text-3); }
+  @keyframes pd-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .pd-bar {
+    height: 3px; background: var(--bg-4); margin: 0 16px 10px;
+    border-radius: 2px; overflow: hidden;
+  }
+  .pd-bar-fill { height: 100%; background: var(--red); border-radius: 2px; transition: width 0.4s; }
+  .pd-actions {
+    display: flex; gap: 8px; padding: 10px 16px 14px; flex-wrap: wrap;
+  }
+  .pd-btn {
+    flex: 1; min-width: 70px;
+    padding: 7px 10px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-4); color: var(--text-2);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap; text-align: center;
+  }
+  .pd-btn:hover { background: var(--bg-5); color: var(--text); }
+  .pd-btn.danger { background: rgba(232,0,58,0.12); color: var(--red); border-color: rgba(232,0,58,0.3); }
+  .pd-btn.danger:hover { background: rgba(232,0,58,0.22); }
+  .pd-btn.primary { background: var(--red); color: #fff; border-color: var(--red); }
+  .pd-btn.primary:hover { opacity: 0.85; }
+  .pd-btn.success { background: rgba(0,200,100,0.15); color: #00c864; border-color: rgba(0,200,100,0.3); }
+  .pd-btn.success:hover { background: rgba(0,200,100,0.25); }
+  .pd-queue-list {
+    max-height: 110px; overflow-y: auto;
+    padding: 0 16px 12px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .pd-queue-item {
+    font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    display: flex; align-items: center; gap: 6px; color: var(--text-3);
+  }
+  .pd-queue-item.current { background: rgba(232,0,58,0.1); color: var(--text); font-weight: 600; }
+  .pd-queue-item.done    { text-decoration: line-through; opacity: 0.4; }
+  .pd-queue-item.skipped { opacity: 0.4; font-style: italic; }
+</style>
+
+<div id="power-dialer">
+  <div class="pd-header">
+    <span class="pd-title">⚡ Power Dialer</span>
+    <span class="pd-progress"><strong id="pd-current-num">1</strong> of <strong id="pd-total-num">0</strong></span>
+  </div>
+  <div class="pd-contact">
+    <div class="pd-contact-name" id="pd-contact-name">—</div>
+    <div class="pd-contact-phone" id="pd-contact-phone">—</div>
+  </div>
+  <div class="pd-status" id="pd-status">
+    <div class="pd-status-dot waiting" id="pd-status-dot"></div>
+    <span id="pd-status-text">Ready</span>
+  </div>
+  <div class="pd-bar"><div class="pd-bar-fill" id="pd-bar-fill" style="width:0%"></div></div>
+  <div class="pd-actions">
+    <button class="pd-btn success" id="pd-call-btn"    onclick="pdCall()">📞 Call</button>
+    <button class="pd-btn"         id="pd-pause-btn"   onclick="pdTogglePause()">⏸ Pause After</button>
+    <button class="pd-btn danger"  id="pd-skip-btn"    onclick="pdSkip()">⏭ Skip</button>
+    <button class="pd-btn danger"  id="pd-end-btn"     onclick="pdEnd()" style="flex:0;min-width:auto;padding:7px 10px">✕ End</button>
+  </div>
+  <div class="pd-queue-list" id="pd-queue-list"></div>
+</div>
+
 <!-- MODALS -->
 <div class="modal-overlay" id="modal-new-contact">
   <div class="modal">
@@ -3040,7 +3142,187 @@ async function loadAdmin() {
   } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
 }
 
-function toggleAddUserForm() {
+// ── POWER DIALER ──────────────────────────────────────────────────────────────
+const PD = {
+  queue: [],       // [{id, name, phone}]
+  index: 0,
+  paused: false,   // pause AFTER current call ends
+  active: false,
+  waitingToCall: false, // true when we've advanced to next but waiting for user to hit Call
+
+  get current() { return this.queue[this.index] || null; },
+  get total()   { return this.queue.length; },
+};
+
+async function bulkCall() {
+  const checked = [...document.querySelectorAll('.row-check:checked')];
+  if (!checked.length) { toast('Select contacts first', 'error'); return; }
+
+  // Build queue — fetch phone for each selected person
+  const ids = checked.map(c => c.value);
+  toast('Building call queue…', 'info');
+
+  const people = await Promise.all(ids.map(id =>
+    api(`/api/people/${id}`).catch(() => null)
+  ));
+
+  PD.queue = people
+    .filter(p => p && (p.phone || (p.phones && p.phones.length)))
+    .map(p => ({
+      id: p.id,
+      name: `${p.first_name||''} ${p.last_name||''}`.trim() || 'Unknown',
+      phone: p.phone || (p.phones && p.phones[0]) || null,
+    }))
+    .filter(p => p.phone);
+
+  if (!PD.queue.length) { toast('None of the selected contacts have phone numbers', 'error'); return; }
+
+  PD.index   = 0;
+  PD.paused  = false;
+  PD.active  = true;
+  PD.waitingToCall = true;
+
+  pdShow();
+  pdUpdateUI();
+  // Open the first contact's file
+  openContact(PD.current.id);
+  toast(`Power dialer ready — ${PD.queue.length} contacts. Click 📞 Call to begin.`, 'info');
+}
+
+function pdShow() {
+  document.getElementById('power-dialer').classList.add('visible');
+}
+function pdHide() {
+  document.getElementById('power-dialer').classList.remove('visible');
+}
+
+function pdUpdateUI() {
+  const c = PD.current;
+  if (!c) return;
+
+  document.getElementById('pd-contact-name').textContent  = c.name;
+  document.getElementById('pd-contact-phone').textContent = c.phone;
+  document.getElementById('pd-current-num').textContent   = PD.index + 1;
+  document.getElementById('pd-total-num').textContent     = PD.total;
+  document.getElementById('pd-bar-fill').style.width      = `${Math.round(((PD.index) / PD.total) * 100)}%`;
+
+  // Queue list
+  const list = document.getElementById('pd-queue-list');
+  list.innerHTML = PD.queue.map((p, i) => {
+    const cls = i < PD.index ? 'done' : i === PD.index ? 'current' : '';
+    const icon = i < PD.index ? '✓' : i === PD.index ? '▶' : `${i+1}.`;
+    return `<div class="pd-queue-item ${cls}">${icon} ${esc(p.name)}</div>`;
+  }).join('');
+  // Scroll current into view
+  const cur = list.querySelector('.current');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+
+  // Pause button label
+  const pauseBtn = document.getElementById('pd-pause-btn');
+  if (PD.paused) {
+    pauseBtn.textContent = '▶ Resume';
+    pauseBtn.classList.add('primary');
+  } else {
+    pauseBtn.textContent = '⏸ Pause After';
+    pauseBtn.classList.remove('primary');
+  }
+
+  // Call button
+  const callBtn = document.getElementById('pd-call-btn');
+  if (PD.waitingToCall) {
+    callBtn.textContent = '📞 Call';
+    callBtn.classList.add('success');
+    callBtn.disabled = false;
+    pdSetStatus('waiting', 'Ready to call');
+  } else {
+    callBtn.textContent = '📞 Calling…';
+    callBtn.classList.remove('success');
+    callBtn.disabled = true;
+    pdSetStatus('calling', 'On call…');
+  }
+}
+
+function pdSetStatus(type, text) {
+  const dot = document.getElementById('pd-status-dot');
+  dot.className = `pd-status-dot ${type}`;
+  document.getElementById('pd-status-text').textContent = text;
+}
+
+async function pdCall() {
+  const c = PD.current;
+  if (!c || !PD.active) return;
+  PD.waitingToCall = false;
+  pdUpdateUI();
+  await quickCall(c.id, c.phone, c.name);
+}
+
+function pdTogglePause() {
+  PD.paused = !PD.paused;
+  pdUpdateUI();
+  toast(PD.paused ? 'Will pause after this call' : 'Pause cancelled — will auto-advance', 'info');
+}
+
+function pdSkip() {
+  // Mark current as skipped in the list
+  const list = document.getElementById('pd-queue-list');
+  const items = list.querySelectorAll('.pd-queue-item');
+  if (items[PD.index]) items[PD.index].classList.add('skipped');
+
+  // Hang up if a call is in progress
+  if (activeCall) { activeCall.disconnect(); }
+
+  pdAdvance();
+}
+
+function pdAdvance() {
+  PD.index++;
+  if (PD.index >= PD.total) {
+    pdFinish();
+    return;
+  }
+  PD.waitingToCall = true;
+  pdUpdateUI();
+
+  // Open the next contact's file
+  openContact(PD.current.id);
+
+  if (PD.paused) {
+    pdSetStatus('paused', 'Paused — make notes, then Resume');
+    toast(`Paused. Review ${PD.current.name}'s file, then hit Resume.`, 'info');
+  } else {
+    // Auto-dial after a brief moment so the contact panel loads
+    pdSetStatus('waiting', 'Opening next contact…');
+    setTimeout(() => { if (PD.active && !PD.paused && PD.waitingToCall) pdCall(); }, 1800);
+  }
+}
+
+function pdFinish() {
+  PD.active = false;
+  PD.paused = false;
+  pdSetStatus('waiting', `✅ Done — ${PD.total} contacts called`);
+  document.getElementById('pd-call-btn').textContent = '✅ Done';
+  document.getElementById('pd-call-btn').disabled = true;
+  document.getElementById('pd-bar-fill').style.width = '100%';
+  toast(`Power dialer complete — ${PD.total} contacts.`, 'success');
+  setTimeout(pdHide, 4000);
+}
+
+function pdEnd() {
+  if (activeCall) activeCall.disconnect();
+  PD.active = false;
+  pdHide();
+  toast('Power dialer ended', 'info');
+}
+
+// Hook into the existing handleCallEnd so dialer auto-advances
+const _origHandleCallEnd = handleCallEnd;
+handleCallEnd = function() {
+  _origHandleCallEnd.call(this);
+  if (PD.active && !PD.waitingToCall) {
+    // Small delay so AI summary / timeline can start loading
+    setTimeout(pdAdvance, 1200);
+  }
+};
   const f = document.getElementById('add-user-form');
   if (!f) return;
   f.style.display = f.style.display === 'none' ? 'block' : 'none';
