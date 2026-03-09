@@ -212,6 +212,73 @@
     [data-theme="light"] .compose-tabs  { background: var(--bg-3); }
     [data-theme="light"] .compose-input { background: var(--bg-2); color: var(--text); }
 
+    /* ── STEALTH MODE — CONTACT RECORD READABILITY FIXES ───── */
+    /* Panels */
+    [data-theme="dark"] .contact-left  { background: #0d0509; border-color: #220010; }
+    [data-theme="dark"] .contact-right { background: #0d0509; border-color: #220010; }
+    [data-theme="dark"] .contact-card-top { background: linear-gradient(160deg, #1c000a 0%, #0e0005 100%); border-color: rgba(232,0,58,0.55); }
+
+    /* Avatar ring more visible */
+    [data-theme="dark"] .contact-avatar-ring { border-color: rgba(232,0,58,0.12); border-top-color: rgba(232,0,58,0.45); }
+
+    /* Subject ID */
+    [data-theme="dark"] .contact-subject-id { color: rgba(232,0,58,0.4); }
+
+    /* Stage badge */
+    [data-theme="dark"] .contact-stage-badge { color: rgba(232,0,58,0.8); border-color: rgba(232,0,58,0.3); }
+
+    /* Section titles — full brightness red */
+    [data-theme="dark"] .contact-section-title { color: rgba(232,0,58,0.9); opacity: 1; }
+    [data-theme="dark"] .right-section-title   { color: rgba(232,0,58,0.9); opacity: 1; }
+
+    /* Section borders + corners */
+    [data-theme="dark"] .contact-section { border-color: #1c0010; }
+    [data-theme="dark"] .contact-section::before,
+    [data-theme="dark"] .contact-section::after { border-color: rgba(100,20,45,0.55); }
+    [data-theme="dark"] .right-section { border-color: #1c0010; }
+    [data-theme="dark"] .right-section::before,
+    [data-theme="dark"] .right-section::after  { border-color: rgba(100,20,45,0.55); }
+
+    /* Detail labels — muted pinkish-red, legible */
+    [data-theme="dark"] .detail-label { color: rgba(210,120,145,0.5); }
+    /* Detail values — near-white */
+    [data-theme="dark"] .detail-value { color: #ccc4c8; }
+
+    /* Stage select */
+    [data-theme="dark"] .stage-select { color: #c0b8bc; background: rgba(20,5,10,0.9); border-bottom-color: rgba(100,25,50,0.5); }
+
+    /* Action buttons */
+    [data-theme="dark"] .cqa-btn         { border-color: rgba(130,40,65,0.5); color: rgba(210,130,155,0.5); }
+    [data-theme="dark"] .cqa-btn:hover   { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.07); }
+    [data-theme="dark"] .cqa-call        { border-color: rgba(0,180,80,0.22); color: rgba(0,200,100,0.65); }
+    [data-theme="dark"] .cqa-call:hover  { border-color: #00c864; color: #00c864; background: rgba(0,200,100,0.08); }
+    [data-theme="dark"] .cqa-text        { border-color: rgba(0,130,230,0.22); color: rgba(0,153,255,0.65); }
+    [data-theme="dark"] .cqa-text:hover  { border-color: #0099ff; color: #0099ff; background: rgba(0,153,255,0.08); }
+    [data-theme="dark"] .cqa-note        { border-color: rgba(200,110,0,0.22); color: rgba(255,140,0,0.65); }
+    [data-theme="dark"] .cqa-note:hover  { border-color: var(--amber); color: var(--amber); background: rgba(255,140,0,0.08); }
+
+    /* Back button */
+    [data-theme="dark"] .back-btn        { color: rgba(210,120,145,0.4); }
+    [data-theme="dark"] .back-btn:hover  { color: var(--red); }
+
+    /* Add button */
+    [data-theme="dark"] .add-btn         { border-color: rgba(120,30,55,0.45); color: rgba(210,120,145,0.45); }
+    [data-theme="dark"] .add-btn:hover   { color: var(--red); border-color: rgba(232,0,58,0.4); }
+
+    /* Tasks */
+    [data-theme="dark"] .task-text       { color: #b8b0b4; }
+    [data-theme="dark"] .task-check      { border-color: rgba(120,30,55,0.5); }
+
+    /* Timeline center */
+    [data-theme="dark"] .timeline-header { background: #0d0509; border-color: #1c0010; }
+    [data-theme="dark"] .compose-area    { background: #0d0509; border-color: rgba(80,15,35,0.7); }
+    [data-theme="dark"] .compose-tabs    { background: #090305; border-color: #1c0010; }
+    [data-theme="dark"] .compose-tab     { color: rgba(210,120,145,0.45); }
+    [data-theme="dark"] .compose-tab.active { color: var(--red); }
+    [data-theme="dark"] .compose-footer  { background: #090305; border-color: #1c0010; }
+    [data-theme="dark"] .filter-pill     { border-color: rgba(80,15,35,0.6); color: rgba(210,120,145,0.45); }
+    [data-theme="dark"] .filter-pill.active { background: rgba(232,0,58,0.1); color: var(--red); border-color: rgba(232,0,58,0.35); }
+
     /* Modals */
     [data-theme="light"] .modal-box { background: var(--bg-2); border-color: var(--border); }
 
