@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const multer  = require('multer');
+const { google } = require('googleapis');
 const path = require('path');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -27,6 +28,74 @@ function broadcastSecurityEvent(payload) {
   }
   dead.forEach(c => sseClients.delete(c));
   console.log(`[Jireh] Broadcast to ${sseClients.size} client(s):`, payload.eventId || payload.type);
+}
+
+// ── Per-agent SSE (presence + notifications) ─────────────────────────────
+const agentConnections = new Map(); // agentId -> res
+
+function sendToAgent(agentId, payload) {
+  const res = agentConnections.get(String(agentId));
+  if (!res) return false;
+  try { res.write(`data: ${JSON.stringify(payload)}\n\n`); return true; }
+  catch(e) { agentConnections.delete(String(agentId)); return false; }
+}
+
+function broadcastToAll(payload, excludeAgentId = null) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const [agentId, res] of agentConnections) {
+    if (excludeAgentId && String(agentId) === String(excludeAgentId)) continue;
+    try { res.write(data); } catch(e) { agentConnections.delete(agentId); }
+  }
+}
+
+// ── Presence tracking ─────────────────────────────────────────────────────
+const presenceMap = new Map(); // personId -> Map(agentId -> agentInfo)
+
+function setPresence(personId, agent) {
+  if (!presenceMap.has(String(personId))) presenceMap.set(String(personId), new Map());
+  presenceMap.get(String(personId)).set(String(agent.id), {
+    id: agent.id, name: agent.name,
+    avatar_b64: agent.avatar_b64 || null,
+    avatar_color: agent.avatar_color || '#6366f1'
+  });
+  broadcastPresence(personId);
+}
+
+function clearPresence(personId, agentId) {
+  const map = presenceMap.get(String(personId));
+  if (map) { map.delete(String(agentId)); if (!map.size) presenceMap.delete(String(personId)); }
+  broadcastPresence(personId);
+}
+
+function broadcastPresence(personId) {
+  const map = presenceMap.get(String(personId));
+  const viewers = map ? Array.from(map.values()) : [];
+  broadcastToAll({ type: 'presence', personId: String(personId), viewers });
+}
+
+// Gmail OAuth helper
+function getGmailOAuth(agent) {
+  const oauth2 = new google.auth.OAuth2(
+    process.env.GMAIL_CLIENT_ID,
+    process.env.GMAIL_CLIENT_SECRET,
+    process.env.APP_URL + '/api/gmail/callback'
+  );
+  if (agent.gmail_refresh_token) {
+    oauth2.setCredentials({ refresh_token: agent.gmail_refresh_token });
+  }
+  return oauth2;
+}
+
+function leavePresence(personId, agentId) {
+  const map = presenceMap.get(String(personId));
+  if (map) { map.delete(String(agentId)); if (!map.size) presenceMap.delete(String(personId)); }
+  broadcastPresence(personId);
+}
+
+function broadcastPresence(personId) {
+  const map = presenceMap.get(String(personId));
+  const viewers = map ? Array.from(map.values()) : [];
+  broadcastToAll({ type: 'presence', personId: String(personId), viewers });
 }
 
 app.use(cors({ origin: '*' }));
@@ -654,12 +723,39 @@ app.get('/api/activities', auth, async (req, res) => {
 
 app.post('/api/activities', auth, async (req, res) => {
   try {
-    const { personId, type, body, duration, recordingUrl, callId, direction } = req.body;
+    const { personId, type, body, duration, recordingUrl, callId, direction, mentions, emailSubject } = req.body;
     const r = await pool.query(
-      'INSERT INTO activities (person_id,agent_id,type,body,duration,recording_url,call_id,direction) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
-      [personId, req.agent.id, type||'note', body||null, duration||null, recordingUrl||null, callId||null, direction||'outbound']
+      `INSERT INTO activities (person_id,agent_id,type,body,duration,recording_url,call_id,direction,mentions,email_subject)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [personId, req.agent.id, type||'note', body||null, duration||null, recordingUrl||null, callId||null,
+       direction||'outbound', mentions||[], emailSubject||null]
     );
-    res.json(r.rows[0]);
+    const activity = r.rows[0];
+
+    // Parse @mentions and fire notifications
+    if (body && (mentions?.length || body.includes('@'))) {
+      const agentNames = mentions || [];
+      if (agentNames.length) {
+        // Load person name for notification body
+        const personR = await pool.query('SELECT first_name, last_name FROM people WHERE id=$1', [personId]);
+        const personName = personR.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'a contact';
+        for (const mentionedName of agentNames) {
+          const agR = await pool.query('SELECT id FROM agents WHERE LOWER(name) LIKE LOWER($1) LIMIT 1', [`%${mentionedName}%`]);
+          if (agR.rows[0] && String(agR.rows[0].id) !== String(req.agent.id)) {
+            await createNotification({
+              recipientId: agR.rows[0].id,
+              senderId: req.agent.id,
+              type: 'mention',
+              personId: personId,
+              activityId: activity.id,
+              body: `${req.agent.name} mentioned you in a note on ${personName}: "${body.substring(0,120)}"`
+            });
+          }
+        }
+      }
+    }
+
+    res.json(activity);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1783,6 +1879,37 @@ async function initDB() {
   `, 'create smart_lists');
   await pool.query(`ALTER TABLE smart_lists ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0`).catch(()=>{});
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS smart_lists_name_idx ON smart_lists(name)`, 'smart_lists name index');
+  await run(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `, 'create app_settings');
+
+  // Agent profile extensions
+  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_b64 TEXT`).catch(()=>{});
+  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT`).catch(()=>{});
+  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_email TEXT`).catch(()=>{});
+
+  // Activity mentions
+  await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
+  await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS email_subject TEXT`).catch(()=>{});
+
+  // Notifications table
+  await run(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      recipient_id  TEXT NOT NULL,
+      sender_id     TEXT,
+      type          TEXT NOT NULL DEFAULT 'mention',
+      person_id     TEXT,
+      activity_id   TEXT,
+      body          TEXT,
+      is_read       BOOLEAN DEFAULT false,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, 'create notifications');
+  await pool.query(`CREATE INDEX IF NOT EXISTS notif_recipient_idx ON notifications(recipient_id, is_read, created_at DESC)`).catch(()=>{});
 
   await run(`
     CREATE TABLE IF NOT EXISTS custom_fields (
@@ -2153,6 +2280,331 @@ app.post('/api/protect/webhook', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// AGENT SSE STREAM — presence + notifications over one connection
+// ────────────────────────────────────────────────────────────────────────────
+app.get('/api/events/stream', auth, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const agentId = String(req.agent.id);
+  agentConnections.set(agentId, res);
+  console.log(`[SSE] Agent ${req.agent.name} connected (${agentConnections.size} total)`);
+
+  // Send initial ping
+  res.write(':ok\n\n');
+
+  const ping = setInterval(() => {
+    try { res.write(':ping\n\n'); }
+    catch(e) { clearInterval(ping); agentConnections.delete(agentId); }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    agentConnections.delete(agentId);
+    // Clear this agent from all presence maps
+    for (const [personId, map] of presenceMap) {
+      if (map.has(agentId)) {
+        map.delete(agentId);
+        if (!map.size) presenceMap.delete(personId);
+        broadcastPresence(personId);
+      }
+    }
+    console.log(`[SSE] Agent ${req.agent.name} disconnected (${agentConnections.size} total)`);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// MY PROFILE — get + update current agent
+// ────────────────────────────────────────────────────────────────────────────
+app.get('/api/me', auth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      'SELECT id,name,email,role,phone,avatar_color,avatar_b64,gmail_email,is_active FROM agents WHERE id=$1',
+      [req.agent.id]
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/me', auth, async (req, res) => {
+  try {
+    const { name, phone, avatar_color, avatar_b64 } = req.body;
+    const r = await pool.query(
+      `UPDATE agents SET
+        name = COALESCE($1, name),
+        phone = COALESCE($2, phone),
+        avatar_color = COALESCE($3, avatar_color),
+        avatar_b64 = COALESCE($4, avatar_b64),
+        updated_at = NOW()
+       WHERE id=$5
+       RETURNING id,name,email,role,phone,avatar_color,avatar_b64,gmail_email`,
+      [name||null, phone||null, avatar_color||null, avatar_b64||null, req.agent.id]
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Change password
+app.put('/api/me/password', auth, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    const r = await pool.query('SELECT password_hash FROM agents WHERE id=$1', [req.agent.id]);
+    const ok = await bcrypt.compare(current_password, r.rows[0].password_hash);
+    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE agents SET password_hash=$1 WHERE id=$2', [hash, req.agent.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRESENCE — who is viewing a contact right now
+// ────────────────────────────────────────────────────────────────────────────
+app.post('/api/presence/enter', auth, async (req, res) => {
+  const { personId } = req.body;
+  if (!personId) return res.status(400).json({ error: 'personId required' });
+  // Get fresh agent data with avatar
+  const ar = await pool.query('SELECT id,name,avatar_b64,avatar_color FROM agents WHERE id=$1', [req.agent.id]);
+  setPresence(personId, ar.rows[0]);
+  res.json({ ok: true });
+});
+
+app.post('/api/presence/leave', auth, async (req, res) => {
+  const { personId } = req.body;
+  if (!personId) return res.status(400).json({ error: 'personId required' });
+  clearPresence(personId, req.agent.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/presence/:personId', auth, (req, res) => {
+  const map = presenceMap.get(String(req.params.personId));
+  const viewers = map ? Array.from(map.values()) : [];
+  res.json({ viewers });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS
+// ────────────────────────────────────────────────────────────────────────────
+app.get('/api/notifications', auth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT n.*, a.name as sender_name, a.avatar_b64 as sender_avatar, a.avatar_color as sender_color,
+              p.first_name, p.last_name
+       FROM notifications n
+       LEFT JOIN agents a ON a.id::text = n.sender_id
+       LEFT JOIN people p ON p.id::text = n.person_id
+       WHERE n.recipient_id = $1
+       ORDER BY n.created_at DESC LIMIT 50`,
+      [String(req.agent.id)]
+    );
+    const unread = r.rows.filter(n => !n.is_read).length;
+    res.json({ notifications: r.rows, unread });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/notifications/:id/read', auth, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=true WHERE id=$1 AND recipient_id=$2',
+      [req.params.id, String(req.agent.id)]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/notifications/read-all', auth, async (req, res) => {
+  try {
+    await pool.query('UPDATE notifications SET is_read=true WHERE recipient_id=$1', [String(req.agent.id)]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Internal helper — create notification + push to agent via SSE
+async function createNotification({ recipientId, senderId, type, personId, activityId, body }) {
+  try {
+    const r = await pool.query(
+      `INSERT INTO notifications (recipient_id, sender_id, type, person_id, activity_id, body)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [String(recipientId), senderId ? String(senderId) : null, type,
+       personId ? String(personId) : null, activityId ? String(activityId) : null, body]
+    );
+    // Live push to recipient if online
+    sendToAgent(recipientId, { type: 'notification', notification: r.rows[0] });
+    return r.rows[0];
+  } catch(e) { console.error('[notification]', e.message); }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GMAIL PER-AGENT OAUTH
+// ────────────────────────────────────────────────────────────────────────────
+app.get('/api/gmail/connect', auth, (req, res) => {
+  if (!process.env.GMAIL_CLIENT_ID) return res.status(400).json({ error: 'GMAIL_CLIENT_ID not set' });
+  const oauth2 = getGmailOAuth(req.agent);
+  const url = oauth2.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: [
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ],
+    state: String(req.agent.id)
+  });
+  res.redirect(url);
+});
+
+app.get('/api/gmail/callback', async (req, res) => {
+  const { code, state: agentId } = req.query;
+  if (!code || !agentId) return res.send('Missing params.');
+  try {
+    const oauth2 = new google.auth.OAuth2(
+      process.env.GMAIL_CLIENT_ID,
+      process.env.GMAIL_CLIENT_SECRET,
+      process.env.APP_URL + '/api/gmail/callback'
+    );
+    const { tokens } = await oauth2.getToken(code);
+    // Get Gmail address
+    oauth2.setCredentials(tokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    const gmailEmail = profile.data.emailAddress;
+
+    await pool.query(
+      `UPDATE agents SET gmail_refresh_token=$1, gmail_email=$2 WHERE id=$3`,
+      [tokens.refresh_token || null, gmailEmail, agentId]
+    );
+    res.send(`<script>window.close();</script><p>Gmail connected (${gmailEmail}). You can close this tab.</p>`);
+  } catch(e) {
+    res.send('Error: ' + e.message);
+  }
+});
+
+app.post('/api/gmail/disconnect', auth, async (req, res) => {
+  try {
+    await pool.query('UPDATE agents SET gmail_refresh_token=NULL, gmail_email=NULL WHERE id=$1', [req.agent.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Send email via agent's connected Gmail
+app.post('/api/gmail/send', auth, async (req, res) => {
+  try {
+    const { to, subject, body, personId } = req.body;
+    const agentR = await pool.query(
+      'SELECT gmail_refresh_token, gmail_email, name FROM agents WHERE id=$1', [req.agent.id]
+    );
+    const agent = agentR.rows[0];
+    if (!agent.gmail_refresh_token) return res.status(400).json({ error: 'Gmail not connected' });
+
+    const oauth2 = getGmailOAuth(agent);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
+
+    // Build RFC 2822 message
+    const msgLines = [
+      `From: ${agent.name} <${agent.gmail_email}>`,
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      `Content-Type: text/plain; charset=utf-8`,
+      ``,
+      body
+    ];
+    const raw = Buffer.from(msgLines.join('\r\n'))
+      .toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+    await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+
+    // Log to activities
+    if (personId) {
+      await pool.query(
+        `INSERT INTO activities (person_id,agent_id,type,body,direction)
+         VALUES ($1,$2,'email',$3,'outbound')`,
+        [String(personId), String(req.agent.id), `To: ${to}\nSubject: ${subject}\n\n${body}`]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[Gmail send]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// LEAD INBOUND EMAIL WEBHOOK (from Google Apps Script / leads@okcreal.com)
+// ────────────────────────────────────────────────────────────────────────────
+app.post('/api/leads/inbound', async (req, res) => {
+  const secret = process.env.LEADS_WEBHOOK_SECRET;
+  if (secret && req.query.token !== secret) return res.status(401).json({ error: 'unauthorized' });
+
+  try {
+    const { subject = '', body = '', from = '' } = req.body;
+    if (!subject && !body) return res.json({ skipped: true, reason: 'empty' });
+
+    // Use Grok to parse the email
+    const OpenAI = require('openai');
+    const grok = new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
+
+    const r = await grok.chat.completions.create({
+      model: 'grok-3', max_tokens: 300,
+      messages: [{ role: 'user', content:
+        `Extract contact info from this lead email. Return ONLY JSON, no markdown.
+From: ${from}
+Subject: ${subject}
+Body: ${body.substring(0,2000)}
+
+JSON format: {"first_name":"","last_name":"","email":"","phone":"10 digits only","source":"platform name","property":"","message":"","is_lead":true}
+Set is_lead false for spam/receipts/non-leads.` }]
+    });
+
+    let fields;
+    try { fields = JSON.parse(r.choices[0].message.content.replace(/```json?|```/g,'')); }
+    catch(e) { return res.json({ skipped: true, reason: 'AI parse fail' }); }
+
+    if (!fields.is_lead) return res.json({ skipped: true, reason: 'not a lead' });
+    if (!fields.first_name && !fields.email && !fields.phone) return res.json({ skipped: true, reason: 'no contact info' });
+
+    // Dedup
+    if (fields.email) {
+      const d = await pool.query('SELECT id FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1', [fields.email]);
+      if (d.rows[0]) return res.json({ skipped: true, reason: 'dup email', id: d.rows[0].id });
+    }
+    if (fields.phone) {
+      const d = await pool.query(
+        `SELECT id FROM people WHERE regexp_replace(COALESCE(phone,''),'\\D','','g')=$1 LIMIT 1`,
+        [fields.phone.replace(/\D/g,'')]
+      );
+      if (d.rows[0]) return res.json({ skipped: true, reason: 'dup phone', id: d.rows[0].id });
+    }
+
+    const nameParts = (fields.first_name || 'Unknown').split(' ');
+    const phone = fields.phone ? '+1' + fields.phone.replace(/\D/g,'').slice(-10) : null;
+    const notes = [
+      fields.property && `Interested in: ${fields.property}`,
+      fields.source && `Source: ${fields.source}`,
+      fields.message && `Message: ${fields.message}`
+    ].filter(Boolean).join('\n');
+
+    const ins = await pool.query(
+      `INSERT INTO people (first_name,last_name,email,phone,stage,source,notes,updated_at)
+       VALUES ($1,$2,$3,$4,'Lead',$5,$6,NOW()) RETURNING id`,
+      [fields.first_name||'Unknown', fields.last_name||'', fields.email||null, phone, fields.source||'Email Lead', notes||null]
+    );
+
+    // Notify all online agents
+    broadcastToAll({ type: 'new_lead', personId: ins.rows[0].id, name: `${fields.first_name} ${fields.last_name}`, source: fields.source });
+
+    res.json({ created: true, id: ins.rows[0].id });
+  } catch(e) {
+    console.error('[leads/inbound]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 
 initDB().then(() => {
   app.listen(PORT, () => {
