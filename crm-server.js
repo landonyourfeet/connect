@@ -1895,6 +1895,13 @@ async function initDB() {
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_b64 TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_email TEXT`).catch(()=>{});
+  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT 'online' CHECK (availability IN ('online','offline','oncall'))`).catch(()=>{});
+  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS phone_personal TEXT`).catch(()=>{});
+  // on-call settings
+  await pool.query(`INSERT INTO app_settings(key,value) VALUES('oncall_agent_id','') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
+  await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_start','18:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
+  await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_end','08:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
+  await pool.query(`INSERT INTO app_settings(key,value) VALUES('emergency_iVR_enabled','true') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
 
   // Activity mentions
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
