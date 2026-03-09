@@ -213,9 +213,12 @@ app.get('/api/people', auth, async (req, res) => {
       const listR = await pool.query('SELECT filters FROM smart_lists WHERE id=$1', [smartListId]);
       if (listR.rows[0]?.filters) {
         const f = listR.rows[0].filters;
-        if (f.stage)  { params.push(f.stage); where.push(`p.stage=$${params.length}`); }
+        if (f.stages?.length > 1) { params.push(f.stages); where.push(`p.stage=ANY($${params.length})`); }
+        else if (f.stage)  { params.push(f.stage); where.push(`p.stage=$${params.length}`); }
         if (f.tags?.length) {
-          for (const tag of f.tags) { params.push(tag); where.push(`$${params.length}=ANY(p.tags)`); }
+          // ANY tag match — contact must have at least one of the listed tags
+          params.push(f.tags);
+          where.push(`p.tags && $${params.length}::text[]`);
         }
         if (f.source) { params.push(f.source); where.push(`p.source=$${params.length}`); }
         if (f.has_phone) where.push(`p.phone IS NOT NULL AND p.phone!=''`);
@@ -1878,6 +1881,8 @@ async function initDB() {
     )
   `, 'create smart_lists');
   await pool.query(`ALTER TABLE smart_lists ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0`).catch(()=>{});
+  // Deduplicate smart_lists by name — keep the lowest id for each name
+  await pool.query(`DELETE FROM smart_lists WHERE id NOT IN (SELECT MIN(id) FROM smart_lists GROUP BY name)`).catch(()=>{});
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS smart_lists_name_idx ON smart_lists(name)`, 'smart_lists name index');
   await run(`
     CREATE TABLE IF NOT EXISTS app_settings (
