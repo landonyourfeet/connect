@@ -815,7 +815,148 @@
     .view.active { display: flex; }
 
     /* ── PEOPLE LIST ──────────────────────────────────────────── */
-    #view-people { overflow: hidden; }
+    #view-people { overflow: hidden; display: flex; flex-direction: row; }
+    .people-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── SMART LIST LIST HEADER ──────────────────────────── */
+    #sl-list-header { display: none; flex-shrink: 0; padding: 7px 18px 7px 16px; border-bottom: 1px solid var(--red); background: linear-gradient(90deg, #0d0002 0%, #070000 100%); box-shadow: 0 1px 14px rgba(232,0,58,0.18); align-items: center; gap: 10px; }
+    #sl-list-header.visible { display: flex; }
+    .sl-lh-icon { color: var(--red); font-family: var(--font-mono); font-size: 13px; opacity: 0.7; flex-shrink: 0; }
+    .sl-lh-name { font-family: var(--font-cond); font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #fff; text-shadow: 0 0 18px rgba(232,0,58,0.4); }
+    .sl-lh-count { font-family: var(--font-mono); font-size: 10px; color: #884060; letter-spacing: 0.08em; margin-left: 4px; }
+    .sl-lh-edit { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: #884060; background: #0c0002; border: 1px solid #2a0008; padding: 4px 12px; border-radius: 2px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+    .sl-lh-edit:hover { color: var(--red); border-color: var(--red); box-shadow: 0 0 8px rgba(232,0,58,0.2); }
+
+    /* ── SMART LIST NAV ITEMS ─────────────────────────── */
+    .sl-nav-item { gap: 6px; }
+    .sl-nav-name { flex: 1; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── TACTICAL INTEL PANEL ─────────────────────────── */
+    .sl-panel {
+      width: 0; overflow: hidden; flex-shrink: 0;
+      border-left: 1px solid #1a0008;
+      background: #060606;
+      display: flex; flex-direction: column;
+      transition: width 0.22s cubic-bezier(.4,0,.2,1);
+      position: relative;
+    }
+    .sl-panel::before {
+      content: '';
+      position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.012) 2px, rgba(255,255,255,0.012) 4px);
+    }
+    .sl-panel.open { width: 300px; }
+    .sl-panel-header {
+      position: relative; z-index: 1;
+      border-bottom: 1px solid var(--red);
+      box-shadow: 0 1px 12px rgba(232,0,58,0.2);
+      background: linear-gradient(135deg, #100005 0%, #0a0002 100%);
+      flex-shrink: 0;
+    }
+    .sl-panel-eyebrow {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.25em;
+      text-transform: uppercase; color: var(--red); opacity: 0.6;
+      padding: 7px 14px 0;
+    }
+    .sl-panel-header-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 14px 10px;
+    }
+    .sl-panel-title {
+      font-family: var(--font-disp); font-size: 22px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: #fff;
+      text-shadow: 0 0 20px rgba(232,0,58,0.55);
+    }
+    .sl-close-btn {
+      background: none; border: 1px solid #2a0008; color: var(--text-3);
+      width: 22px; height: 22px; border-radius: 2px; cursor: pointer;
+      font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s; flex-shrink: 0;
+    }
+    .sl-close-btn:hover { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .sl-panel-body {
+      position: relative; z-index: 1;
+      flex: 1; overflow-y: auto; padding: 16px 14px;
+      display: flex; flex-direction: column; gap: 18px;
+    }
+    .sl-panel-body::-webkit-scrollbar { width: 3px; }
+    .sl-panel-body::-webkit-scrollbar-thumb { background: #2a0008; border-radius: 2px; }
+    .sl-section { display: flex; flex-direction: column; gap: 8px; }
+    .sl-panel-label {
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+      letter-spacing: 0.22em; text-transform: uppercase; color: var(--red); opacity: 0.8;
+    }
+    .sl-panel-label::before { content: '//'; opacity: 0.45; }
+    .sl-input {
+      width: 100%; box-sizing: border-box;
+      background: #0c0002; border: 1px solid #2a0008;
+      border-radius: 2px; color: var(--text);
+      padding: 9px 11px; font-family: var(--font-mono); font-size: 12px;
+      letter-spacing: 0.04em; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .sl-input:focus { border-color: var(--red); box-shadow: 0 0 0 2px rgba(232,0,58,0.12), inset 0 0 8px rgba(232,0,58,0.04); }
+    .sl-input::placeholder { color: #3a1020; }
+    textarea.sl-input { resize: none; min-height: 72px; line-height: 1.75; }
+    .sl-stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+    .sl-stage-chip {
+      display: flex; align-items: center; gap: 6px;
+      background: #0a0002; border: 1px solid #1e0008;
+      border-radius: 2px; padding: 7px 9px;
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: #4a2030;
+      cursor: pointer; transition: all 0.12s; user-select: none; line-height: 1;
+    }
+    .sl-stage-chip::before { content: '○'; font-size: 9px; flex-shrink: 0; transition: content 0.12s; }
+    .sl-stage-chip:hover { border-color: #4a0015; color: #aa3050; }
+    .sl-stage-chip.selected { background: rgba(232,0,58,0.1); border-color: var(--red); color: var(--red); box-shadow: 0 0 6px rgba(232,0,58,0.12); }
+    .sl-stage-chip.selected::before { content: '●'; }
+    .sl-stage-chip input { display: none; }
+    .sl-hint { font-family: var(--font-mono); font-size: 9px; color: #3a1020; letter-spacing: 0.06em; }
+    .sl-divider { height: 1px; background: linear-gradient(90deg, transparent, #200008 40%, #200008 60%, transparent); }
+    .sl-panel-footer {
+      position: relative; z-index: 1;
+      padding: 12px 14px; border-top: 1px solid #1a0008;
+      background: #040000; display: flex; flex-direction: column; gap: 7px;
+    }
+    .sl-save-btn {
+      width: 100%; padding: 10px;
+      background: var(--red); color: #fff; border: none;
+      border-radius: 2px; font-family: var(--font-disp); font-size: 18px;
+      letter-spacing: 0.25em; cursor: pointer; text-transform: uppercase;
+      transition: all 0.15s; position: relative; overflow: hidden;
+    }
+    .sl-save-btn::after { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.07) 0%, transparent 60%); }
+    .sl-save-btn:hover { box-shadow: 0 0 24px rgba(232,0,58,0.55); }
+    .sl-del-btn {
+      width: 100%; padding: 7px; background: none;
+      color: #3a1020; border: 1px solid #1e0008;
+      border-radius: 2px; font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+    }
+    .sl-del-btn:hover { color: var(--red); border-color: var(--red); background: rgba(232,0,58,0.05); }
+
+    /* ── SMART LIST NAVIGATOR BAR ─────────────────────── */
+    .sl-nav-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 14px;
+      background: #060000;
+      border-bottom: 1px solid var(--red);
+      box-shadow: 0 1px 10px rgba(232,0,58,0.15);
+      flex-shrink: 0;
+    }
+    .sl-nav-bar button {
+      background: #0c0002; border: 1px solid #2a0008;
+      color: #884060; border-radius: 2px;
+      padding: 4px 12px; font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      cursor: pointer; transition: all 0.12s;
+    }
+    .sl-nav-bar button:hover:not(:disabled) { background: var(--red-dim); color: var(--red); border-color: var(--red); box-shadow: 0 0 8px rgba(232,0,58,0.2); }
+    .sl-nav-bar button:disabled { opacity: 0.2; cursor: default; }
+    .sl-nav-info { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--red); letter-spacing: 0.1em; }
+    .sl-nav-label { font-family: var(--font-mono); font-size: 9px; color: #4a2030; letter-spacing: 0.12em; text-transform: uppercase; }
+
     .people-toolbar { flex-shrink: 0; padding: 12px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
     .people-count { font-size: 12px; color: var(--text-2); }
     .people-count strong { color: var(--text); }
@@ -1496,6 +1637,13 @@
       <!-- VIEW: People List -->
       <div class="view active" id="view-people">
         <div class="people-main">
+          <!-- Smart List Header Bar (shows when in a list, hidden for All People) -->
+          <div id="sl-list-header">
+            <span class="sl-lh-icon">◈</span>
+            <span class="sl-lh-name" id="sl-lh-name">LIST</span>
+            <span class="sl-lh-count" id="sl-lh-count"></span>
+            <button class="sl-lh-edit" onclick="openSmartListPanel(currentListId)">// Edit Parameters</button>
+          </div>
           <div class="people-toolbar">
             <span class="people-count" id="people-count"><strong>0</strong> people</span>
             <div id="filter-tags-bar"></div>
@@ -1524,40 +1672,45 @@
             </table>
           </div>
         </div>
-        <!-- Smart List Filter Panel -->
+        <!-- Tactical Intel Panel -->
         <div class="sl-panel" id="sl-panel">
           <div class="sl-panel-header">
-            <span class="sl-panel-title" id="sl-panel-title">New Smart List</span>
-            <button onclick="closeSmartListPanel()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px">×</button>
+            <div class="sl-panel-eyebrow">OKCREAL // INTEL FILTER</div>
+            <div class="sl-panel-header-inner">
+              <span class="sl-panel-title" id="sl-panel-title">New List</span>
+              <button class="sl-close-btn" onclick="closeSmartListPanel()">×</button>
+            </div>
           </div>
           <div class="sl-panel-body">
             <input type="hidden" id="sl-editing-id">
-            <div>
-              <div class="sl-panel-label">List Name</div>
-              <input type="text" id="sl-name-input" placeholder="e.g. Delinquent Residents">
+            <div class="sl-section">
+              <div class="sl-panel-label">Designation</div>
+              <input type="text" class="sl-input" id="sl-name-input" placeholder="e.g. DELINQUENT_Q1" autocomplete="off" spellcheck="false">
             </div>
-            <div>
-              <div class="sl-panel-label">Filter by Stage</div>
+            <div class="sl-divider"></div>
+            <div class="sl-section">
+              <div class="sl-panel-label">Target Classification</div>
               <div class="sl-stage-grid" id="sl-stage-grid">
-                <label class="sl-stage-chip"><input type="checkbox" value="Lead" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Lead</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Resident" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Resident</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Delinquent" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Delinquent</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Evicting" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Evicting</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Past Tenant" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Past Tenant</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Property Owner" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Property Owner</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Contractor" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Contractor</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Caseworker" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Caseworker</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Lead" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Lead</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Resident" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Resident</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Delinquent" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Delinquent</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Evicting" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Evicting</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Past Tenant" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Past Tenant</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Property Owner" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Owner</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Contractor" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Contractor</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Caseworker" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Caseworker</label>
               </div>
             </div>
-            <div>
-              <div class="sl-panel-label">Filter by Tags</div>
-              <textarea id="sl-tags-input" placeholder="One tag per line&#10;e.g. On Payment Plan&#10;EVICTION ALERT"></textarea>
-              <div style="font-size:11px;color:var(--text-3);margin-top:4px">Contacts must have ANY of these tags</div>
+            <div class="sl-divider"></div>
+            <div class="sl-section">
+              <div class="sl-panel-label">Intel Tags</div>
+              <textarea class="sl-input" id="sl-tags-input" placeholder="ONE TAG PER LINE&#10;ON PAYMENT PLAN&#10;EVICTION ALERT"></textarea>
+              <div class="sl-hint">// MATCH ANY TAG IN LIST</div>
             </div>
           </div>
           <div class="sl-panel-footer">
-            <button class="sl-save-btn" onclick="saveSmartListPanel()">Save List</button>
-            <button class="sl-del-btn" id="sl-del-btn" onclick="deleteSmartListFromPanel()" style="display:none">Delete List</button>
+            <button class="sl-save-btn" onclick="saveSmartListPanel()">Deploy</button>
+            <button class="sl-del-btn" id="sl-del-btn" onclick="deleteSmartListFromPanel()" style="display:none">// Terminate List</button>
           </div>
         </div>
       </div>
@@ -2069,13 +2222,9 @@ function renderSmartListsNav() {
   const rest = smartLists.slice(MAX);
   const makeItem = list => {
     const isUrgent = (list.name||'').toLowerCase().includes('delinquent') || (list.name||'').toLowerCase().includes('eviction');
-    return `<div class="nav-item" data-view="people" data-list-id="${list.id}" onclick="navigate('people','${list.id}')">
-      <span class="nav-icon">▼</span>${esc(list.name)}
+    return `<div class="nav-item sl-nav-item" data-view="people" data-list-id="${list.id}" onclick="navigate('people','${list.id}')">
+      <span class="nav-icon">▸</span><span class="sl-nav-name">${esc(list.name)}</span>
       <span class="${isUrgent?'nav-badge urgent':'nav-badge'}" id="badge-${list.id}">—</span>
-      <span class="nav-item-actions" onclick="event.stopPropagation()">
-        <button title="Edit list" onclick="openSmartListPanel(${list.id})">✏️</button>
-        <button title="Delete list" onclick="deleteSmartList(${list.id},'${esc(list.name)}')">🗑</button>
-      </span>
     </div>`;
   };
   let html = visible.map(makeItem).join('');
@@ -2112,6 +2261,15 @@ async function loadPeople(listId = 'all') {
     document.getElementById('people-count').innerHTML = `<strong>${total.toLocaleString()}</strong> people`;
     const badge = document.getElementById('badge-' + listId);
     if (badge) badge.textContent = total;
+    // Show/hide the tactical list header bar
+    const hdr = document.getElementById('sl-list-header');
+    if (listId && listId !== 'all') {
+      document.getElementById('sl-lh-name').textContent = listName;
+      document.getElementById('sl-lh-count').textContent = `// ${total} CONTACTS`;
+      hdr.classList.add('visible');
+    } else {
+      hdr.classList.remove('visible');
+    }
     // Store ordered list for prev/next navigation
     slNavPeople = [...peopleData];
     slNavIndex = -1;
@@ -2653,12 +2811,12 @@ function renderContactRecord(person, activities, tasks) {
   const listName = inList ? (smartLists.find(l=>String(l.id)===String(currentListId))?.name || 'List') : '';
   const navBar = inList ? `
     <div class="sl-nav-bar">
-      <button onclick="slNavGo(-1)" ${slNavIndex === 0 ? 'disabled' : ''}>← Prev</button>
-      <span>
-        <span class="sl-nav-info">${slNavIndex + 1} of ${slNavPeople.length}</span>
-        <span style="color:var(--text-3);margin-left:6px">${esc(listName)}</span>
+      <button onclick="slNavGo(-1)" ${slNavIndex === 0 ? 'disabled' : ''}>&lt; PREV</button>
+      <span style="text-align:center">
+        <div class="sl-nav-info">${slNavIndex + 1} / ${slNavPeople.length}</div>
+        <div class="sl-nav-label">${esc(listName)}</div>
       </span>
-      <button onclick="slNavGo(1)" ${slNavIndex === slNavPeople.length - 1 ? 'disabled' : ''}>Next →</button>
+      <button onclick="slNavGo(1)" ${slNavIndex === slNavPeople.length - 1 ? 'disabled' : ''}>NEXT &gt;</button>
     </div>` : '';
 
   viewEl.innerHTML = navBar + `<div class="contact-scroll-wrap">
@@ -5193,7 +5351,7 @@ function openSmartListPanel(listId) {
   if (listId) {
     const list = smartLists.find(l => String(l.id) === String(listId));
     if (!list) return;
-    titleEl.textContent = 'Edit: ' + list.name;
+    titleEl.textContent = list.name.toUpperCase();
     nameInput.value = list.name;
     // Populate stages
     const f = list.filters || {};
@@ -5209,7 +5367,7 @@ function openSmartListPanel(listId) {
     tagsInput.value = tags.join('\n');
     delBtn.style.display = 'block';
   } else {
-    titleEl.textContent = 'New Smart List';
+    titleEl.textContent = 'NEW LIST';
     nameInput.value = '';
     tagsInput.value = '';
     delBtn.style.display = 'none';
