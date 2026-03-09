@@ -2441,9 +2441,19 @@ async function createNotification({ recipientId, senderId, type, personId, activ
 // ────────────────────────────────────────────────────────────────────────────
 // GMAIL PER-AGENT OAUTH
 // ────────────────────────────────────────────────────────────────────────────
-app.get('/api/gmail/connect', auth, (req, res) => {
+app.get('/api/gmail/connect', async (req, res) => {
+  // Accept token as query param since this is opened as a browser popup (no Auth header possible)
+  const token = req.query.token || (req.headers.authorization?.slice(7));
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  let agent;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const r = await pool.query('SELECT * FROM agents WHERE id=$1 AND is_active=true', [decoded.id]);
+    if (!r.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
+    agent = r.rows[0];
+  } catch(e) { return res.status(401).json({ error: 'Unauthorized' }); }
   if (!process.env.GMAIL_CLIENT_ID) return res.status(400).json({ error: 'GMAIL_CLIENT_ID not set' });
-  const oauth2 = getGmailOAuth(req.agent);
+  const oauth2 = getGmailOAuth(agent);
   const url = oauth2.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
@@ -2452,7 +2462,7 @@ app.get('/api/gmail/connect', auth, (req, res) => {
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
-    state: String(req.agent.id)
+    state: String(agent.id)
   });
   res.redirect(url);
 });
