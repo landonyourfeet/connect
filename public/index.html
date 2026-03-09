@@ -146,9 +146,66 @@
     [data-theme="light"] #call-bar .call-bar-inner { background: var(--bg-2); border-color: var(--border); }
 
     /* Contact panels */
-    [data-theme="light"] .contact-left  { background: var(--bg-2); border-color: var(--border); }
-    [data-theme="light"] .contact-right { background: var(--bg-2); border-color: var(--border); }
-    [data-theme="light"] .contact-center { background: var(--bg-3); }
+    /* ── DAYLIGHT MODE — CONTACT RECORD ──────────────────── */
+    [data-theme="light"] .contact-left  { background: var(--tac-bg); border-color: var(--tac-border); }
+    [data-theme="light"] .contact-right { background: var(--tac-bg); border-color: var(--tac-border); }
+    [data-theme="light"] .contact-center { background: var(--bg); }
+    [data-theme="light"] .contact-card-top { background: var(--tac-header); border-bottom-color: var(--red); }
+
+    /* Avatar — warm parchment hex in daylight */
+    [data-theme="light"] .contact-big-avatar { background: #ede8e2; color: var(--red); }
+    [data-theme="light"] .contact-big-avatar.stage-delinquent  { background: #fce8ed; color: var(--red); filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-evicting    { background: #fce0e0; color: #cc2200; filter: none; animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    [data-theme="light"] .contact-big-avatar.stage-resident    { background: #e0f8fa; color: #007a85; filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-caseworker  { background: #f0e8fa; color: #7c3aed; filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-contractor  { background: #fef0e6; color: #c2610a; filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-owner       { background: #e6f4fd; color: #0369a1; filter: none; }
+    [data-theme="light"] .contact-avatar-ring { border-color: rgba(232,0,58,0.15); border-top-color: rgba(232,0,58,0.4); }
+
+    /* Subject ID + stage badge */
+    [data-theme="light"] .contact-subject-id { color: rgba(180,0,30,0.45); }
+    [data-theme="light"] .contact-record-name { color: #1c1c1e; text-shadow: none; }
+    [data-theme="light"] .contact-stage-badge { color: rgba(180,0,30,0.7); border-color: rgba(232,0,58,0.25); background: rgba(232,0,58,0.05); }
+
+    /* Action buttons — warm bordered chips in daylight */
+    [data-theme="light"] .cqa-btn { border-color: var(--tac-border-2); color: var(--tac-muted-2); background: rgba(240,235,228,0.7); }
+    [data-theme="light"] .cqa-btn:hover { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.07); }
+    [data-theme="light"] .cqa-call { border-color: rgba(0,150,80,0.35); color: #00804a; background: rgba(0,180,100,0.07); }
+    [data-theme="light"] .cqa-call:hover { border-color: #00804a; background: rgba(0,180,100,0.12); color: #00804a; }
+    [data-theme="light"] .cqa-text { border-color: rgba(0,100,200,0.3); color: #0055cc; background: rgba(0,100,210,0.07); }
+    [data-theme="light"] .cqa-text:hover { border-color: #0055cc; background: rgba(0,100,210,0.12); color: #0055cc; }
+    [data-theme="light"] .cqa-note { border-color: rgba(160,80,0,0.3); color: #a05000; background: rgba(200,100,0,0.07); }
+    [data-theme="light"] .cqa-note:hover { border-color: #a05000; background: rgba(200,100,0,0.1); }
+
+    /* Sections */
+    [data-theme="light"] .contact-section { border-color: var(--tac-border); }
+    [data-theme="light"] .contact-section::before,
+    [data-theme="light"] .contact-section::after { border-color: var(--tac-corner); }
+    [data-theme="light"] .contact-section-title { color: rgba(180,0,30,0.65); opacity: 1; }
+    [data-theme="light"] .detail-label { color: var(--tac-muted-2); }
+    [data-theme="light"] .detail-value { color: var(--text); }
+    [data-theme="light"] .stage-select { background: var(--tac-bg-2); border-bottom-color: var(--tac-input-line); color: var(--text); }
+
+    /* Right panel */
+    [data-theme="light"] .right-section { border-color: var(--tac-border); }
+    [data-theme="light"] .right-section::before,
+    [data-theme="light"] .right-section::after { border-color: var(--tac-corner); }
+    [data-theme="light"] .right-section-title { color: rgba(180,0,30,0.65); opacity: 1; }
+    [data-theme="light"] .add-btn { border-color: var(--tac-border-2); color: var(--tac-muted-2); }
+    [data-theme="light"] .add-btn:hover { color: var(--red); border-color: rgba(232,0,58,0.4); }
+
+    /* Timeline center */
+    [data-theme="light"] .timeline-header { background: var(--tac-bg); border-color: var(--tac-border); }
+    [data-theme="light"] .compose-tabs { background: var(--tac-bg-2); border-color: var(--tac-border); }
+    [data-theme="light"] .compose-tab { color: var(--tac-muted-2); }
+    [data-theme="light"] .compose-tab.active { color: var(--red); }
+    [data-theme="light"] .compose-footer { background: var(--tac-bg-2); border-color: var(--tac-border); }
+    [data-theme="light"] .filter-pill { background: transparent; border-color: var(--tac-border-2); color: var(--tac-muted-2); }
+    [data-theme="light"] .filter-pill.active { background: rgba(232,0,58,0.08); color: var(--red); border-color: rgba(232,0,58,0.3); }
+
+    /* Back button */
+    [data-theme="light"] .back-btn { color: var(--tac-muted-2); }
+    [data-theme="light"] .back-btn:hover { color: var(--red); }
 
     /* Compose */
     [data-theme="light"] .compose-area  { background: var(--bg-2); border-color: var(--border); }
@@ -1276,37 +1333,124 @@
 
     /* ── CONTACT RECORD ───────────────────────────────────────── */
     #view-contact { flex-direction: column; overflow: hidden; }
+    /* ── CONTACT RECORD — TACTICAL OPS ──────────────────────── */
     .contact-scroll-wrap { flex: 1; display: flex; flex-direction: row; overflow: hidden; }
-    .back-btn { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; cursor: pointer; transition: color 0.15s; }
-    .back-btn:hover { color: var(--text); }
-    .contact-left { width: 272px; flex-shrink: 0; background: var(--bg-2); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
-    .contact-card-top { padding: 24px 20px 20px; text-align: center; border-bottom: 1px solid var(--border); }
-    .contact-big-avatar { width: 72px; height: 72px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 800; margin: 0 auto 14px; border: 2px solid var(--border); transition: border-color 0.3s, box-shadow 0.3s; }
-    .contact-big-avatar.stage-delinquent { border-color: var(--red); box-shadow: 0 0 20px var(--red-glow); }
-    .contact-big-avatar.stage-evicting { border-color: #ff3b3b; box-shadow: 0 0 20px rgba(255,59,59,0.5); animation: glow-breathe-red 1.8s ease-in-out infinite; }
-    .contact-big-avatar.stage-resident { border-color: #00e8f0; box-shadow: 0 0 16px rgba(0,232,240,0.4); }
-    .contact-big-avatar.stage-active     { border-color: var(--green); }
-    .contact-big-avatar.stage-caseworker { border-color: #a855f7; box-shadow: 0 0 14px rgba(168,85,247,0.4); }
-    .contact-big-avatar.stage-contractor { border-color: #fb923c; }
-    .contact-record-name { font-family: var(--font-cond); font-size: 22px; font-weight: 700; letter-spacing: 0.01em; margin-bottom: 4px; }
-    .contact-record-phone { font-family: var(--font-mono); font-size: 13px; color: var(--text-2); margin-bottom: 8px; cursor: pointer; transition: color 0.15s; }
-    .contact-record-phone:hover { color: var(--green); }
-    .contact-quick-actions { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
-    .cqa-btn { height: 30px; padding: 0 12px; border-radius: 100px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; display: flex; align-items: center; gap: 5px; transition: all 0.15s; }
-    .cqa-call { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,232,122,0.25); }
-    .cqa-call:hover { background: var(--green); color: #000; box-shadow: 0 0 12px var(--green-glow); }
-    .cqa-text { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(0,153,255,0.2); }
-    .cqa-text:hover { background: var(--blue); color: #fff; }
-    .cqa-note { background: var(--bg-5); color: var(--text-2); border: 1px solid var(--border); }
-    .cqa-note:hover { color: var(--text); border-color: var(--border-hi); }
-    .contact-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
-    .contact-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-3); margin-bottom: 10px; }
-    .detail-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+    .back-btn { display: flex; align-items: center; gap: 5px; color: var(--tac-muted-2); font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: color 0.15s; }
+    .back-btn:hover { color: var(--red); }
+
+    /* Left panel */
+    .contact-left {
+      width: 276px; flex-shrink: 0;
+      background: var(--tac-bg);
+      border-right: 1px solid var(--tac-border);
+      overflow-y: auto; overflow-x: hidden;
+      display: flex; flex-direction: column;
+      position: relative;
+    }
+    .contact-left::after {
+      content: ''; position: fixed; pointer-events: none; z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, var(--tac-scanline-h) 3px, var(--tac-scanline-h) 4px);
+      inset: 0;
+    }
+
+    /* Dossier header */
+    .contact-card-top {
+      position: relative; z-index: 1;
+      padding: 18px 14px 15px;
+      background: var(--tac-header);
+      border-bottom: 1px solid var(--red);
+      box-shadow: 0 3px 20px rgba(232,0,58,0.18);
+      text-align: center;
+    }
+
+    /* Hexagonal avatar */
+    .contact-avatar-wrap { position: relative; width: 72px; height: 72px; margin: 0 auto 11px; }
+    .contact-avatar-ring {
+      position: absolute; inset: -6px; border-radius: 50%;
+      border: 1px solid rgba(232,0,58,0.18);
+      animation: spin 8s linear infinite;
+      border-top-color: rgba(232,0,58,0.5);
+    }
+    .contact-big-avatar {
+      width: 72px; height: 72px;
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      background: #180008;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-disp); font-size: 24px; letter-spacing: 0.05em;
+      color: rgba(232,0,58,0.7);
+      transition: all 0.3s;
+    }
+    .contact-big-avatar.stage-delinquent { background: #1a0004; color: var(--red); filter: drop-shadow(0 0 8px rgba(232,0,58,0.6)); }
+    .contact-big-avatar.stage-evicting   { background: #1a0000; color: #ff3b3b; filter: drop-shadow(0 0 10px rgba(255,59,59,0.8)); animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    .contact-big-avatar.stage-resident   { background: #001a1c; color: #00e8f0; filter: drop-shadow(0 0 8px rgba(0,232,240,0.5)); }
+    .contact-big-avatar.stage-caseworker { background: #160020; color: #a855f7; filter: drop-shadow(0 0 8px rgba(168,85,247,0.5)); }
+    .contact-big-avatar.stage-contractor { background: #1a0e00; color: #fb923c; filter: drop-shadow(0 0 8px rgba(251,146,60,0.5)); }
+    .contact-big-avatar.stage-owner      { background: #001018; color: #38bdf8; filter: drop-shadow(0 0 8px rgba(56,189,248,0.4)); }
+
+    .contact-subject-id {
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.28em;
+      text-transform: uppercase; color: rgba(232,0,58,0.4); margin-bottom: 3px;
+    }
+    .contact-record-name {
+      font-family: var(--font-disp); font-size: 20px; letter-spacing: 0.13em;
+      text-transform: uppercase; color: var(--tac-name);
+      text-shadow: 0 0 18px var(--tac-name-glow);
+      margin-bottom: 5px; line-height: 1.1;
+    }
+    .contact-stage-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.18em;
+      text-transform: uppercase; color: rgba(232,0,58,0.65);
+      border: 1px solid rgba(232,0,58,0.25); padding: 3px 8px;
+      margin-bottom: 10px;
+    }
+    .contact-stage-badge::before {
+      content: ''; width: 5px; height: 5px; border-radius: 50%;
+      background: var(--red); box-shadow: 0 0 5px var(--red);
+      animation: sl-pulse-dot 1.4s ease-in-out infinite; flex-shrink: 0;
+    }
+
+    /* Action buttons */
+    .contact-quick-actions { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; padding-top: 2px; }
+    .cqa-btn {
+      height: 26px; padding: 0 10px;
+      background: transparent; border: 1px solid var(--tac-border-2); color: var(--tac-muted-2);
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase;
+      display: flex; align-items: center; gap: 4px; cursor: pointer; transition: all 0.15s;
+      clip-path: polygon(0 0,calc(100% - 5px) 0,100% 5px,100% 100%,5px 100%,0 calc(100% - 5px));
+    }
+    .cqa-btn:hover { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.07); }
+    .cqa-call  { border-color: rgba(0,200,100,0.3); color: #00c864; }
+    .cqa-call:hover  { border-color: #00c864; background: rgba(0,200,100,0.08); color: #00c864; }
+    .cqa-text  { border-color: rgba(0,153,255,0.3); color: #0099ff; }
+    .cqa-text:hover  { border-color: #0099ff; background: rgba(0,153,255,0.08); color: #0099ff; }
+    .cqa-note  { border-color: rgba(255,140,0,0.3); color: var(--amber); }
+    .cqa-note:hover  { border-color: var(--amber); background: rgba(255,140,0,0.08); }
+    .contact-record-phone { font-family: var(--font-mono); font-size: 11px; color: var(--tac-muted-2); margin-bottom: 8px; cursor: pointer; transition: color 0.15s; }
+    .contact-record-phone:hover { color: #00c864; }
+
+    /* Sections */
+    .contact-section {
+      position: relative; z-index: 1;
+      padding: 12px 13px 11px;
+      border-bottom: 1px solid var(--tac-border);
+    }
+    .contact-section::before { content: ''; position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; border-top: 1px solid var(--tac-corner); border-left: 1px solid var(--tac-corner); }
+    .contact-section::after  { content: ''; position: absolute; bottom: 5px; right: 5px; width: 6px; height: 6px; border-bottom: 1px solid var(--tac-corner); border-right: 1px solid var(--tac-corner); }
+    .contact-section-title {
+      font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+      letter-spacing: 0.28em; text-transform: uppercase;
+      color: var(--red); opacity: 0.7; margin-bottom: 9px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .contact-section-title::before { content: '▸'; font-size: 7px; opacity: 1; }
+    .contact-section-title::after  { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--tac-border-2), transparent); }
+    .detail-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
     .detail-row:last-child { margin-bottom: 0; }
-    .detail-label { font-size: 11px; color: var(--text-3); width: 72px; flex-shrink: 0; padding-top: 1px; }
-    .detail-value { font-size: 13px; color: var(--text); flex: 1; word-break: break-word; }
-    .stage-select { background: var(--bg-4); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; color: var(--text); font-size: 12px; font-weight: 500; width: 100%; cursor: pointer; }
-    .stage-select:focus { border-color: var(--border-hi); }
+    .detail-label { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--tac-muted-2); width: 64px; flex-shrink: 0; padding-top: 2px; }
+    .detail-value { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; color: var(--text); flex: 1; word-break: break-word; line-height: 1.5; }
+    .stage-select { background: var(--tac-bg-2); border: none; border-bottom: 1px solid var(--tac-input-line); color: var(--text); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; width: 100%; cursor: pointer; padding: 3px 2px; outline: none; }
+    .stage-select:focus { border-bottom-color: var(--red); }
     /* Phone rows */
     .phone-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
     .phone-row:last-child { border-bottom: none; }
@@ -1346,28 +1490,35 @@
     .pac-matched { color: var(--blue) !important; }
     .tags-container { display: flex; flex-wrap: wrap; gap: 4px; }
 
-    /* ── TIMELINE ─────────────────────────────────────────────── */
-    .contact-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-    .timeline-header { flex-shrink: 0; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
-    .compose-area { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: border-color 0.2s; }
-    .compose-area:focus-within { border-color: var(--border-hi); }
-    .compose-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-4); }
-    .compose-tab { padding: 8px 14px; font-size: 12px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: all 0.15s; border-bottom: 2px solid transparent; }
-    .compose-tab.active { color: var(--text); border-bottom-color: var(--red); }
-    .compose-tab:hover:not(.active) { color: var(--text); }
+    /* ── TIMELINE — TACTICAL OPS ─────────────────────────────── */
+    .contact-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg); }
+    .timeline-header { flex-shrink: 0; padding: 10px 16px; border-bottom: 1px solid var(--tac-border); background: var(--tac-bg); }
+    .compose-area { background: var(--tac-bg); border: 1px solid var(--tac-border-2); overflow: hidden; transition: border-color 0.2s; }
+    .compose-area:focus-within { border-color: rgba(232,0,58,0.4); box-shadow: 0 0 0 1px rgba(232,0,58,0.08); }
+    .compose-tabs { display: flex; border-bottom: 1px solid var(--tac-border); background: var(--tac-bg-2); }
+    .compose-tab { padding: 8px 14px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--tac-muted-2); cursor: pointer; transition: all 0.15s; border-bottom: 2px solid transparent; }
+    .compose-tab.active { color: var(--red); border-bottom-color: var(--red); }
+    .compose-tab:hover:not(.active) { color: var(--text-2); }
     .compose-body { padding: 10px 12px; }
-    .compose-input { width: 100%; min-height: 60px; max-height: 150px; background: none; color: var(--text); font-size: 13px; resize: none; border: none; outline: none; font-family: var(--font-body); }
-    .compose-input::placeholder { color: var(--text-3); }
-    .compose-footer { padding: 8px 12px; display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--border); background: var(--bg-4); }
-    .compose-submit { height: 30px; padding: 0 16px; background: var(--red); color: #fff; border-radius: var(--radius); font-size: 12px; font-weight: 600; transition: all 0.15s; }
-    .compose-submit:hover { background: #ff1a4e; box-shadow: 0 0 10px var(--red-glow); }
-    .compose-submit:disabled { opacity: 0.4; cursor: not-allowed; }
-    .timeline-filters { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
-    .filter-pill { height: 26px; padding: 0 10px; border-radius: 100px; font-size: 11px; font-weight: 600; background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
-    .filter-pill:hover { color: var(--text); }
-    .filter-pill.active { background: var(--red-dim); color: var(--red); border-color: rgba(232,0,58,0.3); }
-    .filter-pill .pill-count { background: rgba(255,255,255,0.1); padding: 0 5px; border-radius: 100px; font-size: 10px; }
-    .timeline-scroll { flex: 1; overflow-y: auto; padding: 16px 20px; }
+    .compose-input { width: 100%; min-height: 60px; max-height: 150px; background: none; color: var(--text); font-size: 13px; resize: none; border: none; outline: none; font-family: var(--font-body); caret-color: var(--red); }
+    .compose-input::placeholder { color: var(--tac-muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; }
+    .compose-footer { padding: 7px 12px; display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--tac-border); background: var(--tac-bg-2); }
+    .compose-submit {
+      height: 28px; padding: 0 18px;
+      background: linear-gradient(135deg, #cc0030 0%, #e8003a 60%, #cc0030 100%);
+      color: #fff; border: none;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.3em; text-transform: uppercase;
+      clip-path: polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+      cursor: pointer; transition: all 0.18s;
+    }
+    .compose-submit:hover { box-shadow: 0 0 18px rgba(232,0,58,0.5); letter-spacing: 0.4em; }
+    .compose-submit:disabled { opacity: 0.35; cursor: not-allowed; }
+    .timeline-filters { display: flex; gap: 4px; margin-top: 9px; flex-wrap: wrap; }
+    .filter-pill { height: 24px; padding: 0 10px; font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.15em; text-transform: uppercase; background: transparent; color: var(--tac-muted-2); border: 1px solid var(--tac-border-2); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
+    .filter-pill:hover { color: var(--text-2); border-color: var(--tac-border-2); }
+    .filter-pill.active { background: var(--red-dim); color: var(--red); border-color: rgba(232,0,58,0.35); }
+    .filter-pill .pill-count { font-family: var(--font-mono); font-size: 8px; opacity: 0.7; }
+    .timeline-scroll { flex: 1; overflow-y: auto; padding: 14px 18px; }
     .timeline-item { display: flex; gap: 12px; margin-bottom: 16px; animation: fade-in 0.3s ease forwards; }
     .ti-icon-wrap { flex-shrink: 0; position: relative; }
     .ti-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; }
@@ -1495,13 +1646,20 @@
       text-align: right;
     }
 
-    /* ── RIGHT PANEL ──────────────────────────────────────────── */
-    .contact-right { width: 268px; flex-shrink: 0; background: var(--bg-2); border-left: 1px solid var(--border); overflow-y: auto; }
-    .right-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-    .right-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-    .right-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-3); }
-    .add-btn { width: 20px; height: 20px; background: none; color: var(--text-3); font-size: 16px; line-height: 1; transition: color 0.15s; display: flex; align-items: center; justify-content: center; }
-    .add-btn:hover { color: var(--text-2); }
+    /* ── RIGHT PANEL — TACTICAL OPS ──────────────────────────── */
+    .contact-right { width: 264px; flex-shrink: 0; background: var(--tac-bg); border-left: 1px solid var(--tac-border); overflow-y: auto; }
+    .right-section { position: relative; padding: 12px 13px 11px; border-bottom: 1px solid var(--tac-border); }
+    .right-section::before { content: ''; position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; border-top: 1px solid var(--tac-corner); border-left: 1px solid var(--tac-corner); }
+    .right-section::after  { content: ''; position: absolute; bottom: 5px; right: 5px; width: 6px; height: 6px; border-bottom: 1px solid var(--tac-corner); border-right: 1px solid var(--tac-corner); }
+    .right-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+    .right-section-title {
+      font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+      letter-spacing: 0.28em; text-transform: uppercase; color: var(--red); opacity: 0.7;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .right-section-title::before { content: '▸'; font-size: 7px; opacity: 1; }
+    .add-btn { background: none; border: 1px solid var(--tac-border-2); color: var(--tac-muted-2); width: 18px; height: 18px; font-size: 14px; line-height: 1; transition: all 0.15s; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .add-btn:hover { color: var(--red); border-color: rgba(232,0,58,0.4); }
     .task-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
     .task-item:last-child { border-bottom: none; }
     .task-check { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border-hi); flex-shrink: 0; margin-top: 1px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
@@ -3049,18 +3207,21 @@ function renderContactRecord(person, activities, tasks) {
   viewEl.innerHTML = navBar + `<div class="contact-scroll-wrap">
     <div class="contact-left">
       <div class="contact-card-top">
-        <div class="contact-big-avatar ${stageClass(stage)}">${initials}</div>
+        <div class="contact-avatar-wrap">
+          <div class="contact-avatar-ring"></div>
+          <div class="contact-big-avatar ${stageClass(stage)}">${initials}</div>
+        </div>
+        <div class="contact-subject-id">SUBJECT · ID-${String(person.id).padStart(6,'0')}</div>
         <div class="contact-record-name">${esc(name)}</div>
-        <div style="font-size:12px;color:var(--text-3);margin-bottom:6px">${esc(person.stage||'Lead')}</div>
-        ${person.email ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:8px">${esc(person.email)}</div>` : ''}
+        <div class="contact-stage-badge">${esc(person.stage||'Lead')}</div>
         <!-- Presence Bubbles -->
-        <div id="presence-strip" style="display:flex;align-items:center;justify-content:center;gap:4px;min-height:28px;margin-bottom:6px"></div>
+        <div id="presence-strip" style="display:flex;align-items:center;justify-content:center;gap:4px;min-height:22px;margin-bottom:8px"></div>
         <div class="contact-quick-actions">
-          <button class="cqa-btn cqa-call" onclick="pickPhoneAndCall('${person.id}','${esc(name)}')">📞 Call</button>
-          <button class="cqa-btn cqa-text" onclick="pickPhoneAndText('${person.id}','${esc(name)}')">💬 Text</button>
-          <button class="cqa-btn" onclick="openEmailCompose('${person.id}','${esc(person.email||'')}','${esc(name)}')">✉️ Email</button>
-          <button class="cqa-btn cqa-note" onclick="openNoteCompose()">📝 Note</button>
-          <button class="cqa-btn" onclick="confirmDeleteLead('${person.id}','${esc(name)}')" style="background:rgba(220,38,38,0.12);color:#f87171;border:1px solid rgba(220,38,38,0.25)" title="Delete contact">🗑 Delete</button>
+          <button class="cqa-btn cqa-call" onclick="pickPhoneAndCall('${person.id}','${esc(name)}')">▶ CALL</button>
+          <button class="cqa-btn cqa-text" onclick="pickPhoneAndText('${person.id}','${esc(name)}')">◈ TEXT</button>
+          <button class="cqa-btn" onclick="openEmailCompose('${person.id}','${esc(person.email||'')}','${esc(name)}')">✉ EMAIL</button>
+          <button class="cqa-btn cqa-note" onclick="openNoteCompose()">✎ NOTE</button>
+          <button class="cqa-btn" onclick="confirmDeleteLead('${person.id}','${esc(name)}')" style="border-color:rgba(232,0,58,0.3);color:rgba(232,0,58,0.5)">✕ DEL</button>
         </div>
       </div>
 
@@ -3200,18 +3361,18 @@ function renderContactRecord(person, activities, tasks) {
       </div>
       <div class="right-section">
         <div class="right-section-header"><span class="right-section-title">Status Flags</span></div>
-        <div style="font-size:12px;color:var(--text-2)">
-          ${(stage==='Evicting'||tags.some(t=>t.toLowerCase().includes('eviction'))) ? `<div style="color:#ff3b3b;font-weight:600;margin-bottom:4px">⚠️ Eviction In Progress</div>` : ''}
-          ${(stage==='Delinquent'||tags.some(t=>t.toLowerCase().includes('delinquent'))) ? `<div style="color:#3b9eff;margin-bottom:4px">💰 Delinquent Account</div>` : ''}
-          ${tags.some(t=>t.toLowerCase().includes('committed')) ? `<div style="color:var(--green);margin-bottom:4px">✅ Payment Committed</div>` : ''}
-          ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--text-3)">No active flags</div>' : ''}
+        <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;display:flex;flex-direction:column;gap:5px">
+          ${(stage==='Evicting'||tags.some(t=>t.toLowerCase().includes('eviction'))) ? `<div style="color:#ff3b3b;display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:#ff3b3b;box-shadow:0 0 6px #ff3b3b;display:inline-block;animation:sl-pulse-dot 1.2s ease-in-out infinite;flex-shrink:0"></span>EVICTION IN PROGRESS</div>` : ''}
+          ${(stage==='Delinquent'||tags.some(t=>t.toLowerCase().includes('delinquent'))) ? `<div style="color:#3b9eff;display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:#3b9eff;box-shadow:0 0 6px #3b9eff;display:inline-block;flex-shrink:0"></span>DELINQUENT ACCOUNT</div>` : ''}
+          ${tags.some(t=>t.toLowerCase().includes('committed')) ? `<div style="color:var(--green);display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);display:inline-block;flex-shrink:0"></span>PAYMENT COMMITTED</div>` : ''}
+          ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--tac-muted-2)">-- NO ACTIVE FLAGS --</div>' : ''}
         </div>
       </div>
             <!-- CASEWORKER PANEL -->
       <div class="right-section" id="cw-panel-wrap-${person.id}">
         <div class="right-section-header">
-          <span class="right-section-title" style="color:#a855f7">🤝 Caseworker</span>
-          <button onclick="cwShowSearch(${person.id})" style="background:none;border:none;color:#a855f7;font-size:11px;cursor:pointer;font-weight:700">+ Link</button>
+          <span class="right-section-title" style="color:rgba(168,85,247,0.7)">Caseworker</span>
+          <button onclick="cwShowSearch(${person.id})" style="background:none;border:1px solid rgba(168,85,247,0.3);color:rgba(168,85,247,0.6);font-family:var(--font-mono);font-size:8px;letter-spacing:0.15em;padding:2px 7px;cursor:pointer">+ LINK</button>
         </div>
         <div id="cw-list-${person.id}" style="font-size:12px;color:var(--text-3)">Loading…</div>
         <div id="cw-search-wrap-${person.id}" style="display:none;margin-top:8px">
