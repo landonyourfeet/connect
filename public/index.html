@@ -497,12 +497,14 @@
       font-size: 11px; letter-spacing: 0.3em;
       color: var(--text-2); margin-top: 4px; text-transform: uppercase;
     }
+    [data-theme="light"] .login-logo .sub { color: #444; }
     .login-field { margin-bottom: 16px; }
     .login-field label {
       display: block; font-size: 11px; font-weight: 600;
       letter-spacing: 0.12em; text-transform: uppercase;
       color: var(--text-2); margin-bottom: 8px;
     }
+    [data-theme="light"] .login-field label { color: #333; }
     .login-field input {
       width: 100%; height: 44px;
       background: var(--bg-3); border: 1px solid var(--border);
@@ -510,6 +512,8 @@
       color: var(--text); font-size: 14px;
       transition: border-color 0.2s, box-shadow 0.2s;
     }
+    [data-theme="light"] .login-field input { background: #fff; border-color: #ccc; color: #111; }
+    [data-theme="light"] .login-card { background: #fff; border-color: #ddd; box-shadow: 0 8px 40px rgba(0,0,0,0.1); }
     .login-field input:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
     .login-btn {
       width: 100%; height: 46px; margin-top: 8px;
