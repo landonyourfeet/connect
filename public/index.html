@@ -2786,14 +2786,9 @@ function renderContactRecord(person, activities, tasks) {
             <div class="compose-tab" id="ctab-text" onclick="setComposeTab('text')">💬 Text</div>
             <div class="compose-tab" id="ctab-logcall" onclick="setComposeTab('logcall')">📞 Log Call</div>
           </div>
-          <div class="compose-body" style="position:relative">
+          <div class="compose-body">
             <textarea class="compose-input" id="compose-input" placeholder="Add a note… (type @ to mention a teammate)" rows="2"
               oninput="handleComposeInput(event)" onkeydown="handleComposeKeydown(event)"></textarea>
-            <!-- @mention dropdown -->
-            <div id="mention-dropdown" style="display:none;position:absolute;bottom:calc(100% + 4px);left:0;
-              background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
-              box-shadow:0 8px 24px rgba(0,0,0,0.5);z-index:8000;min-width:200px;overflow:hidden">
-            </div>
           </div>
           <div class="compose-footer">
             <button class="compose-submit" id="compose-submit" onclick="submitCompose()">Save Note</button>
@@ -5211,8 +5206,7 @@ function openSmartListPanel(listId) {
     });
     // Populate tags
     const tags = f.tags || [];
-    tagsInput.value = tags.join('
-');
+    tagsInput.value = tags.join('\n');
     delBtn.style.display = 'block';
   } else {
     titleEl.textContent = 'New Smart List';
@@ -5241,8 +5235,7 @@ async function saveSmartListPanel() {
   document.querySelectorAll('#sl-stage-grid .sl-stage-chip input:checked').forEach(cb => stages.push(cb.value));
 
   // Collect tags (one per line)
-  const tags = tagsInput.value.split('
-').map(t => t.trim()).filter(Boolean);
+  const tags = tagsInput.value.split('\n').map(t => t.trim()).filter(Boolean);
 
   const filters = {};
   if (stages.length === 1) filters.stage = stages[0];
@@ -5830,6 +5823,21 @@ function handleComposeInput(e) {
       );
       if (matches.length && dd) {
         _mentionSelectedIdx = 0;
+        // Position dropdown above the textarea using fixed coords to escape overflow:hidden
+        const ta = document.getElementById('compose-input');
+        if (ta) {
+          const rect = ta.getBoundingClientRect();
+          dd.style.left = rect.left + 'px';
+          dd.style.width = rect.width + 'px';
+          // Show above the textarea; if not enough room above, show below
+          const dropH = Math.min(matches.length * 52, 260);
+          if (rect.top - dropH - 8 > 0) {
+            dd.style.top = (rect.top - dropH - 8) + 'px';
+          } else {
+            dd.style.top = (rect.bottom + 4) + 'px';
+          }
+          dd.style.bottom = 'auto';
+        }
         dd.style.display = 'block';
         dd.innerHTML = matches.map((a, i) => {
           const initials = a.name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
@@ -5984,5 +5992,8 @@ window.navigate = function(view, listId) {
 };
 
 </script>
+  <!-- @mention dropdown — body level to escape overflow:hidden ancestors -->
+  <div id="mention-dropdown" style="display:none;position:fixed;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.55);z-index:9999;min-width:220px;max-width:300px;overflow:hidden"></div>
+
 </body>
 </html>
