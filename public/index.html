@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2510,8 +2510,9 @@ const TabAlert = (() => {
 })();
 
 // ── THEME ──────────────────────────────────────────────────────────────────
+// Default = daylight. Once the user toggles, their choice is remembered.
 (function() {
-  const saved = localStorage.getItem('okcreal_theme') || 'dark';
+  const saved = localStorage.getItem('okcreal_theme') || 'light';
   applyTheme(saved, false);
 })();
 
@@ -2524,7 +2525,7 @@ function applyTheme(mode, save = true) {
     if (icon)  icon.textContent  = '☀️';
     if (label) label.textContent = 'Daylight';
   } else {
-    root.removeAttribute('data-theme');
+    root.setAttribute('data-theme', 'dark');   // must SET not remove for CSS selectors
     if (icon)  icon.textContent  = '🌙';
     if (label) label.textContent = 'Stealth';
   }
