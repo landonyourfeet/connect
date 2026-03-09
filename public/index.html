@@ -915,6 +915,26 @@
     .loader-row td { text-align: center; padding: 60px; }
     .spinner { width: 28px; height: 28px; border: 2px solid var(--border); border-top-color: var(--red); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
 
+    /* Presence bubbles */
+    #presence-strip { transition: all 0.3s ease; }
+    #presence-strip > div { transition: transform 0.2s ease; }
+    #presence-strip > div:hover { transform: scale(1.15); }
+
+    /* Notification panel */
+    #notif-panel { animation: fade-in 0.15s ease; }
+
+    /* Timeline email type */
+    .ti-email { background: rgba(99,102,241,0.15); color: #818cf8; }
+
+    /* Settings modal avatar hover */
+    #settings-avatar-preview:hover { opacity: 0.85; }
+
+    /* @mention highlight in notes */
+    .note-content { white-space: pre-wrap; line-height: 1.6; }
+
+    /* Email compose animation */
+    #email-modal > div { transform-origin: bottom right; }
+
     /* ── CONTACT RECORD ───────────────────────────────────────── */
     #view-contact { flex-direction: row; overflow: hidden; }
     .back-btn { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; cursor: pointer; transition: color 0.15s; }
@@ -1438,6 +1458,36 @@
             box-shadow:0 8px 32px rgba(0,0,0,0.5);z-index:8000;overflow:hidden;max-height:320px;overflow-y:auto"></div>
         </div>
         <div class="header-actions">
+          <!-- Notification Bell -->
+          <div style="position:relative;display:inline-flex">
+            <button id="notif-bell-btn" onclick="toggleNotifPanel()" title="Notifications"
+              style="width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--bg-3);
+                     cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .15s"
+              onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='var(--bg-3)'">
+              🔔
+            </button>
+            <span id="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;
+              background:var(--red);color:#fff;font-size:9px;font-weight:800;padding:2px 5px;
+              border-radius:10px;min-width:16px;text-align:center;pointer-events:none"></span>
+            <!-- Notification panel -->
+            <div id="notif-panel" style="display:none;position:absolute;top:44px;right:0;width:340px;
+              background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
+              box-shadow:0 12px 40px rgba(0,0,0,0.5);z-index:9000;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;font-weight:700;color:var(--text)">Notifications</span>
+                <button onclick="markAllNotifsRead()" style="font-size:11px;color:var(--text-3);background:none;border:none;cursor:pointer;padding:2px 6px">Mark all read</button>
+              </div>
+              <div id="notif-list" style="max-height:380px;overflow-y:auto"></div>
+            </div>
+          </div>
+          <!-- Agent Profile Button -->
+          <div id="my-avatar-btn" onclick="openSettings()" title="My Settings"
+            style="width:36px;height:36px;border-radius:50%;cursor:pointer;overflow:hidden;
+                   border:2px solid var(--border);transition:border-color .15s;flex-shrink:0;
+                   display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700"
+            onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--border)'">
+            ?
+          </div>
           <button class="btn-primary" onclick="openNewContactModal()">+ Add Contact</button>
         </div>
       </div>
@@ -1711,6 +1761,12 @@ let currentListId = 'all';
 let currentPersonId = null;
 let peopleData = [];
 let smartLists = [];
+let myAgent = null;
+let agentsList = [];
+let _mentionQuery = '';
+let _mentionStart = -1;
+let _mentionSelectedIdx = 0;
+let _agentSse = null;
 let sortField = 'last_activity';
 let sortDir = 'desc';
 let searchQuery = '';
@@ -1880,6 +1936,9 @@ async function launchApp() {
   navigate('people', 'all');
   initTwilio();
   JirehOrganic.init();
+  // Load my profile + team, then connect agent SSE
+  loadMyProfile().then(() => connectAgentSse());
+  loadNotifications();
 }
 
 function updateSidebarUser() {
@@ -2153,8 +2212,16 @@ function updateBulkActions() {
 }
 
 // ── CONTACT RECORD ───────────────────────────────────────────────────
+let _presencePersonId = null;
+
 async function openContact(personId) {
+  // Leave previous presence
+  if (_presencePersonId && _presencePersonId !== personId) {
+    api(`/api/presence/leave`, 'POST', { personId: _presencePersonId }).catch(()=>{});
+  }
+  _presencePersonId = personId;
   currentPersonId = personId;
+
   const viewEl = document.getElementById('view-contact');
   viewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:height:100%;color:var(--text-3)"><div class="spinner" style="margin:auto;margin-top:120px"></div></div>';
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -2166,11 +2233,15 @@ async function openContact(personId) {
       api(`/api/tasks?personId=${personId}`)
     ]);
     renderContactRecord(person, activities || [], tasks || []);
-    // Load phones and household async after render
     loadPhones(person.id);
     loadHousehold(person.id);
     loadSecurityDetections(personId);
     loadCaseworkerPanel(personId, person.stage);
+    // Announce presence
+    api(`/api/presence/enter`, 'POST', { personId }).catch(()=>{});
+    // Load current viewers
+    const presR = await api(`/api/presence/${personId}`).catch(()=>({viewers:[]}));
+    renderPresenceBubbles(personId, presR.viewers || []);
   } catch(e) {
     viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`;
   }
@@ -2507,9 +2578,12 @@ function renderContactRecord(person, activities, tasks) {
         <div class="contact-record-name">${esc(name)}</div>
         <div style="font-size:12px;color:var(--text-3);margin-bottom:6px">${esc(person.stage||'Lead')}</div>
         ${person.email ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:8px">${esc(person.email)}</div>` : ''}
+        <!-- Presence Bubbles -->
+        <div id="presence-strip" style="display:flex;align-items:center;justify-content:center;gap:4px;min-height:28px;margin-bottom:6px"></div>
         <div class="contact-quick-actions">
           <button class="cqa-btn cqa-call" onclick="pickPhoneAndCall('${person.id}','${esc(name)}')">📞 Call</button>
           <button class="cqa-btn cqa-text" onclick="pickPhoneAndText('${person.id}','${esc(name)}')">💬 Text</button>
+          <button class="cqa-btn" onclick="openEmailCompose('${person.id}','${esc(person.email||'')}','${esc(name)}')">✉️ Email</button>
           <button class="cqa-btn cqa-note" onclick="openNoteCompose()">📝 Note</button>
           <button class="cqa-btn" onclick="confirmDeleteLead('${person.id}','${esc(name)}')" style="background:rgba(220,38,38,0.12);color:#f87171;border:1px solid rgba(220,38,38,0.25)" title="Delete contact">🗑 Delete</button>
         </div>
@@ -2622,8 +2696,14 @@ function renderContactRecord(person, activities, tasks) {
             <div class="compose-tab" id="ctab-text" onclick="setComposeTab('text')">💬 Text</div>
             <div class="compose-tab" id="ctab-logcall" onclick="setComposeTab('logcall')">📞 Log Call</div>
           </div>
-          <div class="compose-body">
-            <textarea class="compose-input" id="compose-input" placeholder="Add a note…" rows="2"></textarea>
+          <div class="compose-body" style="position:relative">
+            <textarea class="compose-input" id="compose-input" placeholder="Add a note… (type @ to mention a teammate)" rows="2"
+              oninput="handleComposeInput(event)" onkeydown="handleComposeKeydown(event)"></textarea>
+            <!-- @mention dropdown -->
+            <div id="mention-dropdown" style="display:none;position:absolute;bottom:calc(100% + 4px);left:0;
+              background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+              box-shadow:0 8px 24px rgba(0,0,0,0.5);z-index:8000;min-width:200px;overflow:hidden">
+            </div>
           </div>
           <div class="compose-footer">
             <button class="compose-submit" id="compose-submit" onclick="submitCompose()">Save Note</button>
@@ -2634,6 +2714,7 @@ function renderContactRecord(person, activities, tasks) {
           <button class="filter-pill" data-filter="call" onclick="filterTimeline('call',this)">📞 Calls <span class="pill-count">${activities.filter(a=>a.type==='call').length}</span></button>
           <button class="filter-pill" data-filter="text" onclick="filterTimeline('text',this)">💬 Texts <span class="pill-count">${activities.filter(a=>a.type==='text'||a.type==='sms').length}</span></button>
           <button class="filter-pill" data-filter="note" onclick="filterTimeline('note',this)">📝 Notes <span class="pill-count">${activities.filter(a=>a.type==='note').length}</span></button>
+          <button class="filter-pill" data-filter="email" onclick="filterTimeline('email',this)">✉️ Emails <span class="pill-count">${activities.filter(a=>a.type==='email').length}</span></button>
         </div>
       </div>
       <div class="timeline-scroll" id="timeline-scroll">${renderTimelineHTML(activities)}</div>
@@ -2871,7 +2952,22 @@ function renderTimelineItem(act, hasConnector) {
 
   } else if (type === 'note') {
     iconCls = 'ti-note'; iconChar = '📝'; typeLabel = 'Note';
-    bodyHtml = `<div class="ti-content note-content">${esc(act.body||act.content||'')}</div>`;
+    const noteBody = act.body||act.content||'';
+    // Highlight @mentions
+    const highlightedNote = noteBody.replace(/@(\w[\w ]*)/g, '<span style="color:var(--red);font-weight:600">@$1</span>');
+    bodyHtml = `<div class="ti-content note-content">${highlightedNote}</div>`;
+
+  } else if (type === 'email') {
+    iconCls = 'ti-email'; iconChar = '✉️'; typeLabel = 'Email';
+    const emailBody = act.body || '';
+    const subjectLine = act.email_subject || emailBody.match(/Subject: ([^\n]+)/)?.[1] || '';
+    const bodyText = emailBody.replace(/^To:.*\n|^Subject:.*\n/gm,'').trim();
+    const dir = act.direction || 'outbound';
+    bodyHtml = `<div style="background:var(--bg-4);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      ${subjectLine ? `<div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:6px">Subject: ${esc(subjectLine)}</div>` : ''}
+      <div style="font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.6">${esc(bodyText)}</div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:6px">${dir === 'inbound' ? '← Received' : '→ Sent via Gmail'}</div>
+    </div>`;
   }
 
   return `<div class="timeline-item" data-type="${type}">
@@ -3300,6 +3396,34 @@ async function loadAdmin() {
 
       <div class="admin-section">
         <div class="admin-section-header">
+          <div class="admin-section-title">🏠 AppFolio Guest Cards</div>
+        </div>
+        <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+          <div style="font-size:12px;color:var(--text-3);line-height:1.7">
+            Auto-imports AppFolio guest cards as Leads via Google Apps Script. Runs every 5 minutes. Dedupes by email and phone.
+          </div>
+          <div style="background:var(--bg-4);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px">Webhook URL</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <code id="webhook-url-display" style="font-size:11px;color:var(--green);flex:1;word-break:break-all"></code>
+              <button onclick="copyWebhookUrl()" style="padding:4px 10px;font-size:11px;border-radius:5px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);cursor:pointer;white-space:nowrap">Copy</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text-3);line-height:1.8">
+            <strong style="color:var(--text-2)">Setup (one time):</strong><br>
+            1. Go to <a href="https://script.google.com" target="_blank" style="color:var(--red)">script.google.com</a> → New Project<br>
+            2. Paste the Apps Script code (copy from below)<br>
+            3. Set <code style="font-size:10px;background:var(--bg-4);padding:1px 4px;border-radius:3px">WEBHOOK_URL</code> to the URL above<br>
+            4. Set <code style="font-size:10px;background:var(--bg-4);padding:1px 4px;border-radius:3px">WEBHOOK_SECRET</code> to match your Railway env var<br>
+            5. Run once manually → approve permissions → set trigger: every 5 min
+          </div>
+          <button onclick="copyAppsScript()" style="padding:7px 14px;font-size:12px;font-weight:700;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;text-align:left">📋 Copy Google Apps Script Code</button>
+          <div id="appfolio-last-lead" style="font-size:11px;color:var(--text-3)"></div>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <div class="admin-section-header">
           <div class="admin-section-title">📷 Camera Names</div>
           <button onclick="discoverCameras()" style="padding:5px 12px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-weight:600">🔍 Auto-Discover</button>
         </div>
@@ -3322,6 +3446,68 @@ async function loadAdmin() {
       </div>`;
 
   } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
+  loadAppfolioStatus();
+}
+
+// ── APPFOLIO GUEST CARD INTEGRATION ──────────────────────────────────────────
+function loadAppfolioStatus() {
+  const el = document.getElementById('webhook-url-display');
+  if (el) el.textContent = window.location.origin + '/api/appfolio/inbound?token=YOUR_SECRET';
+}
+
+function copyWebhookUrl() {
+  const url = window.location.origin + '/api/appfolio/inbound?token=YOUR_SECRET';
+  navigator.clipboard.writeText(url).then(() => toast('Webhook URL copied ✓', 'success'));
+}
+
+function copyAppsScript() {
+  const secret = 'YOUR_SECRET'; // user replaces this
+  const script = `// OKCREAL Connect — AppFolio Guest Card Forwarder
+// Paste into script.google.com → set trigger: Time-driven, Every 5 minutes
+
+var WEBHOOK_URL = '${window.location.origin}/api/appfolio/inbound';
+var WEBHOOK_SECRET = 'YOUR_APPFOLIO_WEBHOOK_SECRET'; // match Railway env var
+var LABEL_NAME = 'AppFolio-GuestCard';
+var PROCESSED_LABEL = 'AppFolio-Processed';
+
+function checkGuestCards() {
+  var processedLabel = getOrCreateLabel(PROCESSED_LABEL);
+  var searchQuery = 'from:guestcards@appfolio.com -label:' + PROCESSED_LABEL;
+  var threads = GmailApp.search(searchQuery, 0, 20);
+
+  threads.forEach(function(thread) {
+    var messages = thread.getMessages();
+    messages.forEach(function(msg) {
+      var subject = msg.getSubject();
+      var body = msg.getPlainBody();
+      var date = msg.getDate().toISOString();
+
+      var payload = JSON.stringify({ subject: subject, body: body, received_at: date });
+
+      var response = UrlFetchApp.fetch(WEBHOOK_URL + '?token=' + WEBHOOK_SECRET, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: payload,
+        muteHttpExceptions: true
+      });
+
+      Logger.log('Guest card: ' + subject + ' → ' + response.getContentText());
+    });
+    thread.addLabel(processedLabel);
+  });
+}
+
+function getOrCreateLabel(name) {
+  return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
+}
+
+// Run this once manually first to authorize permissions
+function setup() {
+  checkGuestCards();
+  Logger.log('Setup complete. Now add a time-driven trigger for checkGuestCards every 5 minutes.');
+}`;
+
+  navigator.clipboard.writeText(script).then(() => toast('Apps Script copied to clipboard ✓', 'success'));
 }
 
 // ── CAMERA NAME ADMIN ─────────────────────────────────────────────────────────
@@ -5092,6 +5278,500 @@ function formatTranscript(transcript) {
   // Poll every 8 seconds
   pollerInterval = setInterval(checkForNewInbound, 8000);
 })();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// MY PROFILE + SETTINGS
+// ════════════════════════════════════════════════════════════════════════════
+async function loadMyProfile() {
+  try {
+    myAgent = await api('/api/me');
+    agentsList = (await api('/api/agents')).agents || await api('/api/agents') || [];
+    if (!Array.isArray(agentsList)) agentsList = agentsList.agents || [];
+    renderMyAvatar();
+  } catch(e) { console.warn('[profile]', e.message); }
+}
+
+function renderMyAvatar() {
+  const btn = document.getElementById('my-avatar-btn');
+  if (!btn || !myAgent) return;
+  if (myAgent.avatar_b64) {
+    btn.innerHTML = `<img src="${myAgent.avatar_b64}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+  } else {
+    const initials = (myAgent.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    btn.style.background = myAgent.avatar_color || '#6366f1';
+    btn.style.color = '#fff';
+    btn.textContent = initials;
+  }
+}
+
+function openSettings() {
+  const existing = document.getElementById('settings-modal');
+  if (existing) existing.remove();
+  const ag = myAgent || {};
+  const modal = document.createElement('div');
+  modal.id = 'settings-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  modal.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:16px;width:440px;max-width:95vw;overflow:hidden">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:16px;font-weight:700;color:var(--text)">My Settings</span>
+        <button onclick="document.getElementById('settings-modal').remove()" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1">×</button>
+      </div>
+      <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+        <!-- Avatar -->
+        <div style="display:flex;align-items:center;gap:16px">
+          <div id="settings-avatar-preview" onclick="document.getElementById('settings-avatar-input').click()" style="width:64px;height:64px;border-radius:50%;background:${ag.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff;cursor:pointer;overflow:hidden;border:2px solid var(--border);flex-shrink:0" title="Click to change avatar">
+            ${ag.avatar_b64 ? `<img src="${ag.avatar_b64}" style="width:100%;height:100%;object-fit:cover">` : (ag.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase()}
+          </div>
+          <input type="file" id="settings-avatar-input" accept="image/*" style="display:none" onchange="previewAvatar(event)">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(ag.name||'')}</div>
+            <div style="font-size:11px;color:var(--text-3)">${esc(ag.email||'')}</div>
+            <button onclick="document.getElementById('settings-avatar-input').click()" style="margin-top:6px;font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer">Change Photo</button>
+            <button onclick="clearAvatar()" style="margin-top:6px;margin-left:4px;font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-3);cursor:pointer">Remove</button>
+          </div>
+        </div>
+        <!-- Name -->
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px">Display Name</label>
+          <input id="settings-name" type="text" value="${esc(ag.name||'')}" style="width:100%;padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+        <!-- Phone -->
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px">Phone</label>
+          <input id="settings-phone" type="tel" value="${esc(ag.phone||'')}" style="width:100%;padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+        <!-- Gmail -->
+        <div style="background:var(--bg-4);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">✉️ Gmail</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px">${ag.gmail_email ? `Connected: ${esc(ag.gmail_email)}` : 'Not connected — enables email from CRM'}</div>
+            </div>
+            ${ag.gmail_email
+              ? `<button onclick="disconnectGmailSettings()" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-3);cursor:pointer">Disconnect</button>`
+              : `<button onclick="connectGmailSettings()" style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:6px;border:none;background:var(--red);color:#fff;cursor:pointer">Connect Gmail →</button>`
+            }
+          </div>
+        </div>
+        <!-- Change password link -->
+        <div>
+          <button onclick="openChangePassword()" style="font-size:11px;color:var(--text-3);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline">Change Password</button>
+        </div>
+      </div>
+      <div style="padding:12px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('settings-modal').remove()" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-size:13px">Cancel</button>
+        <button onclick="saveSettings()" style="padding:8px 18px;border-radius:8px;border:none;background:var(--red);color:#fff;cursor:pointer;font-size:13px;font-weight:700">Save Changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+let _newAvatarB64 = null;
+function previewAvatar(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    _newAvatarB64 = ev.target.result;
+    const prev = document.getElementById('settings-avatar-preview');
+    if (prev) prev.innerHTML = `<img src="${_newAvatarB64}" style="width:100%;height:100%;object-fit:cover">`;
+  };
+  reader.readAsDataURL(file);
+}
+function clearAvatar() {
+  _newAvatarB64 = 'CLEAR';
+  const prev = document.getElementById('settings-avatar-preview');
+  if (prev) prev.innerHTML = (myAgent?.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+}
+
+async function saveSettings() {
+  const name = document.getElementById('settings-name')?.value?.trim();
+  const phone = document.getElementById('settings-phone')?.value?.trim();
+  const body = { name, phone };
+  if (_newAvatarB64 === 'CLEAR') body.avatar_b64 = null;
+  else if (_newAvatarB64) body.avatar_b64 = _newAvatarB64;
+  _newAvatarB64 = null;
+  try {
+    myAgent = await api('/api/me', 'PUT', body);
+    renderMyAvatar();
+    document.getElementById('settings-modal')?.remove();
+    // Update sidebar
+    if (currentUser) { currentUser.name = myAgent.name; updateSidebarUser(); }
+    toast('Settings saved ✓', 'success');
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+function connectGmailSettings() {
+  window.open('/api/gmail/connect', '_blank', 'width=600,height=700');
+  // Reload profile after a few seconds so status updates
+  setTimeout(() => loadMyProfile().then(openSettings), 4000);
+}
+async function disconnectGmailSettings() {
+  await api('/api/gmail/disconnect', 'POST');
+  await loadMyProfile();
+  openSettings();
+}
+
+function openChangePassword() {
+  document.getElementById('settings-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'pw-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:16px;width:360px;padding:24px">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px">Change Password</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input id="pw-current" type="password" placeholder="Current password" style="padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box">
+      <input id="pw-new" type="password" placeholder="New password" style="padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box">
+      <input id="pw-confirm" type="password" placeholder="Confirm new password" style="padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box">
+    </div>
+    <div id="pw-err" style="font-size:12px;color:var(--red);margin-top:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button onclick="document.getElementById('pw-modal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer">Cancel</button>
+      <button onclick="submitChangePassword()" style="padding:8px 16px;border-radius:8px;border:none;background:var(--red);color:#fff;cursor:pointer;font-weight:700">Update</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+}
+async function submitChangePassword() {
+  const cur = document.getElementById('pw-current').value;
+  const nw = document.getElementById('pw-new').value;
+  const con = document.getElementById('pw-confirm').value;
+  const err = document.getElementById('pw-err');
+  if (nw !== con) { err.textContent = 'Passwords do not match'; return; }
+  if (nw.length < 6) { err.textContent = 'Password must be at least 6 characters'; return; }
+  try {
+    await api('/api/me/password', 'PUT', { current_password: cur, new_password: nw });
+    document.getElementById('pw-modal')?.remove();
+    toast('Password updated ✓', 'success');
+  } catch(e) { err.textContent = e.message; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AGENT SSE + PRESENCE + NOTIFICATIONS
+// ════════════════════════════════════════════════════════════════════════════
+function connectAgentSse() {
+  if (_agentSse) return;
+  _agentSse = new EventSource('/api/events/stream');
+  _agentSse.onopen = () => console.log('[AgentSSE] connected');
+  _agentSse.onerror = () => {
+    console.warn('[AgentSSE] reconnecting...');
+    _agentSse.close(); _agentSse = null;
+    setTimeout(connectAgentSse, 8000);
+  };
+  _agentSse.onmessage = (e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      if (payload.type === 'presence') {
+        renderPresenceBubbles(payload.personId, payload.viewers);
+      } else if (payload.type === 'notification') {
+        handleIncomingNotification(payload.notification);
+      } else if (payload.type === 'new_lead') {
+        toast(`🏠 New Lead: ${payload.name} (${payload.source||'Email'})`, 'success');
+        if (currentListId === 'all') loadPeople('all');
+      }
+    } catch(err) {}
+  };
+}
+
+function renderPresenceBubbles(personId, viewers) {
+  if (String(personId) !== String(currentPersonId)) return;
+  const strip = document.getElementById('presence-strip');
+  if (!strip) return;
+  // Filter out self
+  const others = (viewers || []).filter(v => myAgent && String(v.id) !== String(myAgent.id));
+  if (!others.length) { strip.innerHTML = ''; return; }
+  strip.innerHTML = `
+    <span style="font-size:10px;color:var(--text-3);margin-right:2px">Also viewing:</span>
+    ${others.map(v => {
+      const initials = (v.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+      const tooltip = esc(v.name);
+      if (v.avatar_b64) {
+        return `<div title="${tooltip}" style="width:26px;height:26px;border-radius:50%;overflow:hidden;border:2px solid var(--green);flex-shrink:0">
+          <img src="${v.avatar_b64}" style="width:100%;height:100%;object-fit:cover"></div>`;
+      }
+      return `<div title="${tooltip}" style="width:26px;height:26px;border-radius:50%;background:${v.avatar_color||'#6366f1'};
+        display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;
+        border:2px solid var(--green);flex-shrink:0">${initials}</div>`;
+    }).join('')}`;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────
+let _notifData = [];
+async function loadNotifications() {
+  try {
+    const r = await api('/api/notifications');
+    _notifData = r.notifications || [];
+    updateNotifBadge(r.unread || 0);
+  } catch(e) {}
+}
+
+function updateNotifBadge(count) {
+  const badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  if (count > 0) { badge.textContent = count > 99 ? '99+' : count; badge.style.display = 'block'; }
+  else badge.style.display = 'none';
+}
+
+function handleIncomingNotification(notif) {
+  _notifData.unshift(notif);
+  const unread = _notifData.filter(n => !n.is_read).length;
+  updateNotifBadge(unread);
+  renderNotifPanel();
+  // Play a subtle sound or show toast
+  toast(`💬 ${notif.body?.substring(0,80) || 'New notification'}`, 'info', 6000);
+}
+
+function toggleNotifPanel() {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    renderNotifPanel();
+    document.addEventListener('click', closeNotifOnOutside, { once: true });
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+function closeNotifOnOutside(e) {
+  const panel = document.getElementById('notif-panel');
+  const btn = document.getElementById('notif-bell-btn');
+  if (panel && !panel.contains(e.target) && e.target !== btn) {
+    panel.style.display = 'none';
+  }
+}
+
+function renderNotifPanel() {
+  const list = document.getElementById('notif-list');
+  if (!list) return;
+  if (!_notifData.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No notifications</div>';
+    return;
+  }
+  list.innerHTML = _notifData.slice(0,20).map(n => {
+    const initials = (n.sender_name||'?').split(' ').map(x=>x[0]).join('').substring(0,2).toUpperCase();
+    const personName = (n.first_name||'') + ' ' + (n.last_name||'');
+    return `<div onclick="clickNotif('${n.id}','${n.person_id}')" style="display:flex;gap:10px;padding:12px 16px;cursor:pointer;
+      border-bottom:1px solid var(--border);transition:background .1s;${n.is_read?'opacity:.6':''}
+      " onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='transparent'">
+      <div style="width:32px;height:32px;border-radius:50%;background:${n.sender_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
+        ${n.sender_avatar ? `<img src="${n.sender_avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : initials}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;color:var(--text);line-height:1.4">${esc(n.body||'')}</div>
+        ${n.person_id ? `<div style="font-size:10px;color:var(--red);margin-top:2px">${esc(personName.trim())}</div>` : ''}
+        <div style="font-size:10px;color:var(--text-3);margin-top:2px">${timeAgo(n.created_at)}</div>
+      </div>
+      ${!n.is_read ? '<div style="width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;margin-top:4px"></div>' : ''}
+    </div>`;
+  }).join('');
+}
+
+async function clickNotif(notifId, personId) {
+  // Mark as read
+  api(`/api/notifications/${notifId}/read`, 'PUT').catch(()=>{});
+  const notif = _notifData.find(n => n.id === notifId);
+  if (notif) notif.is_read = true;
+  const unread = _notifData.filter(n => !n.is_read).length;
+  updateNotifBadge(unread);
+  renderNotifPanel();
+  // Navigate to contact
+  if (personId) {
+    document.getElementById('notif-panel').style.display = 'none';
+    openContact(personId);
+  }
+}
+
+async function markAllNotifsRead() {
+  await api('/api/notifications/read-all', 'POST').catch(()=>{});
+  _notifData.forEach(n => n.is_read = true);
+  updateNotifBadge(0);
+  renderNotifPanel();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// @MENTION SYSTEM
+// ════════════════════════════════════════════════════════════════════════════
+let _pendingMentions = [];
+
+function handleComposeInput(e) {
+  const ta = e.target;
+  const val = ta.value;
+  const pos = ta.selectionStart;
+
+  // Find the last @ before cursor
+  const beforeCursor = val.substring(0, pos);
+  const atIdx = beforeCursor.lastIndexOf('@');
+  const dd = document.getElementById('mention-dropdown');
+
+  if (atIdx !== -1) {
+    const afterAt = beforeCursor.substring(atIdx + 1);
+    // Only trigger if no space after the @ (still typing name)
+    if (!afterAt.includes(' ') || afterAt.length < 12) {
+      _mentionStart = atIdx;
+      _mentionQuery = afterAt.toLowerCase();
+      const matches = agentsList.filter(a =>
+        a.name.toLowerCase().includes(_mentionQuery) &&
+        (!myAgent || String(a.id) !== String(myAgent.id))
+      );
+      if (matches.length && dd) {
+        _mentionSelectedIdx = 0;
+        dd.style.display = 'block';
+        dd.innerHTML = matches.map((a, i) => {
+          const initials = a.name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+          return `<div data-idx="${i}" data-name="${esc(a.name)}" onmousedown="insertMention('${esc(a.name)}')"
+            style="padding:8px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;
+            ${i===0?'background:var(--bg-4)':''}" id="mention-item-${i}"
+            onmouseover="highlightMention(${i})">
+            <div style="width:28px;height:28px;border-radius:50%;background:${a.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
+              ${a.avatar_b64 ? `<img src="${a.avatar_b64}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : initials}
+            </div>
+            <span style="font-size:13px;color:var(--text)">${esc(a.name)}</span>
+          </div>`;
+        }).join('');
+        return;
+      }
+    }
+  }
+  if (dd) dd.style.display = 'none';
+  _mentionStart = -1;
+}
+
+function highlightMention(idx) {
+  _mentionSelectedIdx = idx;
+  document.querySelectorAll('[id^="mention-item-"]').forEach((el, i) => {
+    el.style.background = i === idx ? 'var(--bg-4)' : 'transparent';
+  });
+}
+
+function handleComposeKeydown(e) {
+  const dd = document.getElementById('mention-dropdown');
+  if (!dd || dd.style.display === 'none') return;
+  const items = dd.querySelectorAll('[data-idx]');
+  if (e.key === 'ArrowDown') { e.preventDefault(); _mentionSelectedIdx = Math.min(_mentionSelectedIdx+1, items.length-1); highlightMention(_mentionSelectedIdx); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _mentionSelectedIdx = Math.max(_mentionSelectedIdx-1, 0); highlightMention(_mentionSelectedIdx); }
+  else if (e.key === 'Enter' || e.key === 'Tab') {
+    const sel = items[_mentionSelectedIdx];
+    if (sel) { e.preventDefault(); insertMention(sel.dataset.name); }
+  } else if (e.key === 'Escape') { dd.style.display = 'none'; }
+}
+
+function insertMention(agentName) {
+  const ta = document.getElementById('compose-input');
+  if (!ta) return;
+  const val = ta.value;
+  const before = val.substring(0, _mentionStart);
+  const after = val.substring(ta.selectionStart);
+  ta.value = before + '@' + agentName + ' ' + after;
+  // Track the mention
+  if (!_pendingMentions.includes(agentName)) _pendingMentions.push(agentName);
+  const dd = document.getElementById('mention-dropdown');
+  if (dd) dd.style.display = 'none';
+  _mentionStart = -1;
+  ta.focus();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EMAIL COMPOSE
+// ════════════════════════════════════════════════════════════════════════════
+function openEmailCompose(personId, toEmail, toName) {
+  const existing = document.getElementById('email-modal');
+  if (existing) existing.remove();
+  if (!myAgent?.gmail_email) {
+    if (confirm('You need to connect Gmail first. Open settings?')) openSettings();
+    return;
+  }
+  const modal = document.createElement('div');
+  modal.id = 'email-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:flex-end;justify-content:flex-end;padding:20px';
+  modal.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:16px;width:480px;max-width:95vw;overflow:hidden;animation:fade-in .2s ease">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg-3)">
+        <span style="font-size:14px;font-weight:700;color:var(--text)">✉️ New Email</span>
+        <button onclick="document.getElementById('email-modal').remove()" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer">×</button>
+      </div>
+      <div style="padding:16px 18px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);width:50px">To</label>
+          <input id="email-to" type="email" value="${esc(toEmail||'')}" placeholder="recipient@email.com"
+            style="flex:1;padding:7px 10px;background:var(--bg-4);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);width:50px">From</label>
+          <div style="font-size:12px;color:var(--text-3);padding:7px 10px">${esc(myAgent.gmail_email)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);width:50px">Subject</label>
+          <input id="email-subject" type="text" placeholder="Subject…"
+            style="flex:1;padding:7px 10px;background:var(--bg-4);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px">
+        </div>
+        <textarea id="email-body" placeholder="Write your message…" rows="8"
+          style="width:100%;padding:10px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('email-modal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-size:13px">Cancel</button>
+        <button id="email-send-btn" onclick="sendEmail('${personId}')" style="padding:8px 18px;border-radius:8px;border:none;background:var(--red);color:#fff;cursor:pointer;font-size:13px;font-weight:700">Send ↑</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  setTimeout(() => document.getElementById('email-subject')?.focus(), 100);
+}
+
+async function sendEmail(personId) {
+  const to = document.getElementById('email-to')?.value?.trim();
+  const subject = document.getElementById('email-subject')?.value?.trim();
+  const body = document.getElementById('email-body')?.value?.trim();
+  if (!to || !body) { toast('To and body are required', 'error'); return; }
+  const btn = document.getElementById('email-send-btn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await api('/api/gmail/send', 'POST', { to, subject, body, personId });
+    document.getElementById('email-modal')?.remove();
+    toast('Email sent ✓', 'success');
+    // Refresh timeline
+    const acts = await api(`/api/activities?personId=${personId}`);
+    const el = document.getElementById('timeline-scroll');
+    if (el) el.innerHTML = renderTimelineHTML(acts || []);
+  } catch(e) {
+    toast('Send failed: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Send ↑';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PATCH submitCompose to include @mentions
+// ════════════════════════════════════════════════════════════════════════════
+const _origSubmitCompose = window.submitCompose;
+window.submitCompose = async function() {
+  const mentions = [..._pendingMentions];
+  _pendingMentions = [];
+  // Inject mentions into the activity payload — patch the api call
+  const _origApi = window.api;
+  window.api = async function(url, method, data) {
+    if (url === '/api/activities' && method === 'POST' && mentions.length) {
+      data = { ...data, mentions };
+    }
+    const result = await _origApi(url, method, data);
+    window.api = _origApi; // restore after one call
+    return result;
+  };
+  return _origSubmitCompose?.();
+};
+
+// Leave presence when navigating away
+const _origNavigate = window.navigate;
+window.navigate = function(view, listId) {
+  if (_presencePersonId && view !== 'contact') {
+    api(`/api/presence/leave`, 'POST', { personId: _presencePersonId }).catch(()=>{});
+    _presencePersonId = null;
+  }
+  return _origNavigate?.(view, listId);
+};
+
 </script>
 </body>
 </html>
