@@ -43,6 +43,33 @@
       --font-mono:   'JetBrains Mono', monospace;
       --font-cond:   'Barlow Condensed', sans-serif;
       --font-disp:   'Bebas Neue', cursive;
+
+      /* ── Tactical / Intel panel tokens (stealth defaults) ── */
+      --tac-bg:         #050203;
+      --tac-bg-2:       #0c0004;
+      --tac-header:     linear-gradient(160deg, #120005 0%, #070101 100%);
+      --tac-border:     #1a0008;
+      --tac-border-2:   #2a0008;
+      --tac-border-3:   #1e0008;
+      --tac-corner:     #3a0010;
+      --tac-input-bg:   transparent;
+      --tac-input-line: #2a0010;
+      --tac-chip-bg:    transparent;
+      --tac-chip-border:#160008;
+      --tac-chip-text:  #3a1a28;
+      --tac-chip-dot:   #2a0010;
+      --tac-muted:      #2a0e18;
+      --tac-muted-2:    #4a2030;
+      --tac-footer-bg:  #040001;
+      --tac-name:       #ffffff;
+      --tac-name-glow:  rgba(232,0,58,0.5);
+      --tac-scan:       rgba(232,0,58,0.03);
+      --tac-scanline-h: rgba(255,255,255,0.008);
+      --tac-count-bar:  #1a0008;
+      --tac-lh-name:    #ffffff;
+      --tac-lh-sub:     #884060;
+      --tac-lh-btn-bg:  #0c0002;
+      --tac-nav-label:  #4a2030;
     }
 
     /* ── DAYLIGHT THEME ──────────────────────────────────────────── */
@@ -63,6 +90,33 @@
       --green-glow:  rgba(0, 180, 100, 0.4);
       --amber-dim:   rgba(200, 100, 0, 0.10);
       --blue-dim:    rgba(0, 100, 210, 0.10);
+
+      /* ── Tactical tokens — Daylight "Classified Dossier" mode ── */
+      --tac-bg:         #f7f4f0;
+      --tac-bg-2:       #f0ebe4;
+      --tac-header:     linear-gradient(160deg, #fff 0%, #f7f4f0 100%);
+      --tac-border:     #ddd0c8;
+      --tac-border-2:   #c8b8b0;
+      --tac-border-3:   #d8c8c0;
+      --tac-corner:     #c0a898;
+      --tac-input-bg:   transparent;
+      --tac-input-line: #c0a898;
+      --tac-chip-bg:    transparent;
+      --tac-chip-border:#ddd0c8;
+      --tac-chip-text:  #a08070;
+      --tac-chip-dot:   #c0a898;
+      --tac-muted:      #b0a098;
+      --tac-muted-2:    #907060;
+      --tac-footer-bg:  #ede8e2;
+      --tac-name:       #1c1c1e;
+      --tac-name-glow:  rgba(232,0,58,0.2);
+      --tac-scan:       rgba(0,0,0,0.015);
+      --tac-scanline-h: rgba(0,0,0,0.012);
+      --tac-count-bar:  #ddd0c8;
+      --tac-lh-name:    #1c1c1e;
+      --tac-lh-sub:     #a08070;
+      --tac-lh-btn-bg:  #f0ebe4;
+      --tac-nav-label:  #a08070;
     }
 
     /* Scrollbar — light */
@@ -113,6 +167,29 @@
     [data-theme="light"] .people-list { background: var(--bg-2); }
     [data-theme="light"] .list-row:hover { background: var(--bg-3); }
     [data-theme="light"] .list-row.active { background: var(--bg-3); }
+
+    /* ── Tactical panel — daylight structural overrides ── */
+    [data-theme="light"] .sl-panel { border-left-color: var(--tac-border); }
+    [data-theme="light"] .sl-panel-header { border-bottom-color: var(--red); box-shadow: 0 2px 10px rgba(232,0,58,0.08); }
+    [data-theme="light"] .sl-badge { border-color: rgba(232,0,58,0.25); color: rgba(180,0,30,0.6); }
+    [data-theme="light"] .sl-panel-title { text-shadow: 0 0 12px rgba(232,0,58,0.15); }
+    [data-theme="light"] .sl-close-btn:hover { background: var(--red-dim); }
+    [data-theme="light"] .sl-section::before,
+    [data-theme="light"] .sl-section::after,
+    [data-theme="light"] .sl-section-tl,
+    [data-theme="light"] .sl-section-br { border-color: var(--tac-corner); }
+    [data-theme="light"] .sl-input { color: var(--text); }
+    [data-theme="light"] textarea.sl-input { background: rgba(240,235,228,0.6); }
+    [data-theme="light"] .sl-stage-chip.selected { box-shadow: inset 0 0 10px rgba(232,0,58,0.06), 0 0 6px rgba(232,0,58,0.06); }
+    [data-theme="light"] .sl-panel-footer { border-top-color: var(--tac-border); }
+    [data-theme="light"] .sl-del-btn { color: var(--tac-muted-2); border-color: var(--tac-border); }
+    [data-theme="light"] .sl-del-btn:hover { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+    [data-theme="light"] .sl-nav-bar { background: var(--bg-3); border-bottom-color: var(--border); }
+    [data-theme="light"] .sl-nav-bar button { background: var(--bg-4); border-color: var(--border); color: var(--text-2); }
+    [data-theme="light"] .sl-lh-edit:hover { color: var(--red); border-color: var(--red); }
+    /* Scanline is barely visible in light mode — reduce opacity */
+    [data-theme="light"] .sl-panel::after { opacity: 0.4; }
+    [data-theme="light"] .sl-panel::before { opacity: 0.5; }
 
     /* Inputs & selects */
     [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea {
@@ -822,9 +899,9 @@
     #sl-list-header { display: none; flex-shrink: 0; padding: 7px 18px 7px 16px; border-bottom: 1px solid var(--red); background: linear-gradient(90deg, #0d0002 0%, #070000 100%); box-shadow: 0 1px 14px rgba(232,0,58,0.18); align-items: center; gap: 10px; }
     #sl-list-header.visible { display: flex; }
     .sl-lh-icon { color: var(--red); font-family: var(--font-mono); font-size: 13px; opacity: 0.7; flex-shrink: 0; }
-    .sl-lh-name { font-family: var(--font-cond); font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #fff; text-shadow: 0 0 18px rgba(232,0,58,0.4); }
-    .sl-lh-count { font-family: var(--font-mono); font-size: 10px; color: #884060; letter-spacing: 0.08em; margin-left: 4px; }
-    .sl-lh-edit { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: #884060; background: #0c0002; border: 1px solid #2a0008; padding: 4px 12px; border-radius: 2px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+    .sl-lh-name { font-family: var(--font-cond); font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tac-lh-name); text-shadow: 0 0 18px var(--tac-name-glow); }
+    .sl-lh-count { font-family: var(--font-mono); font-size: 10px; color: var(--tac-lh-sub); letter-spacing: 0.08em; margin-left: 4px; }
+    .sl-lh-edit { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--tac-lh-sub); background: var(--tac-lh-btn-bg); border: 1px solid var(--tac-border-2); padding: 4px 12px; border-radius: 2px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
     .sl-lh-edit:hover { color: var(--red); border-color: var(--red); box-shadow: 0 0 8px rgba(232,0,58,0.2); }
 
     /* ── SMART LIST NAV ITEMS ─────────────────────────── */
@@ -832,110 +909,230 @@
     .sl-nav-name { flex: 1; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ── TACTICAL INTEL PANEL ─────────────────────────── */
+    /* ── INTEL FILTER PANEL ──────────────────────────── */
+    @keyframes sl-scanline {
+      0%   { transform: translateY(-100%); }
+      100% { transform: translateY(100vh); }
+    }
+    @keyframes sl-pulse-dot {
+      0%,100% { opacity: 1; } 50% { opacity: 0.15; }
+    }
+    @keyframes sl-flicker {
+      0%,100% { opacity: 1; } 92% { opacity: 1; } 93% { opacity: 0.7; } 94% { opacity: 1; }
+    }
     .sl-panel {
       width: 0; overflow: hidden; flex-shrink: 0;
-      border-left: 1px solid #1a0008;
-      background: #060606;
+      border-left: 1px solid var(--tac-border);
+      background: var(--tac-bg);
       display: flex; flex-direction: column;
-      transition: width 0.22s cubic-bezier(.4,0,.2,1);
+      transition: width 0.25s cubic-bezier(.4,0,.2,1);
       position: relative;
     }
+    /* CRT scanline sweep */
+    .sl-panel::after {
+      content: ''; pointer-events: none;
+      position: absolute; left: 0; right: 0; height: 60px; z-index: 10;
+      background: linear-gradient(transparent, var(--tac-scan) 50%, transparent);
+      animation: sl-scanline 4s linear infinite;
+    }
+    /* Subtle horizontal lines texture */
     .sl-panel::before {
-      content: '';
-      position: absolute; inset: 0; pointer-events: none; z-index: 0;
-      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.012) 2px, rgba(255,255,255,0.012) 4px);
+      content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, var(--tac-scanline-h) 3px, var(--tac-scanline-h) 4px);
     }
-    .sl-panel.open { width: 300px; }
+    .sl-panel.open { width: 310px; }
+
+    /* Header */
     .sl-panel-header {
-      position: relative; z-index: 1;
+      position: relative; z-index: 2; flex-shrink: 0;
+      background: var(--tac-header);
       border-bottom: 1px solid var(--red);
-      box-shadow: 0 1px 12px rgba(232,0,58,0.2);
-      background: linear-gradient(135deg, #100005 0%, #0a0002 100%);
-      flex-shrink: 0;
+      box-shadow: 0 2px 18px rgba(232,0,58,0.18);
+      padding: 10px 14px 11px;
     }
-    .sl-panel-eyebrow {
-      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.25em;
-      text-transform: uppercase; color: var(--red); opacity: 0.6;
-      padding: 7px 14px 0;
-    }
-    .sl-panel-header-inner {
+    .sl-header-top {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 6px 14px 10px;
+      margin-bottom: 7px;
     }
-    .sl-panel-title {
-      font-family: var(--font-disp); font-size: 22px; letter-spacing: 0.14em;
-      text-transform: uppercase; color: #fff;
-      text-shadow: 0 0 20px rgba(232,0,58,0.55);
+    .sl-header-badges {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sl-badge {
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.18em;
+      text-transform: uppercase; padding: 2px 6px;
+      border: 1px solid rgba(232,0,58,0.35); border-radius: 1px;
+      color: rgba(232,0,58,0.6);
+    }
+    .sl-live-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--red); flex-shrink: 0;
+      box-shadow: 0 0 6px var(--red);
+      animation: sl-pulse-dot 1.4s ease-in-out infinite;
     }
     .sl-close-btn {
-      background: none; border: 1px solid #2a0008; color: var(--text-3);
-      width: 22px; height: 22px; border-radius: 2px; cursor: pointer;
-      font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;
+      background: none; border: 1px solid var(--tac-border-2); color: var(--tac-muted-2);
+      width: 20px; height: 20px; border-radius: 1px; cursor: pointer;
+      font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center;
       transition: all 0.15s; flex-shrink: 0;
     }
-    .sl-close-btn:hover { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .sl-close-btn:hover { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.08); }
+    .sl-panel-title {
+      font-family: var(--font-disp); font-size: 20px; letter-spacing: 0.16em;
+      text-transform: uppercase; color: var(--tac-name);
+      text-shadow: 0 0 24px var(--tac-name-glow);
+      animation: sl-flicker 8s infinite;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 220px;
+    }
+    /* Target counter pill */
+    .sl-target-counter {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;
+      color: var(--red); margin-top: 6px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sl-target-counter-bar {
+      flex: 1; height: 2px; background: var(--tac-count-bar);
+      border-radius: 1px; overflow: hidden;
+    }
+    .sl-target-counter-fill {
+      height: 100%; background: var(--red);
+      box-shadow: 0 0 4px var(--red);
+      transition: width 0.5s ease;
+    }
+
+    /* Body */
     .sl-panel-body {
       position: relative; z-index: 1;
-      flex: 1; overflow-y: auto; padding: 16px 14px;
-      display: flex; flex-direction: column; gap: 18px;
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 14px 13px;
+      display: flex; flex-direction: column; gap: 0;
     }
-    .sl-panel-body::-webkit-scrollbar { width: 3px; }
-    .sl-panel-body::-webkit-scrollbar-thumb { background: #2a0008; border-radius: 2px; }
-    .sl-section { display: flex; flex-direction: column; gap: 8px; }
+    .sl-panel-body::-webkit-scrollbar { width: 2px; }
+    .sl-panel-body::-webkit-scrollbar-thumb { background: var(--tac-border-2); }
+
+    /* Section with corner-bracket HUD frame */
+    .sl-section {
+      position: relative; padding: 14px 12px 13px;
+      margin-bottom: 10px;
+    }
+    .sl-section::before, .sl-section::after {
+      content: ''; position: absolute;
+      width: 8px; height: 8px;
+      border-color: var(--tac-corner); border-style: solid;
+    }
+    .sl-section::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+    .sl-section::after  { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+    .sl-section-tl, .sl-section-br {
+      position: absolute; width: 8px; height: 8px;
+      border-color: var(--tac-corner); border-style: solid;
+    }
+    .sl-section-tl { top: 0; right: 0; border-width: 1px 1px 0 0; }
+    .sl-section-br { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
+
     .sl-panel-label {
-      display: flex; align-items: center; gap: 6px;
-      font-family: var(--font-mono); font-size: 9px; font-weight: 700;
-      letter-spacing: 0.22em; text-transform: uppercase; color: var(--red); opacity: 0.8;
+      font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+      letter-spacing: 0.28em; text-transform: uppercase;
+      color: var(--red); opacity: 0.75;
+      margin-bottom: 9px;
+      display: flex; align-items: center; gap: 7px;
     }
-    .sl-panel-label::before { content: '//'; opacity: 0.45; }
+    .sl-panel-label::before { content: '▸'; font-size: 7px; }
+    .sl-panel-label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--tac-border-2), transparent); }
+
+    /* Name input */
     .sl-input {
       width: 100%; box-sizing: border-box;
-      background: #0c0002; border: 1px solid #2a0008;
-      border-radius: 2px; color: var(--text);
-      padding: 9px 11px; font-family: var(--font-mono); font-size: 12px;
-      letter-spacing: 0.04em; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+      background: var(--tac-input-bg); border: none;
+      border-bottom: 1px solid var(--tac-input-line);
+      color: var(--text); padding: 6px 2px 7px;
+      font-family: var(--font-mono); font-size: 13px;
+      letter-spacing: 0.06em; outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      caret-color: var(--red);
     }
-    .sl-input:focus { border-color: var(--red); box-shadow: 0 0 0 2px rgba(232,0,58,0.12), inset 0 0 8px rgba(232,0,58,0.04); }
-    .sl-input::placeholder { color: #3a1020; }
-    textarea.sl-input { resize: none; min-height: 72px; line-height: 1.75; }
-    .sl-stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+    .sl-input:focus { border-bottom-color: var(--red); box-shadow: 0 2px 0 -1px rgba(232,0,58,0.2); }
+    .sl-input::placeholder { color: var(--tac-muted); letter-spacing: 0.08em; }
+    .sl-input-wrap { position: relative; }
+    .sl-input-cursor {
+      position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+      width: 1px; height: 13px; background: var(--red);
+      animation: sl-pulse-dot 0.8s step-end infinite;
+      pointer-events: none;
+    }
+    textarea.sl-input {
+      border: 1px solid var(--tac-border-3); border-radius: 1px;
+      padding: 8px 9px; resize: none; min-height: 76px;
+      line-height: 1.8; background: var(--tac-bg-2);
+    }
+    textarea.sl-input:focus { border-color: var(--red); }
+
+    /* Stage chips */
+    .sl-stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
     .sl-stage-chip {
-      display: flex; align-items: center; gap: 6px;
-      background: #0a0002; border: 1px solid #1e0008;
-      border-radius: 2px; padding: 7px 9px;
-      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
-      text-transform: uppercase; color: #4a2030;
+      display: flex; align-items: center; gap: 5px;
+      background: transparent;
+      border: 1px solid var(--tac-chip-border);
+      padding: 7px 8px;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--tac-chip-text);
       cursor: pointer; transition: all 0.12s; user-select: none; line-height: 1;
+      position: relative; overflow: hidden;
     }
-    .sl-stage-chip::before { content: '○'; font-size: 9px; flex-shrink: 0; transition: content 0.12s; }
-    .sl-stage-chip:hover { border-color: #4a0015; color: #aa3050; }
-    .sl-stage-chip.selected { background: rgba(232,0,58,0.1); border-color: var(--red); color: var(--red); box-shadow: 0 0 6px rgba(232,0,58,0.12); }
-    .sl-stage-chip.selected::before { content: '●'; }
+    .sl-stage-chip::before {
+      content: ''; width: 5px; height: 5px; border-radius: 50%;
+      background: var(--tac-chip-dot); flex-shrink: 0;
+      transition: background 0.12s, box-shadow 0.12s;
+    }
+    .sl-stage-chip:hover { border-color: var(--red); color: var(--tac-lh-sub); }
+    .sl-stage-chip:hover::before { background: var(--red); }
+    .sl-stage-chip.selected {
+      background: rgba(232,0,58,0.07); border-color: rgba(232,0,58,0.5);
+      color: var(--red);
+      box-shadow: inset 0 0 12px rgba(232,0,58,0.04), 0 0 8px rgba(232,0,58,0.08);
+    }
+    .sl-stage-chip.selected::before {
+      background: var(--red);
+      box-shadow: 0 0 5px var(--red);
+    }
     .sl-stage-chip input { display: none; }
-    .sl-hint { font-family: var(--font-mono); font-size: 9px; color: #3a1020; letter-spacing: 0.06em; }
-    .sl-divider { height: 1px; background: linear-gradient(90deg, transparent, #200008 40%, #200008 60%, transparent); }
+
+    .sl-hint {
+      font-family: var(--font-mono); font-size: 8px; color: var(--tac-muted);
+      letter-spacing: 0.1em; margin-top: 5px; opacity: 0.7;
+    }
+
+    /* Footer */
     .sl-panel-footer {
-      position: relative; z-index: 1;
-      padding: 12px 14px; border-top: 1px solid #1a0008;
-      background: #040000; display: flex; flex-direction: column; gap: 7px;
+      position: relative; z-index: 2; flex-shrink: 0;
+      padding: 11px 13px 13px;
+      border-top: 1px solid var(--tac-border);
+      background: var(--tac-footer-bg);
+      display: flex; flex-direction: column; gap: 6px;
     }
     .sl-save-btn {
-      width: 100%; padding: 10px;
-      background: var(--red); color: #fff; border: none;
-      border-radius: 2px; font-family: var(--font-disp); font-size: 18px;
-      letter-spacing: 0.25em; cursor: pointer; text-transform: uppercase;
-      transition: all 0.15s; position: relative; overflow: hidden;
+      width: 100%; padding: 11px 10px;
+      background: linear-gradient(135deg, #cc0030 0%, #e8003a 60%, #cc0030 100%);
+      color: #fff; border: none;
+      font-family: var(--font-mono); font-size: 11px;
+      letter-spacing: 0.35em; cursor: pointer; text-transform: uppercase;
+      transition: all 0.18s; position: relative; overflow: hidden;
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
     }
-    .sl-save-btn::after { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.07) 0%, transparent 60%); }
-    .sl-save-btn:hover { box-shadow: 0 0 24px rgba(232,0,58,0.55); }
+    .sl-save-btn::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+    }
+    .sl-save-btn:hover { box-shadow: 0 0 28px rgba(232,0,58,0.5), 0 0 8px rgba(232,0,58,0.3); letter-spacing: 0.5em; }
+    .sl-save-btn:active { transform: scale(0.98); }
     .sl-del-btn {
       width: 100%; padding: 7px; background: none;
-      color: #3a1020; border: 1px solid #1e0008;
-      border-radius: 2px; font-family: var(--font-mono); font-size: 10px;
-      letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+      color: var(--tac-muted); border: 1px solid var(--tac-chip-border);
+      font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
     }
-    .sl-del-btn:hover { color: var(--red); border-color: var(--red); background: rgba(232,0,58,0.05); }
+    .sl-del-btn:hover { color: var(--red); border-color: rgba(232,0,58,0.4); background: rgba(232,0,58,0.04); letter-spacing: 0.25em; }
 
+    /* ── SMART LIST NAVIGATOR BAR ─────────────────────── */
     /* ── SMART LIST NAVIGATOR BAR ─────────────────────── */
     .sl-nav-bar {
       display: flex; align-items: center; justify-content: space-between;
@@ -955,7 +1152,7 @@
     .sl-nav-bar button:hover:not(:disabled) { background: var(--red-dim); color: var(--red); border-color: var(--red); box-shadow: 0 0 8px rgba(232,0,58,0.2); }
     .sl-nav-bar button:disabled { opacity: 0.2; cursor: default; }
     .sl-nav-info { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--red); letter-spacing: 0.1em; }
-    .sl-nav-label { font-family: var(--font-mono); font-size: 9px; color: #4a2030; letter-spacing: 0.12em; text-transform: uppercase; }
+    .sl-nav-label { font-family: var(--font-mono); font-size: 9px; color: var(--tac-nav-label); letter-spacing: 0.12em; text-transform: uppercase; }
 
     .people-toolbar { flex-shrink: 0; padding: 12px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
     .people-count { font-size: 12px; color: var(--text-2); }
@@ -1674,44 +1871,73 @@
         </div>
         <!-- Tactical Intel Panel -->
         <div class="sl-panel" id="sl-panel">
+
+          <!-- HEADER -->
           <div class="sl-panel-header">
-            <div class="sl-panel-eyebrow">OKCREAL // INTEL FILTER</div>
-            <div class="sl-panel-header-inner">
-              <span class="sl-panel-title" id="sl-panel-title">New List</span>
-              <button class="sl-close-btn" onclick="closeSmartListPanel()">×</button>
+            <div class="sl-header-top">
+              <div class="sl-header-badges">
+                <div class="sl-live-dot"></div>
+                <span class="sl-badge">INTEL FILTER</span>
+                <span class="sl-badge">OKCREAL</span>
+              </div>
+              <button class="sl-close-btn" onclick="closeSmartListPanel()" title="Close">✕</button>
+            </div>
+            <div class="sl-panel-title" id="sl-panel-title">NEW LIST</div>
+            <!-- Live target counter -->
+            <div class="sl-target-counter">
+              <span id="sl-target-label">TARGETS: —</span>
+              <div class="sl-target-counter-bar"><div class="sl-target-counter-fill" id="sl-target-fill" style="width:0%"></div></div>
             </div>
           </div>
+
+          <!-- BODY -->
           <div class="sl-panel-body">
             <input type="hidden" id="sl-editing-id">
+
+            <!-- DESIGNATION -->
             <div class="sl-section">
+              <span class="sl-section-tl"></span><span class="sl-section-br"></span>
               <div class="sl-panel-label">Designation</div>
-              <input type="text" class="sl-input" id="sl-name-input" placeholder="e.g. DELINQUENT_Q1" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="sl-divider"></div>
-            <div class="sl-section">
-              <div class="sl-panel-label">Target Classification</div>
-              <div class="sl-stage-grid" id="sl-stage-grid">
-                <label class="sl-stage-chip"><input type="checkbox" value="Lead" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Lead</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Resident" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Resident</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Delinquent" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Delinquent</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Evicting" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Evicting</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Past Tenant" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Past Tenant</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Property Owner" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Owner</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Contractor" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Contractor</label>
-                <label class="sl-stage-chip"><input type="checkbox" value="Caseworker" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)">Caseworker</label>
+              <div class="sl-input-wrap">
+                <input type="text" class="sl-input" id="sl-name-input" placeholder="LIST_NAME" autocomplete="off" spellcheck="false">
+                <span class="sl-input-cursor"></span>
               </div>
             </div>
-            <div class="sl-divider"></div>
+
+            <!-- TARGET CLASSIFICATION -->
             <div class="sl-section">
-              <div class="sl-panel-label">Intel Tags</div>
-              <textarea class="sl-input" id="sl-tags-input" placeholder="ONE TAG PER LINE&#10;ON PAYMENT PLAN&#10;EVICTION ALERT"></textarea>
-              <div class="sl-hint">// MATCH ANY TAG IN LIST</div>
+              <span class="sl-section-tl"></span><span class="sl-section-br"></span>
+              <div class="sl-panel-label">Target Classification</div>
+              <div class="sl-stage-grid" id="sl-stage-grid">
+                <label class="sl-stage-chip"><input type="checkbox" value="Lead" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Lead</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Resident" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Resident</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Delinquent" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Delinquent</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Evicting" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Evicting</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Past Tenant" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Past Tenant</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Property Owner" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Owner</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Contractor" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Contractor</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Caseworker" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Caseworker</label>
+              </div>
             </div>
+
+            <!-- INTEL TAGS -->
+            <div class="sl-section">
+              <span class="sl-section-tl"></span><span class="sl-section-br"></span>
+              <div class="sl-panel-label">Intel Tags</div>
+              <textarea class="sl-input" id="sl-tags-input"
+                placeholder="ONE TAG PER LINE&#10;&#10;ON PAYMENT PLAN&#10;EVICTION ALERT&#10;NO ANSWER"
+                oninput="slUpdateCounter()"></textarea>
+              <div class="sl-hint">▸ MATCH ANY TAG IN LIST</div>
+            </div>
+
           </div>
+
+          <!-- FOOTER -->
           <div class="sl-panel-footer">
-            <button class="sl-save-btn" onclick="saveSmartListPanel()">Deploy</button>
-            <button class="sl-del-btn" id="sl-del-btn" onclick="deleteSmartListFromPanel()" style="display:none">// Terminate List</button>
+            <button class="sl-save-btn" onclick="saveSmartListPanel()">◈ &nbsp;COMMIT TO DATABASE</button>
+            <button class="sl-del-btn" id="sl-del-btn" onclick="deleteSmartListFromPanel()" style="display:none">⌫ &nbsp;PURGE LIST</button>
           </div>
+
         </div>
       </div>
 
