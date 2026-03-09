@@ -936,7 +936,8 @@
     #email-modal > div { transform-origin: bottom right; }
 
     /* ── CONTACT RECORD ───────────────────────────────────────── */
-    #view-contact { flex-direction: row; overflow: hidden; }
+    #view-contact { flex-direction: column; overflow: hidden; }
+    .contact-scroll-wrap { flex: 1; display: flex; flex-direction: row; overflow: hidden; }
     .back-btn { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; cursor: pointer; transition: color 0.15s; }
     .back-btn:hover { color: var(--text); }
     .contact-left { width: 272px; flex-shrink: 0; background: var(--bg-2); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
@@ -1494,32 +1495,70 @@
 
       <!-- VIEW: People List -->
       <div class="view active" id="view-people">
-        <div class="people-toolbar">
-          <span class="people-count" id="people-count"><strong>0</strong> people</span>
-          <div id="filter-tags-bar"></div>
-          <div class="bulk-actions" id="bulk-actions">
-            <button class="filter-btn" onclick="bulkCall()">📞 Call Selected</button>
-            <button class="filter-btn" onclick="bulkText()">💬 Text Selected</button>
+        <div class="people-main">
+          <div class="people-toolbar">
+            <span class="people-count" id="people-count"><strong>0</strong> people</span>
+            <div id="filter-tags-bar"></div>
+            <div class="bulk-actions" id="bulk-actions">
+              <button class="filter-btn" onclick="bulkCall()">📞 Call Selected</button>
+              <button class="filter-btn" onclick="bulkText()">💬 Text Selected</button>
+            </div>
+          </div>
+          <div class="people-table-wrap">
+            <table class="people-table" id="people-table">
+              <thead>
+                <tr>
+                  <th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+                  <th onclick="sortPeople('name')" style="min-width:180px">Name <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('phone')" style="min-width:140px">Phone <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('stage')" style="min-width:110px">Stage <span class="sort-arrow">↕</span></th>
+                  <th style="min-width:140px">Tags</th>
+                  <th onclick="sortPeople('last_activity')" style="min-width:120px">Last Activity <span class="sort-arrow">↕</span></th>
+                  <th style="min-width:120px">Assigned</th>
+                  <th style="width:80px"></th>
+                </tr>
+              </thead>
+              <tbody id="people-tbody">
+                <tr class="loader-row"><td colspan="8"><div class="spinner"></div></td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
-        <div class="people-table-wrap">
-          <table class="people-table" id="people-table">
-            <thead>
-              <tr>
-                <th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
-                <th onclick="sortPeople('name')" style="min-width:180px">Name <span class="sort-arrow">↕</span></th>
-                <th onclick="sortPeople('phone')" style="min-width:140px">Phone <span class="sort-arrow">↕</span></th>
-                <th onclick="sortPeople('stage')" style="min-width:110px">Stage <span class="sort-arrow">↕</span></th>
-                <th style="min-width:140px">Tags</th>
-                <th onclick="sortPeople('last_activity')" style="min-width:120px">Last Activity <span class="sort-arrow">↕</span></th>
-                <th style="min-width:120px">Assigned</th>
-                <th style="width:80px"></th>
-              </tr>
-            </thead>
-            <tbody id="people-tbody">
-              <tr class="loader-row"><td colspan="8"><div class="spinner"></div></td></tr>
-            </tbody>
-          </table>
+        <!-- Smart List Filter Panel -->
+        <div class="sl-panel" id="sl-panel">
+          <div class="sl-panel-header">
+            <span class="sl-panel-title" id="sl-panel-title">New Smart List</span>
+            <button onclick="closeSmartListPanel()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px">×</button>
+          </div>
+          <div class="sl-panel-body">
+            <input type="hidden" id="sl-editing-id">
+            <div>
+              <div class="sl-panel-label">List Name</div>
+              <input type="text" id="sl-name-input" placeholder="e.g. Delinquent Residents">
+            </div>
+            <div>
+              <div class="sl-panel-label">Filter by Stage</div>
+              <div class="sl-stage-grid" id="sl-stage-grid">
+                <label class="sl-stage-chip"><input type="checkbox" value="Lead" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Lead</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Resident" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Resident</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Delinquent" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Delinquent</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Evicting" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Evicting</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Past Tenant" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Past Tenant</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Property Owner" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Property Owner</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Contractor" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Contractor</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Caseworker" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked)"> Caseworker</label>
+              </div>
+            </div>
+            <div>
+              <div class="sl-panel-label">Filter by Tags</div>
+              <textarea id="sl-tags-input" placeholder="One tag per line&#10;e.g. On Payment Plan&#10;EVICTION ALERT"></textarea>
+              <div style="font-size:11px;color:var(--text-3);margin-top:4px">Contacts must have ANY of these tags</div>
+            </div>
+          </div>
+          <div class="sl-panel-footer">
+            <button class="sl-save-btn" onclick="saveSmartListPanel()">Save List</button>
+            <button class="sl-del-btn" id="sl-del-btn" onclick="deleteSmartListFromPanel()" style="display:none">Delete List</button>
+          </div>
         </div>
       </div>
 
@@ -1761,6 +1800,8 @@ let currentListId = 'all';
 let currentPersonId = null;
 let peopleData = [];
 let smartLists = [];
+let slNavPeople = [];   // ordered people when navigating a smart list
+let slNavIndex  = -1;   // current position in slNavPeople
 let myAgent = null;
 let agentsList = [];
 let _mentionQuery = '';
@@ -2002,7 +2043,11 @@ function navigate(view, listId = null) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   const viewEl = document.getElementById('view-' + view);
   if (viewEl) viewEl.classList.add('active');
-  if (view === 'people') loadPeople(listId);
+  if (view === 'people') {
+    loadPeople(listId);
+    // Auto-close the filter panel when switching lists (let user open manually)
+    if (!listId || listId === 'all') closeSmartListPanel();
+  }
   else if (view === 'inbox') { loadInbox(); document.getElementById('header-title').textContent = 'Inbox'; }
   else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
   else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
@@ -2019,13 +2064,36 @@ async function loadSmartLists() {
 function renderSmartListsNav() {
   const nav = document.getElementById('smart-lists-nav');
   if (!smartLists.length) { nav.innerHTML = '<div style="padding:4px 16px;font-size:12px;color:var(--text-3)">No lists yet</div>'; return; }
-  nav.innerHTML = smartLists.map(list => {
+  const MAX = 10;
+  const visible = smartLists.slice(0, MAX);
+  const rest = smartLists.slice(MAX);
+  const makeItem = list => {
     const isUrgent = (list.name||'').toLowerCase().includes('delinquent') || (list.name||'').toLowerCase().includes('eviction');
     return `<div class="nav-item" data-view="people" data-list-id="${list.id}" onclick="navigate('people','${list.id}')">
       <span class="nav-icon">▼</span>${esc(list.name)}
       <span class="${isUrgent?'nav-badge urgent':'nav-badge'}" id="badge-${list.id}">—</span>
+      <span class="nav-item-actions" onclick="event.stopPropagation()">
+        <button title="Edit list" onclick="openSmartListPanel(${list.id})">✏️</button>
+        <button title="Delete list" onclick="deleteSmartList(${list.id},'${esc(list.name)}')">🗑</button>
+      </span>
     </div>`;
-  }).join('');
+  };
+  let html = visible.map(makeItem).join('');
+  if (rest.length) {
+    html += `<div id="smart-lists-overflow" style="display:none">` + rest.map(makeItem).join('') + `</div>`;
+    html += `<div onclick="toggleMoreLists(this)" style="padding:4px 16px;font-size:11px;color:var(--text-3);cursor:pointer;user-select:none" data-open="false">
+      + ${rest.length} more lists ▾
+    </div>`;
+  }
+  nav.innerHTML = html;
+}
+
+function toggleMoreLists(el) {
+  const overflow = document.getElementById('smart-lists-overflow');
+  const open = el.dataset.open === 'true';
+  overflow.style.display = open ? 'none' : 'block';
+  el.dataset.open = open ? 'false' : 'true';
+  el.textContent = open ? `+ ${overflow.children.length} more lists ▾` : '▴ show less';
 }
 
 // ── PEOPLE LIST ──────────────────────────────────────────────────────
@@ -2044,6 +2112,9 @@ async function loadPeople(listId = 'all') {
     document.getElementById('people-count').innerHTML = `<strong>${total.toLocaleString()}</strong> people`;
     const badge = document.getElementById('badge-' + listId);
     if (badge) badge.textContent = total;
+    // Store ordered list for prev/next navigation
+    slNavPeople = [...peopleData];
+    slNavIndex = -1;
     renderPeopleTable();
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</td></tr>`;
@@ -2214,13 +2285,19 @@ function updateBulkActions() {
 // ── CONTACT RECORD ───────────────────────────────────────────────────
 let _presencePersonId = null;
 
-async function openContact(personId) {
+async function openContact(personId, fromNav=false) {
   // Leave previous presence
   if (_presencePersonId && _presencePersonId !== personId) {
     api(`/api/presence/leave`, 'POST', { personId: _presencePersonId }).catch(()=>{});
   }
   _presencePersonId = personId;
   currentPersonId = personId;
+
+  // Track position in smart list for prev/next nav
+  if (!fromNav && slNavPeople.length) {
+    const idx = slNavPeople.findIndex(p => String(p.id) === String(personId));
+    if (idx >= 0) slNavIndex = idx;
+  }
 
   const viewEl = document.getElementById('view-contact');
   viewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:height:100%;color:var(--text-3)"><div class="spinner" style="margin:auto;margin-top:120px"></div></div>';
@@ -2571,7 +2648,20 @@ function renderContactRecord(person, activities, tasks) {
   const tags = parseTags(person.tags);
   document.getElementById('header-title').textContent = name;
 
-  viewEl.innerHTML = `
+  // Smart list prev/next nav bar
+  const inList = currentListId !== 'all' && slNavPeople.length > 0 && slNavIndex >= 0;
+  const listName = inList ? (smartLists.find(l=>String(l.id)===String(currentListId))?.name || 'List') : '';
+  const navBar = inList ? `
+    <div class="sl-nav-bar">
+      <button onclick="slNavGo(-1)" ${slNavIndex === 0 ? 'disabled' : ''}>← Prev</button>
+      <span>
+        <span class="sl-nav-info">${slNavIndex + 1} of ${slNavPeople.length}</span>
+        <span style="color:var(--text-3);margin-left:6px">${esc(listName)}</span>
+      </span>
+      <button onclick="slNavGo(1)" ${slNavIndex === slNavPeople.length - 1 ? 'disabled' : ''}>Next →</button>
+    </div>` : '';
+
+  viewEl.innerHTML = navBar + `<div class="contact-scroll-wrap">
     <div class="contact-left">
       <div class="contact-card-top">
         <div class="contact-big-avatar ${stageClass(stage)}">${initials}</div>
@@ -2833,7 +2923,7 @@ function renderContactRecord(person, activities, tasks) {
         </div>
       </div>
     </div>
-  `;
+  </div>`; /* end contact-scroll-wrap */
 }
 
 function renderCustomFieldsHTML(person) {
@@ -5082,7 +5172,127 @@ async function executDeleteLead(personId) {
 }
 
 // ── MODALS & MISC ──────────────────────────────────────────────────────
-function openNewListModal() { toast('Smart list builder coming soon', 'info'); }
+// ── SMART LIST PANEL ─────────────────────────────────────────────────────────
+const STAGES = ['Lead','Resident','Delinquent','Evicting','Past Tenant','Property Owner','Contractor','Caseworker'];
+
+function openNewListModal() { openSmartListPanel(null); }
+
+function openSmartListPanel(listId) {
+  // Make sure people view is active
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-people').classList.add('active');
+
+  const panel = document.getElementById('sl-panel');
+  const titleEl = document.getElementById('sl-panel-title');
+  const nameInput = document.getElementById('sl-name-input');
+  const tagsInput = document.getElementById('sl-tags-input');
+  const delBtn = document.getElementById('sl-del-btn');
+  document.getElementById('sl-editing-id').value = listId || '';
+
+  // Reset stage chips
+  document.querySelectorAll('#sl-stage-grid .sl-stage-chip input').forEach(cb => {
+    cb.checked = false;
+    cb.closest('.sl-stage-chip').classList.remove('selected');
+  });
+
+  if (listId) {
+    const list = smartLists.find(l => String(l.id) === String(listId));
+    if (!list) return;
+    titleEl.textContent = 'Edit: ' + list.name;
+    nameInput.value = list.name;
+    // Populate stages
+    const f = list.filters || {};
+    const stages = f.stages || (f.stage ? [f.stage] : []);
+    document.querySelectorAll('#sl-stage-grid .sl-stage-chip input').forEach(cb => {
+      if (stages.includes(cb.value)) {
+        cb.checked = true;
+        cb.closest('.sl-stage-chip').classList.add('selected');
+      }
+    });
+    // Populate tags
+    const tags = f.tags || [];
+    tagsInput.value = tags.join('
+');
+    delBtn.style.display = 'block';
+  } else {
+    titleEl.textContent = 'New Smart List';
+    nameInput.value = '';
+    tagsInput.value = '';
+    delBtn.style.display = 'none';
+  }
+
+  panel.classList.add('open');
+  nameInput.focus();
+}
+
+function closeSmartListPanel() {
+  document.getElementById('sl-panel').classList.remove('open');
+}
+
+async function saveSmartListPanel() {
+  const nameInput = document.getElementById('sl-name-input');
+  const tagsInput = document.getElementById('sl-tags-input');
+  const editingId = document.getElementById('sl-editing-id').value;
+  const name = nameInput.value.trim();
+  if (!name) { toast('List name is required', 'error'); nameInput.focus(); return; }
+
+  // Collect selected stages
+  const stages = [];
+  document.querySelectorAll('#sl-stage-grid .sl-stage-chip input:checked').forEach(cb => stages.push(cb.value));
+
+  // Collect tags (one per line)
+  const tags = tagsInput.value.split('
+').map(t => t.trim()).filter(Boolean);
+
+  const filters = {};
+  if (stages.length === 1) filters.stage = stages[0];
+  else if (stages.length > 1) filters.stages = stages;
+  if (tags.length) filters.tags = tags;
+
+  try {
+    let saved;
+    if (editingId) {
+      saved = await api(`/api/smart-lists/${editingId}`, 'PUT', { name, filters });
+      const idx = smartLists.findIndex(l => String(l.id) === String(editingId));
+      if (idx >= 0) smartLists[idx] = saved;
+      toast('List updated', 'success');
+    } else {
+      saved = await api('/api/smart-lists', 'POST', { name, filters });
+      smartLists.push(saved);
+      toast('List created', 'success');
+    }
+    renderSmartListsNav();
+    closeSmartListPanel();
+    navigate('people', saved.id);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteSmartListFromPanel() {
+  const editingId = document.getElementById('sl-editing-id').value;
+  if (!editingId) return;
+  const list = smartLists.find(l => String(l.id) === String(editingId));
+  if (!confirm(`Delete "${list?.name}"? This cannot be undone.`)) return;
+  await deleteSmartList(editingId, list?.name, true);
+}
+
+function slNavGo(dir) {
+  const newIdx = slNavIndex + dir;
+  if (newIdx < 0 || newIdx >= slNavPeople.length) return;
+  slNavIndex = newIdx;
+  openContact(slNavPeople[newIdx].id, true);
+}
+
+async function deleteSmartList(listId, name, fromPanel=false) {
+  if (!fromPanel && !confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  try {
+    await api(`/api/smart-lists/${listId}`, 'DELETE');
+    smartLists = smartLists.filter(l => String(l.id) !== String(listId));
+    renderSmartListsNav();
+    closeSmartListPanel();
+    if (String(currentListId) === String(listId)) navigate('people', 'all');
+    toast('List deleted', 'success');
+  } catch(e) { toast(e.message, 'error'); }
+}
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 function openNewContactModal() { openModal('modal-new-contact'); }
