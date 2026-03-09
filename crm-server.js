@@ -2460,6 +2460,7 @@ app.get('/api/gmail/connect', async (req, res) => {
     scope: [
       'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.settings.basic',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
     state: String(agent.id)
@@ -2513,14 +2514,36 @@ app.post('/api/gmail/send', auth, async (req, res) => {
     const oauth2 = getGmailOAuth(agent);
     const gmail = google.gmail({ version: 'v1', auth: oauth2 });
 
-    // Build RFC 2822 message
+    // Fetch agent's Gmail signature
+    let signature = '';
+    try {
+      const sendAsRes = await gmail.users.settings.sendAs.get({
+        userId: 'me',
+        sendAsEmail: agent.gmail_email
+      });
+      if (sendAsRes.data.signature) {
+        signature = '\r\n\r\n--\r\n' + sendAsRes.data.signature
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .trim();
+      }
+    } catch(sigErr) {
+      console.log('[Gmail] Could not fetch signature:', sigErr.message);
+    }
+
+    // Build RFC 2822 message with signature appended
+    const fullBody = body + signature;
     const msgLines = [
       `From: ${agent.name} <${agent.gmail_email}>`,
       `To: ${to}`,
       `Subject: ${subject}`,
       `Content-Type: text/plain; charset=utf-8`,
       ``,
-      body
+      fullBody
     ];
     const raw = Buffer.from(msgLines.join('\r\n'))
       .toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -2532,7 +2555,7 @@ app.post('/api/gmail/send', auth, async (req, res) => {
       await pool.query(
         `INSERT INTO activities (person_id,agent_id,type,body,direction)
          VALUES ($1,$2,'email',$3,'outbound')`,
-        [String(personId), String(req.agent.id), `To: ${to}\nSubject: ${subject}\n\n${body}`]
+        [String(personId), String(req.agent.id), `To: ${to}\nSubject: ${subject}\n\n${fullBody}`]
       );
     }
 
