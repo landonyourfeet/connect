@@ -5405,7 +5405,8 @@ async function saveSettings() {
 }
 
 function connectGmailSettings() {
-  window.open('/api/gmail/connect', '_blank', 'width=600,height=700');
+  const token = localStorage.getItem('connect_token');
+  window.open(`/api/gmail/connect?token=${encodeURIComponent(token)}`, '_blank', 'width=600,height=700');
   // Reload profile after a few seconds so status updates
   setTimeout(() => loadMyProfile().then(openSettings), 4000);
 }
