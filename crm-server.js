@@ -2651,6 +2651,129 @@ Set is_lead false for spam/receipts/non-leads.` }]
 
 
 
+
+// =============================================================================
+// GROKFUB SERVICE API — Protected endpoints for the debt collection robot
+// Requires env var: GROKFUB_SERVICE_TOKEN=grokfub-okcreal-2026-bridge-token
+// =============================================================================
+
+const GROKFUB_TOKEN = process.env.GROKFUB_SERVICE_TOKEN || 'grokfub-okcreal-2026-bridge-token';
+
+function requireGrokfubToken(req, res, next) {
+  const token = req.headers['x-grokfub-token'];
+  if (!token || token !== GROKFUB_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  next();
+}
+
+// GET /api/grokfub/people?phone=XXXXXXXXXX  OR  ?tag=Initiate+debt+collection+robot
+app.get('/api/grokfub/people', requireGrokfubToken, async (req, res) => {
+  try {
+    const { phone, tag } = req.query;
+    let rows = [];
+    if (phone) {
+      const digits = phone.replace(/\D/g, '').slice(-10);
+      const result = await pool.query(
+        `SELECT p.*, pp.phone as matched_phone FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE pp.phone LIKE $1 OR p.phone LIKE $1 LIMIT 5`,
+        [`%${digits}`]
+      );
+      rows = result.rows;
+    } else if (tag) {
+      const result = await pool.query(`SELECT * FROM people WHERE $1 = ANY(tags) ORDER BY updated_at DESC LIMIT 100`, [tag]);
+      rows = result.rows;
+    } else return res.status(400).json({ error: 'Provide phone or tag' });
+    res.json({ people: rows });
+  } catch (e) { console.error('[GROKFUB API] GET /people error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/grokfub/activity
+app.post('/api/grokfub/activity', requireGrokfubToken, async (req, res) => {
+  try {
+    const { person_id, type = 'note', body, subject, direction = 'outbound' } = req.body;
+    if (!person_id || !body) return res.status(400).json({ error: 'person_id and body required' });
+    await pool.query(`INSERT INTO activities (person_id, type, body, direction, created_at) VALUES ($1, $2, $3, $4, NOW())`,
+      [person_id, type, `[GROKFUB] ${subject ? subject + '\n\n' : ''}${body}`, direction]);
+    res.json({ ok: true });
+  } catch (e) { console.error('[GROKFUB API] POST /activity error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/grokfub/people/:id/tags
+app.post('/api/grokfub/people/:id/tags', requireGrokfubToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { add = [], remove = [] } = req.body;
+    const { rows } = await pool.query('SELECT tags FROM people WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Person not found' });
+    let tags = (rows[0].tags || []).filter(t => !remove.includes(t));
+    for (const t of add) { if (!tags.includes(t)) tags.push(t); }
+    await pool.query('UPDATE people SET tags = $1, updated_at = NOW() WHERE id = $2', [tags, id]);
+    res.json({ ok: true, tags });
+  } catch (e) { console.error('[GROKFUB API] POST /tags error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/grokfub/people/:id/stage
+app.post('/api/grokfub/people/:id/stage', requireGrokfubToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stage } = req.body;
+    if (!stage) return res.status(400).json({ error: 'stage required' });
+    await pool.query('UPDATE people SET stage = $1, updated_at = NOW() WHERE id = $2', [stage, id]);
+    res.json({ ok: true, stage });
+  } catch (e) { console.error('[GROKFUB API] POST /stage error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/grokfub/people/:id/acknowledge-trigger
+app.post('/api/grokfub/people/:id/acknowledge-trigger', requireGrokfubToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query('SELECT tags FROM people WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Person not found' });
+    let tags = (rows[0].tags || []).filter(t => t !== 'Initiate debt collection robot');
+    if (!tags.includes('Grok Call In Progress')) tags.push('Grok Call In Progress');
+    await pool.query('UPDATE people SET tags = $1, updated_at = NOW() WHERE id = $2', [tags, id]);
+    res.json({ ok: true });
+  } catch (e) { console.error('[GROKFUB API] acknowledge-trigger error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/grokfub/bulk-stage-sync
+// Body: { tenants: [{ phone, stage }], clearOthers: bool }
+app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) => {
+  try {
+    const { tenants = [], clearOthers = false } = req.body;
+    let synced = 0, cleared = 0, notFound = 0;
+    const phoneMap = new Map();
+    for (const t of tenants) {
+      if (!t.phone) continue;
+      const digits = t.phone.replace(/\D/g, '').slice(-10);
+      if (digits) phoneMap.set(digits, t.stage || 'Delinquent');
+    }
+    for (const [digits, stage] of phoneMap.entries()) {
+      const result = await pool.query(
+        `UPDATE people SET stage = $1, updated_at = NOW() WHERE id IN (SELECT DISTINCT p.id FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', '', 'g'), 10) = $2 OR RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $2) RETURNING id`,
+        [stage, digits]
+      );
+      if (result.rowCount > 0) synced += result.rowCount; else notFound++;
+    }
+    if (clearOthers && phoneMap.size > 0) {
+      const delinquents = await pool.query(
+        `SELECT p.id, p.phone, array_agg(pp.phone) as alt_phones FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE p.stage = 'Delinquent' GROUP BY p.id`
+      );
+      for (const person of delinquents.rows) {
+        const allPhones = [person.phone, ...(person.alt_phones || [])].filter(Boolean).map(ph => ph.replace(/\D/g, '').slice(-10));
+        if (!allPhones.some(d => phoneMap.has(d))) {
+          await pool.query('UPDATE people SET stage = $1, updated_at = NOW() WHERE id = $2', ['Resident', person.id]);
+          cleared++;
+        }
+      }
+    }
+    console.log(`[GROKFUB API] bulk-stage-sync: ${synced} synced, ${cleared} cleared, ${notFound} not found`);
+    res.json({ ok: true, synced, cleared, notFound });
+  } catch (e) { console.error('[GROKFUB API] bulk-stage-sync error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
+// END GROKFUB SERVICE API
+// =============================================================================
+
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`OKCREAL Connect running on port ${PORT}`);
