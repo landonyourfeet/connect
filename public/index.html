@@ -7435,28 +7435,40 @@ async function renderDashboard() {
 
       </div>
 
-      <!-- RIGHT COLUMN — GALACTIC MAP -->
-      <div class="mc-panel" style="--panel-accent:#00e87a;padding:0;overflow:hidden;min-height:600px;position:relative">
-        <div style="padding:12px 16px 8px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;justify-content:space-between">
-          <div class="mc-panel-title" style="margin-bottom:0">🌌 GALACTIC PROPERTY MAP — LIVE UNIT STATUS</div>
-          <div style="display:flex;gap:10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase">
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e87a;box-shadow:0 0 6px #00e87a;vertical-align:middle;margin-right:4px"></span>OCCUPIED</span>
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 6px #e8003a;vertical-align:middle;margin-right:4px"></span>DELINQUENT</span>
-            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff8c00;box-shadow:0 0 6px #ff8c00;vertical-align:middle;margin-right:4px"></span>VACANT</span>
+      <!-- RIGHT COLUMN — WO METER + GALACTIC MAP -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <!-- WORK ORDER HEALTH METER -->
+        <div class="mc-panel" style="--panel-accent:#ff8c00">
+          <div class="mc-panel-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>🔧 WORK ORDER HEALTH — PROPERTY TREND</span>
+            <span id="wo-open-badge" style="font-size:7px;letter-spacing:0.12em;color:#555"></span>
+          </div>
+          <div id="mc-wo-meter" style="min-height:40px"></div>
+        </div>
+
+        <!-- GALACTIC MAP -->
+        <div class="mc-panel" style="--panel-accent:#00e87a;padding:0;overflow:hidden;min-height:520px;position:relative">
+          <div style="padding:12px 16px 8px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;justify-content:space-between">
+            <div class="mc-panel-title" style="margin-bottom:0">🌌 GALACTIC PROPERTY MAP — LIVE UNIT STATUS</div>
+            <div style="display:flex;gap:10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase">
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e87a;box-shadow:0 0 6px #00e87a;vertical-align:middle;margin-right:4px"></span>OCCUPIED</span>
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 6px #e8003a;vertical-align:middle;margin-right:4px"></span>DELINQUENT</span>
+              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff8c00;box-shadow:0 0 6px #ff8c00;vertical-align:middle;margin-right:4px"></span>VACANT</span>
+            </div>
+          </div>
+          <canvas id="mc-galaxy-canvas" style="width:100%;display:block;cursor:crosshair"></canvas>
+          <div id="mc-galaxy-tooltip" style="position:absolute;pointer-events:none;display:none;z-index:10;
+            background:rgba(0,0,0,0.9);border:1px solid #2a2a2a;border-radius:6px;padding:10px 14px;
+            font-family:var(--font-mono);font-size:10px;min-width:180px;backdrop-filter:blur(8px)"></div>
+          <div id="mc-galaxy-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+            color:#333;font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em">
+            INITIALIZING TELEMETRY...
           </div>
         </div>
-        <canvas id="mc-galaxy-canvas" style="width:100%;display:block;cursor:crosshair"></canvas>
-        <div id="mc-galaxy-tooltip" style="position:absolute;pointer-events:none;display:none;z-index:10;
-          background:rgba(0,0,0,0.9);border:1px solid #2a2a2a;border-radius:6px;padding:10px 14px;
-          font-family:var(--font-mono);font-size:10px;min-width:180px;backdrop-filter:blur(8px)"></div>
-        <div id="mc-galaxy-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-          color:#333;font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em">
-          INITIALIZING TELEMETRY...
-        </div>
-      </div>
 
-      </div><!-- end right column stack -->
-    </div>
+      </div><!-- end right column -->
+    </div><!-- end main grid -->
   </div>`;
 
   // Start clock
