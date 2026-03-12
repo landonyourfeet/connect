@@ -2841,6 +2841,141 @@ app.get('/api/rent-roll/occupancy', auth, async (req, res) => {
 });
 
 // =============================================================================
+// GALAXY MAP — unit-level rent roll data for live space visualization
+// =============================================================================
+app.get('/api/dashboard/galaxy', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        property,
+        json_agg(json_build_object(
+          'unit', unit,
+          'status', status,
+          'past_due', COALESCE(past_due, 0),
+          'tenant_name', tenant_name,
+          'rent', rent
+        ) ORDER BY unit) AS units,
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status='Current' AND COALESCE(past_due,0) <= 0)::int AS occupied,
+        COUNT(*) FILTER (WHERE status='Current' AND COALESCE(past_due,0) > 0)::int  AS delinquent,
+        COUNT(*) FILTER (WHERE status LIKE 'Vacant%' OR status LIKE 'Notice%')::int AS vacant,
+        SUM(COALESCE(past_due,0))::numeric AS total_past_due,
+        updated_at
+      FROM rent_roll
+      WHERE property NOT ILIKE '%accounting%'
+      GROUP BY property, updated_at
+      ORDER BY COUNT(*) DESC
+    `);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
+// DASHBOARD — mission control stats
+// =============================================================================
+app.get('/api/dashboard/stats', auth, async (req, res) => {
+  try {
+    // Who is online (has active SSE connection)
+    const onlineIds = Array.from(agentConnections.keys());
+
+    // All agents with online flag
+    const agentsR = await pool.query(`
+      SELECT id, name, email, role, avatar_color, availability
+      FROM agents WHERE is_active=true ORDER BY name
+    `);
+    const agents = agentsR.rows.map(a => ({
+      ...a,
+      online: onlineIds.includes(String(a.id))
+    }));
+
+    // Call stats today
+    const callsToday = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE direction='inbound')::int              AS inbound_total,
+        COUNT(*) FILTER (WHERE direction='outbound')::int             AS outbound_total,
+        COUNT(*) FILTER (WHERE direction='inbound' AND status='completed')::int  AS inbound_answered,
+        COUNT(*) FILTER (WHERE direction='inbound' AND status IN ('no-answer','busy','canceled','missed'))::int AS missed,
+        ROUND(AVG(duration_seconds) FILTER (WHERE status='completed'))::int AS avg_duration,
+        COUNT(*) FILTER (WHERE direction='inbound' AND status='completed' AND duration_seconds >= 60)::int AS qualified_calls
+      FROM calls
+      WHERE started_at > NOW() - INTERVAL '24 hours'
+    `);
+    const ct = callsToday.rows[0];
+
+    // Call stats last 7 days per agent
+    const agentCallStats = await pool.query(`
+      SELECT
+        c.agent_id,
+        a.name AS agent_name,
+        a.avatar_color,
+        COUNT(*) FILTER (WHERE c.direction='inbound' AND c.status='completed')::int  AS inbound_answered,
+        COUNT(*) FILTER (WHERE c.direction='outbound' AND c.status='completed')::int AS outbound_made,
+        COUNT(*) FILTER (WHERE c.status='completed')::int AS total_calls,
+        ROUND(AVG(c.duration_seconds) FILTER (WHERE c.status='completed'))::int      AS avg_duration
+      FROM calls c
+      JOIN agents a ON a.id::text = c.agent_id
+      WHERE c.started_at > NOW() - INTERVAL '7 days'
+      GROUP BY c.agent_id, a.name, a.avatar_color
+      ORDER BY total_calls DESC
+    `);
+
+    // Lead response time — time from lead created to first outbound call/sms, business hours only
+    const responseTime = await pool.query(`
+      SELECT
+        ROUND(AVG(EXTRACT(EPOCH FROM (first_contact - p.created_at))/60))::int AS avg_minutes,
+        COUNT(*)::int AS sample_size,
+        COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM (first_contact - p.created_at)) <= 300)::int AS under_5min,
+        COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM (first_contact - p.created_at)) BETWEEN 300 AND 3600)::int AS under_1hr,
+        COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM (first_contact - p.created_at)) > 3600)::int AS over_1hr
+      FROM people p
+      JOIN (
+        SELECT person_id, MIN(created_at) AS first_contact
+        FROM activities
+        WHERE direction='outbound' AND type IN ('call','sms')
+          AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') BETWEEN 8 AND 19
+        GROUP BY person_id
+      ) fc ON fc.person_id::text = p.id::text
+      WHERE p.created_at > NOW() - INTERVAL '30 days'
+        AND EXTRACT(HOUR FROM p.created_at AT TIME ZONE 'America/Chicago') BETWEEN 8 AND 19
+        AND first_contact > p.created_at
+    `);
+    const rt = responseTime.rows[0];
+
+    // Upload freshness
+    const [showingUpload, rrUpload] = await Promise.all([
+      pool.query(`SELECT created_at, record_count FROM showing_uploads ORDER BY created_at DESC LIMIT 1`),
+      pool.query(`SELECT created_at, unit_count FROM rent_roll_uploads ORDER BY created_at DESC LIMIT 1`)
+    ]);
+
+    // SMS stats today
+    const smsToday = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE direction='outbound')::int AS sent,
+        COUNT(*) FILTER (WHERE direction='inbound')::int  AS received,
+        COUNT(*) FILTER (WHERE sms_status='failed')::int  AS failed
+      FROM activities
+      WHERE type='sms' AND created_at > NOW() - INTERVAL '24 hours'
+    `);
+
+    res.json({
+      agents,
+      onlineCount: onlineIds.length,
+      calls: ct,
+      agentCallStats: agentCallStats.rows,
+      responseTime: rt,
+      sms: smsToday.rows[0],
+      uploads: {
+        showings: showingUpload.rows[0] || null,
+        rentRoll: rrUpload.rows[0] || null
+      }
+    });
+  } catch(e) {
+    console.error('[Dashboard]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// =============================================================================
 // SPA CATCH-ALL — serve index.html for /file/:id, /inbox, /admin, etc.
 // Must be AFTER all API routes
 // =============================================================================
