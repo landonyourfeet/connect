@@ -1956,6 +1956,15 @@
     [data-theme="light"] .mc-panel-title { color:#999; }
     [data-theme="light"] .mc-masthead { border-color:#ddd; }
     [data-theme="light"] .mc-title { color:#111; }
+    .mc-cmd-word1 { font-family:var(--font-mono);font-size:20px;font-weight:400;letter-spacing:0.35em;color:#aaa; }
+    .mc-cmd-word2 { font-family:var(--font-mono);font-size:20px;font-weight:800;letter-spacing:0.35em;color:#eee; }
+    .mc-subtitle  { font-size:8px;letter-spacing:0.22em;color:#666;margin-top:3px;text-transform:uppercase; }
+    .mc-date-lbl  { font-size:8px;letter-spacing:0.12em;margin-top:2px;color:#555; }
+    [data-theme="light"] .mc-cmd-word1 { color:#333; }
+    [data-theme="light"] .mc-cmd-word2 { color:#000; }
+    [data-theme="light"] .mc-subtitle  { color:#555; }
+    [data-theme="light"] .mc-clock     { color:#222; }
+    [data-theme="light"] .mc-date-lbl  { color:#444; }
 
     /* Caution lights */
     .mc-caution-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -1968,9 +1977,9 @@
     .mc-bulb.grey   { background:#2a2a2a; box-shadow:none; }
     .mc-bulb.flash  { animation:mc-flash 1.2s ease-in-out infinite; }
     @keyframes mc-flash { 0%,100%{opacity:1} 50%{opacity:0.15} }
-    .mc-bulb-label { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; color:#555; text-align:center; line-height:1.3; }
+    .mc-bulb-label { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; color:#888; text-align:center; line-height:1.3; }
     [data-theme="light"] .mc-bulb.grey { background:#ddd; }
-    [data-theme="light"] .mc-bulb-label { color:#aaa; }
+    [data-theme="light"] .mc-bulb-label { color:#444; }
 
     /* Toggle switches */
     .mc-toggle-row { display:flex; flex-direction:column; gap:8px; }
@@ -7512,13 +7521,13 @@ async function renderDashboard() {
       <div>
         <div class="mc-title" style="display:flex;align-items:center;gap:10px">
           <span style="color:var(--red);font-size:28px;line-height:1">⬡</span>
-          <span style="font-family:var(--font-mono);font-size:20px;font-weight:400;letter-spacing:0.35em;color:#ccc">COMMAND</span><span style="font-family:var(--font-mono);font-size:20px;font-weight:800;letter-spacing:0.35em;color:#fff">MODULE</span>
+          <span class="mc-cmd-word1">COMMAND</span><span class="mc-cmd-word2">MODULE</span>
         </div>
-        <div style="font-size:8px;letter-spacing:0.22em;color:#444;margin-top:3px;text-transform:uppercase">OKCREAL Connect · Property Management Command</div>
+        <div class="mc-subtitle">OKCREAL Connect · Property Management Command</div>
       </div>
       <div style="text-align:right">
         <div class="mc-clock" id="mc-clock"></div>
-        <div style="font-size:8px;color:#333;letter-spacing:0.12em;margin-top:2px" id="mc-date"></div>
+        <div class="mc-date-lbl" id="mc-date"></div>
       </div>
     </div>
 
@@ -7779,7 +7788,7 @@ function renderMcPanels(d, galaxy) {
     <div class="mc-light">
       <div class="mc-bulb ${l.color}${l.flash?' flash':''}"></div>
       <div class="mc-bulb-label">${esc(l.label)}</div>
-      <div class="mc-bulb-label" style="color:#444">${esc(l.sublabel||'')}</div>
+      <div class="mc-bulb-label">${esc(l.sublabel||'')}</div>
       <div class="mc-bulb-label" style="color:${noteColor(l.color)};font-size:6.5px;line-height:1.4;word-break:break-word;max-width:72px">${esc(l.note||'')}</div>
     </div>`).join('');
 
