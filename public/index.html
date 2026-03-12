@@ -2660,6 +2660,7 @@
                   <span id="jareih-status-dot" style="font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:0.05em;font-family:var(--font-mono)">READY</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">
+                  <button id="jareih-hangup-btn" onclick="Jareih.hangupCall()" title="Hang up active call" style="display:none;background:#c0001e;border:none;color:#fff;cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em;padding:3px 8px;border-radius:4px;font-weight:800;animation:jareihBioGlow 1.4s ease-in-out infinite">📴 HANG UP</button>
                   <button onclick="Jareih.clearChat()" title="Clear conversation" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em;padding:2px 6px;transition:color .15s;border-radius:4px"
                     onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">CLEAR</button>
                   <button onclick="Jareih.close()" title="Close" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;transition:color .15s"
@@ -5841,6 +5842,18 @@ const Jareih = (() => {
           if (p.id) openContact(p.id);
           break;
         }
+        case 'make_call': {
+          if (!params.personId) throw new Error('Contact not found');
+          if (!params.phone) throw new Error('Contact has no phone number');
+          const callR = await api('/api/jareih/call', 'POST', { personId: params.personId, goal: params.goal });
+          if (callR.ok) {
+            resultMsg = `📞 Calling ${params.personName}…
+Ara is connecting. The call transcript will appear here live and save to the timeline when complete.`;
+            window._jareihActiveCall = { callId: callR.callId, personId: params.personId, personName: params.personName };
+            if (params.personId) openContact(params.personId);
+          }
+          break;
+        }
         case 'open_contact': {
           if (!params.personId) throw new Error('Contact not found');
           openContact(params.personId);
@@ -5899,7 +5912,39 @@ const Jareih = (() => {
     if (bar && !bar.contains(e.target) && pop && !pop.contains(e.target)) close();
   }
 
-  return { submit, execute, cancelAction, clearChat, close, keydown, openWindow };
+  // Live call transcript rendering
+  function appendCallLine(role, name, text) {
+    if (role === 'ara') {
+      _history.push({ role: 'jareih', text: `🎙 Ara: ${text}`, type: 'reply' });
+    } else if (role === 'contact') {
+      _history.push({ role: 'user', text: `${name}: ${text}` });
+    } else {
+      _history.push({ role: 'jareih', text: text || '', type: role === 'result' ? 'success' : 'reply' });
+    }
+    renderThread();
+  }
+
+  function appendCallStatus(msg) {
+    _history.push({ role: 'jareih', text: msg, type: 'reply' });
+    renderThread();
+    // Show hangup button
+    const btn = document.getElementById('jareih-hangup-btn');
+    if (btn) btn.style.display = 'inline-flex';
+  }
+
+  async function hangupCall() {
+    const active = window._jareihActiveCall;
+    if (!active) return;
+    try {
+      await api('/api/jareih/call-hangup', 'POST', { callId: active.callId });
+      appendCallLine('result', null, '📴 Call ended by agent.');
+      window._jareihActiveCall = null;
+      const btn = document.getElementById('jareih-hangup-btn');
+      if (btn) btn.style.display = 'none';
+    } catch(e) { appendCallLine('result', null, `Error: ${e.message}`); }
+  }
+
+  return { submit, execute, cancelAction, clearChat, close, keydown, openWindow, appendCallLine, appendCallStatus, hangupCall };
 })();
 
 // ── LEAD SCRAPER ─────────────────────────────────────────────────────────────
@@ -5959,6 +6004,41 @@ async function runLeadScraper() {
   } catch(e) {
     if (btn) { btn.textContent = '⚠ Error'; btn.disabled = false; }
     toast('Lead scraper error: ' + e.message, 'error');
+  }
+}
+
+// ── Jareih live call updates ─────────────────────────────────────────────────
+function handleJareihCallUpdate(payload) {
+  const { callId, event, text, status, summary, goalAchieved } = payload;
+  const active = window._jareihActiveCall;
+  if (!active || active.callId !== callId) return;
+
+  // Open Jareih chat window if not visible
+  Jareih.openWindow();
+
+  if (event === 'status') {
+    const statusLabels = { initiated:'📞 Dialing…', ringing:'📳 Ringing…', answered:'✅ Connected' };
+    Jareih.appendCallStatus(statusLabels[status] || status);
+  } else if (event === 'ara_spoke') {
+    Jareih.appendCallLine('ara', text);
+  } else if (event === 'contact_spoke') {
+    Jareih.appendCallLine('contact', active.personName, text);
+  } else if (event === 'call_ended') {
+    const emoji = goalAchieved ? '✅' : '📋';
+    Jareih.appendCallLine('result', null, );
+    window._jareihActiveCall = null;
+    // Hide hangup button
+    const btn = document.getElementById('jareih-hangup-btn');
+    if (btn) btn.style.display = 'none';
+    // Refresh timeline if on this contact
+    if (String(payload.personId) === String(currentPersonId)) {
+      setTimeout(() => {
+        api(`/api/activities?personId=${currentPersonId}`).then(acts => {
+          const el = document.getElementById('timeline-scroll');
+          if (el && acts) el.innerHTML = renderTimelineHTML(acts);
+        }).catch(()=>{});
+      }, 1500);
+    }
   }
 }
 
@@ -9515,6 +9595,8 @@ function connectAgentSse() {
           }
           renderMcPanels(_mcData, window._mcGalaxy);
         }
+      } else if (payload.type === 'jareih_call_update') {
+        handleJareihCallUpdate(payload);
       } else if (payload.type === 'agent_status') {
         // Another agent changed their status — refresh dashboard crew panel if visible
         if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
