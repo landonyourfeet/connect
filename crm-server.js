@@ -1,7 +1,9 @@
 require('dotenv').config();
 const express = require('express');
 const multer  = require('multer');
-const XLSX    = require('xlsx');
+const crypto  = require('crypto');
+let XLSX;
+try { XLSX = require('xlsx'); } catch(e) { console.warn('[Showings] xlsx not installed — run: npm install xlsx'); }
 const { google } = require('googleapis');
 const path = require('path');
 const cors = require('cors');
@@ -2325,6 +2327,7 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
 // Upload showings XLSX
 app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, res) => {
   try {
+    if (!XLSX) return res.status(503).json({ error: 'xlsx not installed on server' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
@@ -2347,7 +2350,7 @@ app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, 
       lastActDate: h.indexOf('Last Activity Date'), lastActType: h.indexOf('Last Activity Type'),
     };
 
-    const batchId = require('crypto').randomUUID();
+    const batchId = crypto.randomUUID();
     let inserted = 0, skipped = 0;
     for (let i = hi + 1; i < rows.length; i++) {
       const row = rows[i];
