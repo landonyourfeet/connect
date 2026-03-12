@@ -3073,6 +3073,33 @@
 <div id="toast-container"></div>
 
 <script>
+// ── GLOBAL ERROR REPORTER — shows JS crashes on login screen ───────
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('login-error');
+  if (el) {
+    el.style.display = 'block';
+    el.style.background = 'rgba(220,0,0,0.12)';
+    el.style.border = '1px solid #c0001e';
+    el.style.borderRadius = '6px';
+    el.style.padding = '10px 14px';
+    el.style.fontFamily = 'monospace';
+    el.style.fontSize = '11px';
+    el.style.lineHeight = '1.5';
+    el.style.whiteSpace = 'pre-wrap';
+    el.style.wordBreak = 'break-word';
+    el.innerHTML = '<strong style="color:#c0001e">⚠ STARTUP ERROR</strong><br>' + msg + '<br><span style="color:#888">Line ' + line + ' · ' + (src||'').split('/').pop() + '</span>';
+  }
+  console.error('STARTUP CRASH:', msg, 'line:', line, src);
+  return false;
+};
+window.addEventListener('unhandledrejection', function(e) {
+  var el = document.getElementById('login-error');
+  if (el && !el.textContent) {
+    el.style.display = 'block';
+    el.textContent = '⚠ ASYNC ERROR: ' + String(e.reason);
+  }
+});
+
 // ── STATE ──────────────────────────────────────────────────────────
 const API = '';
 let authToken = localStorage.getItem('connect_token') || null;
