@@ -2000,9 +2000,18 @@
     .mc-agent-avatar { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#fff; flex-shrink:0; }
     .mc-agent-name { flex:1; font-size:10px; letter-spacing:0.06em; color:#ccc; text-transform:uppercase; }
     [data-theme="light"] .mc-agent-name { color:#333; }
-    .mc-agent-status { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; padding:2px 7px; border-radius:10px; }
-    .mc-agent-status.online  { background:rgba(0,232,122,0.12); color:#00e87a; border:1px solid rgba(0,232,122,0.3); }
-    .mc-agent-status.offline { background:#1a1a1a; color:#444; border:1px solid #222; }
+    .mc-agent-status { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; padding:2px 8px; border-radius:10px; font-weight:700; white-space:nowrap; }
+    .mc-agent-status.available { background:rgba(0,232,122,0.12); color:#00e87a; border:1px solid rgba(0,232,122,0.3); }
+    .mc-agent-status.busy      { background:rgba(255,140,0,0.12); color:#ff8c00; border:1px solid rgba(255,140,0,0.3); }
+    .mc-agent-status.offline   { background:#1a1a1a; color:#444; border:1px solid #222; }
+    .mc-led { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .mc-led.on  { background:#00e87a; box-shadow:0 0 6px #00e87a; animation:mc-led-pulse 2.5s ease-in-out infinite; }
+    .mc-led.off { background:#1e1e1e; box-shadow:none; }
+    @keyframes mc-led-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    .mc-agent-photo { width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
+    .mc-agent-photo:hover { border-color:#00e87a; }
+    .mc-agent-initials { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#fff; flex-shrink:0; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
+    .mc-agent-initials:hover { border-color:#00e87a; }
     .mc-agent-calls { font-size:9px; color:#555; font-family:var(--font-mono); white-space:nowrap; }
 
     /* Response time gauge */
@@ -2021,15 +2030,26 @@
     [data-theme="light"] .sh-rented-badge { background:rgba(0,160,80,0.08); }
     [data-theme="light"] .rr-rent-pill { background:rgba(0,160,80,0.08); }
     /* ── SHOWING IN-PROGRESS BANNER ──────────────────────────── */
-    #sh-inprogress-banner { position:fixed; bottom:0; left:0; right:0; z-index:800; padding:10px 20px; display:flex; align-items:center; gap:14px; transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events:none; }
+    #sh-inprogress-banner { position:fixed; bottom:0; left:0; right:0; z-index:800; transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events:none; }
     #sh-inprogress-banner.visible { transform:translateY(0); pointer-events:all; }
-    @keyframes sh-banner-pulse { 0%,100%{background:#b36000} 50%{background:#e07800} }
-    #sh-inprogress-banner { animation:sh-banner-pulse 2s ease-in-out infinite; background:#b36000; }
+    @keyframes sh-banner-pulse { 0%,100%{background:#7a4200} 50%{background:#b36000} }
+    @keyframes sh-banner-critical { 0%,100%{background:#7a0015;box-shadow:0 -2px 30px rgba(232,0,58,0.5)} 50%{background:#c0002a;box-shadow:0 -2px 50px rgba(232,0,58,0.9)} }
+    #sh-inprogress-banner.visible { animation:sh-banner-pulse 2s ease-in-out infinite; background:#7a4200; }
+    #sh-inprogress-banner.critical { animation:sh-banner-critical 0.7s ease-in-out infinite !important; }
+    .sh-banner-inner { display:flex; align-items:center; gap:14px; padding:10px 20px; }
+    .sh-banner-critical-row { background:rgba(0,0,0,0.3); border-top:1px solid rgba(255,255,255,0.1); padding:7px 20px; display:flex; align-items:center; gap:10px; }
     .sh-banner-dot { width:10px; height:10px; border-radius:50%; background:#fff; flex-shrink:0; animation:sl-pulse-dot 1.2s ease-in-out infinite; box-shadow:0 0 8px #fff; }
+    .sh-banner-dot.red { background:#ff4466; box-shadow:0 0 12px #ff4466; }
     .sh-banner-text { flex:1; font-family:var(--font-cond); font-size:14px; font-weight:800; letter-spacing:0.08em; color:#fff; text-transform:uppercase; }
-    .sh-banner-sub { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.8); letter-spacing:0.06em; }
-    .sh-banner-btn { background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.4); color:#fff; padding:6px 14px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:4px; flex-shrink:0; }
-    .sh-banner-btn:hover { background:rgba(0,0,0,0.5); }
+    .sh-banner-sub { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.75); letter-spacing:0.06em; }
+    .sh-banner-btn { background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.35); color:#fff; padding:6px 14px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:4px; flex-shrink:0; transition:background 0.15s; }
+    .sh-banner-btn:hover { background:rgba(0,0,0,0.6); }
+    .sh-mute-btn { background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.7); padding:5px 10px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.08em; cursor:pointer; border-radius:4px; flex-shrink:0; transition:all 0.15s; display:flex; align-items:center; gap:5px; }
+    .sh-mute-btn:hover { background:rgba(0,0,0,0.6); color:#fff; }
+    .sh-mute-btn.muted { background:rgba(100,0,20,0.4); border-color:rgba(232,0,58,0.4); color:rgba(255,100,100,0.9); }
+    .sh-banner-btn.alert { background:rgba(232,0,58,0.3); border-color:rgba(255,100,130,0.7); color:#fff; animation:sl-pulse-dot 0.8s ease-in-out infinite; font-weight:800; }
+    .sh-banner-critical-label { font-family:var(--font-mono); font-size:8px; letter-spacing:0.18em; text-transform:uppercase; color:#ff8fa8; font-weight:800; flex-shrink:0; }
+    .sh-banner-critical-msg { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.9); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     /* ── INBOX VIEW ───────────────────────────────────────────── */
     #view-inbox { overflow: hidden; }
     .inbox-list { flex: 1; overflow-y: auto; }
@@ -2938,8 +2958,14 @@ function setStatus(s) {
   if (s === 'available') { toggle.textContent = '● Available'; toggle.className = 'status-toggle available'; }
   else if (s === 'busy')  { toggle.textContent = '● Busy';      toggle.className = 'status-toggle busy'; }
   else                    { toggle.textContent = '● Offline';   toggle.className = 'status-toggle'; }
-  // Drive connection bar colour
   updateConnBarForStatus(s);
+  // Persist to server + broadcast to all agents
+  const avail = s === 'available' ? 'online' : s === 'busy' ? 'busy' : 'offline';
+  fetch('/api/me/availability', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', Authorization:'Bearer '+authToken },
+    body: JSON.stringify({ availability: avail })
+  }).catch(()=>{});
 }
 
 function updateConnBarForStatus(s) {
@@ -6600,7 +6626,8 @@ async function shUpload(input) {
     const d = await resp.json();
     if (!resp.ok) throw new Error(d.error || 'Server error');
 
-    toast(`✅ Imported ${d.inserted} showings${d.skipped ? ' (' + d.skipped + ' skipped)' : ''}`, 'success');
+    const lcMsg = d.leadsCreated > 0 ? ` · ${d.leadsCreated} new lead${d.leadsCreated>1?'s':''} created` : (d.leadsMatched > 0 ? ` · ${d.leadsMatched} matched` : '');
+    toast(`✅ Imported ${d.inserted} showings${lcMsg}${d.skipped ? ' (' + d.skipped + ' skipped)' : ''}`, 'success');
     shLoadProps();
     shCheckLastUpload();
   } catch(e) {
@@ -7395,13 +7422,33 @@ function renderMcPanels(d, galaxy) {
   document.getElementById('mc-agents').innerHTML = d.agents.map(a => {
     const cs = agentCallMap[a.id] || {};
     const initials = (a.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
-    return `<div class="mc-agent-row">
-      <div class="mc-agent-avatar" style="background:${a.avatar_color||'#444'}">${esc(initials)}</div>
+
+    // Avatar — photo if available, else initials
+    const avatarEl = a.avatar_b64
+      ? `<img class="mc-agent-photo" src="${a.avatar_b64}" alt="${esc(initials)}" onclick="navigate('admin')" title="View profile">`
+      : `<div class="mc-agent-initials" style="background:${a.avatar_color||'#444'}" onclick="navigate('admin')" title="View profile">${esc(initials)}</div>`;
+
+    // Map DB availability + online (SSE) to display state
+    const isSSEOnline = a.online; // has live browser tab open
+    const avail = a.availability || 'online';
+    // Status pill: reflects what the agent has SET, not just whether they have a tab open
+    const statusClass = avail === 'busy' ? 'busy' : avail === 'offline' ? 'offline' : 'available';
+    const statusLabel = avail === 'busy' ? '⬤ BUSY' : avail === 'offline' ? '⬤ OFFLINE' : '⬤ AVAILABLE';
+
+    // Call stats
+    const callLine = cs.total_calls
+      ? `${cs.total_calls} call${cs.total_calls!==1?'s':''} · ${Math.floor((cs.avg_duration||0)/60)}m avg`
+      : 'No calls this week';
+
+    return `<div class="mc-agent-row" style="position:relative">
+      ${avatarEl}
       <div style="flex:1;min-width:0">
-        <div class="mc-agent-name" style="font-size:9px">${esc(a.name||'Agent')}</div>
-        ${cs.total_calls ? `<div style="font-size:8px;color:#444;margin-top:1px">${cs.total_calls} calls · ${Math.floor((cs.avg_duration||0)/60)}m avg</div>` : '<div style="font-size:8px;color:#333">No calls this week</div>'}
+        <div class="mc-agent-name">${esc(a.name||'Agent')}</div>
+        <div style="font-size:8px;color:#444;margin-top:1px">${callLine}</div>
       </div>
-      <span class="mc-agent-status ${a.online?'online':'offline'}">${a.online?'ONLINE':'AWAY'}</span>
+      <!-- LED: green glow = browser tab open -->
+      <div title="${isSSEOnline?'Browser open':'Not connected'}" class="mc-led ${isSSEOnline?'on':'off'}"></div>
+      <span class="mc-agent-status ${statusClass}">${statusLabel}</span>
     </div>`;
   }).join('');
 
@@ -7739,35 +7786,227 @@ function initGalaxyCanvas(galaxy) {
 <script>
 let _shInProgress = [];
 
+// Re-poll immediately when an inbound activity comes from a showing prospect
+async function shCheckActivityAlert(personId, type, body) {
+  if (!personId) return;
+  const isShowingProspect = _shInProgress && _shInProgress.some(
+    s => String(s.connect_person_id) === String(personId)
+  );
+  if (isShowingProspect) {
+    // Force a re-poll which will pick up the new activity
+    await shPollInProgress();
+  }
+}
+
+let _shBannerAlertPersonId = null;
+// ═══════════════════════════════════════════════════════════════
+// APOLLO MASTER CAUTION ALARM — Web Audio synthesizer
+// ═══════════════════════════════════════════════════════════════
+let _mcAudioCtx      = null;
+let _mcAlarmNodes    = [];   // active oscillator nodes
+let _mcAlarmTimer    = null; // repeating alarm interval
+let _mcAlarmMuted    = false;
+let _mcAlarmActive   = false;
+let _mcWasCritical   = false; // track state changes
+
+function _mcGetCtx() {
+  if (!_mcAudioCtx) {
+    try { _mcAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e) { return null; }
+  }
+  // Resume if suspended (browser autoplay policy)
+  if (_mcAudioCtx.state === 'suspended') _mcAudioCtx.resume().catch(()=>{});
+  return _mcAudioCtx;
+}
+
+// Synthesize the Apollo Master Caution tone
+// Two alternating square-ish tones at ~800Hz and ~1020Hz, 120ms each
+function _mcPlayTonePair(vol = 0.18) {
+  const ctx = _mcGetCtx();
+  if (!ctx || _mcAlarmMuted) return;
+
+  function playTone(freq, startAt, duration) {
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filt = ctx.createBiquadFilter();
+
+    osc.type = 'sawtooth';       // sawtooth gives the "master caution" buzz
+    osc.frequency.value = freq;
+
+    filt.type = 'bandpass';
+    filt.frequency.value = freq;
+    filt.Q.value = 1.2;
+
+    // Envelope: sharp attack, flat sustain, fast decay
+    gain.gain.setValueAtTime(0, startAt);
+    gain.gain.linearRampToValueAtTime(vol, startAt + 0.008);
+    gain.gain.setValueAtTime(vol, startAt + duration - 0.02);
+    gain.gain.linearRampToValueAtTime(0, startAt + duration);
+
+    osc.connect(filt);
+    filt.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(startAt);
+    osc.stop(startAt + duration);
+    _mcAlarmNodes.push(osc);
+    osc.onended = () => { _mcAlarmNodes = _mcAlarmNodes.filter(n=>n!==osc); };
+  }
+
+  const now = ctx.currentTime;
+  // First tone: 800Hz for 120ms
+  playTone(800,  now,        0.12);
+  // Second tone: 1020Hz for 120ms after 130ms gap
+  playTone(1020, now + 0.13, 0.12);
+  // Third tone: 800Hz again after another 130ms — classic triple-beep
+  playTone(800,  now + 0.26, 0.12);
+}
+
+// Start the repeating alarm
+function _mcStartAlarm(critical = false) {
+  if (_mcAlarmActive && _mcWasCritical === critical) return; // already running same mode
+  _mcStopAlarm();
+  _mcAlarmActive  = true;
+  _mcWasCritical  = critical;
+
+  const interval  = critical ? 1800 : 4000; // faster repeat when critical
+  const vol       = critical ? 0.22  : 0.13; // louder when critical
+
+  // Play immediately then repeat
+  _mcPlayTonePair(vol);
+  _mcAlarmTimer = setInterval(() => {
+    if (!_mcAlarmMuted) _mcPlayTonePair(vol);
+  }, interval);
+}
+
+// Stop all alarm sounds
+function _mcStopAlarm() {
+  if (_mcAlarmTimer) { clearInterval(_mcAlarmTimer); _mcAlarmTimer = null; }
+  _mcAlarmActive = false;
+  _mcWasCritical = false;
+  // Fade out any playing nodes
+  const ctx = _mcAudioCtx;
+  if (ctx) {
+    _mcAlarmNodes.forEach(n => { try { n.stop(ctx.currentTime + 0.05); } catch(e) {} });
+  }
+  _mcAlarmNodes = [];
+}
+
+function shToggleMute() {
+  _mcAlarmMuted = !_mcAlarmMuted;
+  const btn   = document.getElementById('sh-mute-btn');
+  const icon  = document.getElementById('sh-mute-icon');
+  const label = document.getElementById('sh-mute-label');
+  if (btn)   btn.classList.toggle('muted', _mcAlarmMuted);
+  if (icon)  icon.textContent  = _mcAlarmMuted ? '🔕' : '🔔';
+  if (label) label.textContent = _mcAlarmMuted ? 'UNMUTE' : 'MUTE';
+  // Stop current alarm sounds immediately when muting
+  if (_mcAlarmMuted) {
+    _mcAlarmNodes.forEach(n => { try { n.stop((_mcAudioCtx?.currentTime||0) + 0.05); } catch(e) {} });
+    _mcAlarmNodes = [];
+  }
+}
+
+let _shBannerDismissed = false;
+
+function shDismissBanner() {
+  _shBannerDismissed = true;
+  _mcStopAlarm();
+  const b = document.getElementById('sh-inprogress-banner');
+  if (b) b.classList.remove('visible','critical');
+}
+
+function shBannerOpenLead() {
+  if (_shBannerAlertPersonId) {
+    openContact(_shBannerAlertPersonId);
+  }
+}
+
 async function shPollInProgress() {
   try {
     const rows = await api('/api/showings/in-progress');
     _shInProgress = rows;
-    const banner = document.getElementById('sh-inprogress-banner');
-    const textEl = document.getElementById('sh-banner-text');
-    const subEl  = document.getElementById('sh-banner-sub');
+    const banner   = document.getElementById('sh-inprogress-banner');
+    const textEl   = document.getElementById('sh-banner-text');
+    const subEl    = document.getElementById('sh-banner-sub');
+    const btnsEl   = document.getElementById('sh-banner-btns');
+    const alertRow = document.getElementById('sh-banner-alert-row');
+    const alertType= document.getElementById('sh-banner-alert-type');
+    const alertMsg = document.getElementById('sh-banner-alert-msg');
+    const dotEl    = document.getElementById('sh-banner-dot');
     if (!banner) return;
 
     if (!rows.length) {
-      banner.classList.remove('visible');
+      banner.classList.remove('visible','critical');
+      _mcStopAlarm();
+      _shBannerDismissed = false;
       return;
     }
 
-    // Build banner text
+    // New showing started — re-show even if dismissed
+    const newActivity = rows.some(r => r.alert_type);
+    if (newActivity) _shBannerDismissed = false;
+    if (_shBannerDismissed && !newActivity) return;
+
+    // Find the most critical showing — one with inbound activity first
+    const critical = rows.find(r => r.alert_type) || rows[0];
+    const hasCritical = !!critical.alert_type;
+    _shBannerAlertPersonId = critical.connect_person_id || null;
+
+    // Main text
+    const name = critical.guest_name || 'Prospect';
+    const firstName = name.includes(',') ? name.split(',').reverse().join(' ').trim() : name;
+    const prop = (critical.property||'').split(' - ')[0];
+    const dt = critical.showing_time ? new Date(critical.showing_time) : null;
+    const startedMins = dt ? Math.max(0, Math.round((Date.now() - dt.getTime()) / 60000)) : 0;
+    const endsIn = Math.max(0, 15 - startedMins);
+
     if (rows.length === 1) {
-      const s = rows[0];
-      const name = s.guest_name || 'Prospect';
-      const prop = (s.property||'').split(' - ')[0];
-      const dt = s.showing_time ? new Date(s.showing_time) : null;
-      const startedMins = dt ? Math.round((Date.now() - dt.getTime()) / 60000) : 0;
-      textEl.textContent = `🏠 SHOWING IN PROGRESS — ${name.split(',').reverse().join(' ').trim()}`;
-      subEl.textContent  = `${prop}${s.unit?' · Unit '+s.unit:''} · Started ${startedMins}m ago · Ends in ~${Math.max(0,15-startedMins)}m`;
+      textEl.textContent = hasCritical
+        ? `🚨 ${firstName.toUpperCase()} — ACTIVE ${critical.alert_type === 'call' ? 'CALL' : 'TEXT'} DURING SHOWING`
+        : `🏠 SHOWING IN PROGRESS — ${firstName.toUpperCase()}`;
+      subEl.textContent = `${prop}${critical.unit?' · Unit '+critical.unit:''} · ${startedMins}m in · ~${endsIn}m remaining`;
     } else {
-      textEl.textContent = `🏠 ${rows.length} SHOWINGS IN PROGRESS`;
-      subEl.textContent  = rows.map(s => (s.guest_name||'').split(',').reverse().join(' ').trim() || 'Prospect').join(' · ');
+      const alertCount = rows.filter(r=>r.alert_type).length;
+      textEl.textContent = alertCount
+        ? `🚨 ${alertCount} PROSPECT${alertCount>1?'S':''} CONTACTING DURING SHOWINGS`
+        : `🏠 ${rows.length} SHOWINGS IN PROGRESS`;
+      subEl.textContent = rows.map(r => (r.guest_name||'').split(',').reverse().join(' ').trim() || 'Prospect').join(' · ');
     }
+
+    // Critical alert row
+    if (hasCritical) {
+      const alertTime = critical.alert_at ? new Date(critical.alert_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+      const typeLabel = critical.alert_type === 'call' ? '📞 INBOUND CALL' : '💬 INBOUND TEXT';
+      alertType.textContent = typeLabel + (alertTime ? ' · ' + alertTime : '');
+      alertMsg.textContent  = critical.alert_type === 'sms'
+        ? (critical.alert_body || '(no preview)').substring(0, 120)
+        : `${firstName} is calling — may need help with lockbox or access`;
+      alertRow.style.display = '';
+      banner.classList.add('critical');
+      if (dotEl) dotEl.className = 'sh-banner-dot red';
+    } else {
+      alertRow.style.display = 'none';
+      banner.classList.remove('critical');
+      if (dotEl) dotEl.className = 'sh-banner-dot';
+    }
+
+    // Action buttons
+    const leadBtn = critical.connect_person_id
+      ? `<button class="sh-banner-btn${hasCritical?' alert':''}" onclick="openContact('${critical.connect_person_id}')">OPEN LEAD FILE →</button>`
+      : `<button class="sh-banner-btn" onclick="navigate('people','all')">FIND LEAD →</button>`;
+    btnsEl.innerHTML = `
+      ${leadBtn}
+      <button class="sh-banner-btn" onclick="navigate('showings')">SHOWINGS</button>`;
+
     banner.classList.add('visible');
-  } catch(e) {}
+
+    // ── Alarm audio ──
+    // Resume AudioContext on first user interaction (browser policy)
+    if (_mcAudioCtx && _mcAudioCtx.state === 'suspended') _mcAudioCtx.resume().catch(()=>{});
+    _mcStartAlarm(hasCritical);
+
+  } catch(e) { console.warn('[Banner]', e.message); }
 }
 
 // Hook into startShowingAlertPoller so it starts at the same time
@@ -7777,6 +8016,19 @@ window.startShowingAlertPoller = function() {
   shPollInProgress();
   setInterval(shPollInProgress, 60000);
 };
+</script>
+
+<!-- AUDIO CONTEXT RESUME ON FIRST INTERACTION -->
+<script>
+(function() {
+  const resume = () => {
+    if (_mcAudioCtx && _mcAudioCtx.state === 'suspended') {
+      _mcAudioCtx.resume().catch(()=>{});
+    }
+  };
+  document.addEventListener('click', resume, { once: true });
+  document.addEventListener('keydown', resume, { once: true });
+})();
 </script>
 
 <!-- POPSTATE: browser back/forward -->
@@ -8046,6 +8298,17 @@ function connectAgentSse() {
       } else if (payload.type === 'new_lead') {
         toast(`🏠 New Lead: ${payload.name} (${payload.source||'Email'})`, 'success');
         if (currentListId === 'all') loadPeople('all');
+      } else if (payload.type === 'inbound_sms') {
+        // If sender is a prospect currently showing, escalate the banner
+        shCheckActivityAlert(payload.personId, 'sms', payload.body);
+      } else if (payload.type === 'agent_status') {
+        // Another agent changed their status — refresh dashboard crew panel if visible
+        if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
+          // Update in-memory data and re-render just the agents panel
+          const ag = _mcData.agents?.find(a => String(a.id) === String(payload.agentId));
+          if (ag) { ag.availability = payload.availability; }
+          refreshDashboard();
+        }
       } else if (payload.type === 'debt_update') {
         // GrokFUB pushed updated balance/days — refresh banner if this contact is open
         if (String(payload.personId) === String(currentPersonId) && window._currentPerson) {
@@ -8398,13 +8661,24 @@ window.navigate = function(view, listId) {
 
   <!-- SHOWING IN-PROGRESS BANNER -->
   <div id="sh-inprogress-banner">
-    <div class="sh-banner-dot"></div>
-    <div>
-      <div class="sh-banner-text" id="sh-banner-text">SHOWING IN PROGRESS</div>
-      <div class="sh-banner-sub" id="sh-banner-sub"></div>
+    <div class="sh-banner-inner">
+      <div class="sh-banner-dot" id="sh-banner-dot"></div>
+      <div style="flex:1;min-width:0">
+        <div class="sh-banner-text" id="sh-banner-text">SHOWING IN PROGRESS</div>
+        <div class="sh-banner-sub" id="sh-banner-sub"></div>
+      </div>
+      <div id="sh-banner-btns" style="display:flex;gap:8px;align-items:center;flex-shrink:0"></div>
+      <button class="sh-mute-btn" id="sh-mute-btn" onclick="shToggleMute()" title="Toggle alarm sound">
+        <span id="sh-mute-icon">🔔</span><span id="sh-mute-label">MUTE</span>
+      </button>
+      <button class="sh-banner-btn" onclick="shDismissBanner()" style="padding:5px 9px;font-size:11px">✕</button>
     </div>
-    <button class="sh-banner-btn" onclick="navigate('showings')">VIEW SHOWINGS</button>
-    <button class="sh-banner-btn" onclick="document.getElementById('sh-inprogress-banner').classList.remove('visible')">✕</button>
+    <div class="sh-banner-critical-row" id="sh-banner-alert-row" style="display:none">
+      <div class="sh-banner-dot red" style="width:8px;height:8px"></div>
+      <div class="sh-banner-critical-label" id="sh-banner-alert-type">⚠ ALERT</div>
+      <div class="sh-banner-critical-msg" id="sh-banner-alert-msg"></div>
+      <button class="sh-banner-btn alert" id="sh-banner-alert-btn" onclick="shBannerOpenLead()">OPEN LEAD FILE →</button>
+    </div>
   </div>
 </body>
 </html>
