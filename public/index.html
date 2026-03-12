@@ -5394,10 +5394,11 @@ function pdEnd() {
   toast('Power dialer ended', 'info');
 }
 
-// Hook into the existing handleCallEnd so dialer auto-advances
+// Hook into handleCallEnd so dialer auto-advances (define it if not already defined)
+if (typeof handleCallEnd === 'undefined') { window.handleCallEnd = function() {}; }
 const _origHandleCallEnd = handleCallEnd;
 handleCallEnd = function() {
-  _origHandleCallEnd.call(this);
+  try { _origHandleCallEnd.call(this); } catch(e) {}
   if (PD.active && !PD.waitingToCall) {
     setTimeout(pdAdvance, 1200);
   }
