@@ -13,9 +13,27 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
+// ── DATABASE_URL guard — crash loudly rather than silently lose data ──
+if (!process.env.DATABASE_URL) {
+  console.error('❌ FATAL: DATABASE_URL is not set. Refusing to start without a database.');
+  console.error('   Set DATABASE_URL in Railway environment variables to your Postgres connection string.');
+  process.exit(1);
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  // Keep connections alive across Railway's load balancer
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  max: 10,
+});
+
+// Log pool errors — prevents silent crashes from dropped DB connections
+pool.on('error', (err) => {
+  console.error('[DB Pool] Unexpected error on idle client:', err.message);
 });
 
 // ── JIREH SECURITY — SSE client registry ─────────────────────────────────
@@ -1831,6 +1849,26 @@ async function initDB() {
     unit_count INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`, 'create rent_roll_uploads');
+  await run(`CREATE TABLE IF NOT EXISTS work_orders (
+    id SERIAL PRIMARY KEY,
+    property TEXT NOT NULL,
+    wo_number TEXT,
+    priority TEXT,
+    wo_type TEXT,
+    job_description TEXT,
+    status TEXT,
+    vendor TEXT,
+    unit TEXT,
+    resident TEXT,
+    created_at TIMESTAMPTZ,
+    scheduled_start TIMESTAMPTZ,
+    completed_on TIMESTAMPTZ,
+    amount NUMERIC,
+    upload_batch UUID,
+    imported_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(wo_number)
+  )`, 'create work_orders');
+  await run(`CREATE TABLE IF NOT EXISTS work_order_uploads (id SERIAL PRIMARY KEY, filename TEXT, uploaded_by TEXT, record_count INTEGER, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create work_order_uploads');
 
   await run(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
 
@@ -3011,6 +3049,93 @@ app.get('/api/dashboard/galaxy', auth, async (req, res) => {
 });
 
 // =============================================================================
+// WORK ORDERS API
+// =============================================================================
+
+app.post('/api/work-orders/upload', auth, async (req, res) => {
+  try {
+    const { rows, filename } = req.body;
+    if (!rows || !Array.isArray(rows) || rows.length === 0)
+      return res.status(400).json({ error: 'No rows provided' });
+    const batchId = crypto.randomUUID();
+    let inserted = 0, skipped = 0;
+    for (const r of rows) {
+      if (!r.wo_number && !r.job_description) { skipped++; continue; }
+      try {
+        await pool.query(
+          `INSERT INTO work_orders
+             (property, wo_number, priority, wo_type, job_description, status,
+              vendor, unit, resident, created_at, scheduled_start, completed_on,
+              amount, upload_batch)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           ON CONFLICT (wo_number) DO UPDATE SET
+             status=EXCLUDED.status, vendor=EXCLUDED.vendor,
+             scheduled_start=EXCLUDED.scheduled_start,
+             completed_on=EXCLUDED.completed_on,
+             amount=EXCLUDED.amount, upload_batch=EXCLUDED.upload_batch`,
+          [ r.property||null, r.wo_number||null, r.priority||null, r.wo_type||null,
+            r.job_description||null, r.status||null, r.vendor||null,
+            r.unit||null, r.resident||null,
+            r.created_at ? new Date(r.created_at) : null,
+            r.scheduled_start ? new Date(r.scheduled_start) : null,
+            r.completed_on ? new Date(r.completed_on) : null,
+            r.amount ? parseFloat(r.amount) : null, batchId ]
+        );
+        inserted++;
+      } catch(e) { console.warn('[WO Upload] skip:', e.message); skipped++; }
+    }
+    const uploader = req.agent?.name || req.agent?.id || null;
+    await pool.query(`INSERT INTO work_order_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
+      [filename||'work_orders.xlsx', uploader, inserted]);
+    res.json({ ok:true, inserted, skipped, batchId });
+  } catch(e) { console.error('[WO Upload]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/work-orders/last-upload', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT filename, uploaded_by, record_count, created_at FROM work_order_uploads ORDER BY created_at DESC LIMIT 1`);
+    res.json(r.rows[0] || null);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/work-orders/stats', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      WITH monthly AS (
+        SELECT property,
+               DATE_TRUNC('month', created_at) AS month,
+               COUNT(*)::int                   AS cnt
+        FROM work_orders
+        WHERE created_at > NOW() - INTERVAL '6 months'
+        GROUP BY property, DATE_TRUNC('month', created_at)
+      ),
+      avg3 AS (
+        SELECT property,
+               ROUND(AVG(cnt),1) AS avg_monthly,
+               MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END) AS this_month,
+               MAX(CASE WHEN month = DATE_TRUNC('month', NOW() - INTERVAL '1 month') THEN cnt END) AS last_month,
+               MAX(CASE WHEN month = DATE_TRUNC('month', NOW() - INTERVAL '2 months') THEN cnt END) AS month2_ago
+        FROM monthly GROUP BY property
+      )
+      SELECT property,
+             COALESCE(this_month,0)  AS this_month,
+             COALESCE(last_month,0)  AS last_month,
+             COALESCE(month2_ago,0)  AS month2_ago,
+             COALESCE(avg_monthly,0) AS avg_monthly
+      FROM avg3
+      WHERE COALESCE(this_month,0) + COALESCE(last_month,0) + COALESCE(month2_ago,0) > 0
+      ORDER BY COALESCE(this_month,0) DESC LIMIT 12
+    `);
+    const open = await pool.query(`
+      SELECT priority, COUNT(*)::int AS cnt FROM work_orders
+      WHERE status NOT IN ('Completed','Cancelled','Canceled')
+      GROUP BY priority
+    `);
+    res.json({ byProperty: rows, openByPriority: open.rows });
+  } catch(e) { console.error('[WO Stats]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
 // DASHBOARD — mission control stats
 // =============================================================================
 app.get('/api/dashboard/stats', auth, async (req, res) => {
@@ -3082,9 +3207,10 @@ app.get('/api/dashboard/stats', auth, async (req, res) => {
     const rt = responseTime.rows[0];
 
     // Upload freshness
-    const [showingUpload, rrUpload] = await Promise.all([
+    const [showingUpload, rrUpload, woUpload] = await Promise.all([
       pool.query(`SELECT created_at, record_count FROM showing_uploads ORDER BY created_at DESC LIMIT 1`),
-      pool.query(`SELECT created_at, unit_count FROM rent_roll_uploads ORDER BY created_at DESC LIMIT 1`)
+      pool.query(`SELECT created_at, unit_count FROM rent_roll_uploads ORDER BY created_at DESC LIMIT 1`),
+      pool.query(`SELECT created_at, record_count FROM work_order_uploads ORDER BY created_at DESC LIMIT 1`)
     ]);
 
     // SMS stats today
@@ -3106,7 +3232,8 @@ app.get('/api/dashboard/stats', auth, async (req, res) => {
       sms: smsToday.rows[0],
       uploads: {
         showings: showingUpload.rows[0] || null,
-        rentRoll: rrUpload.rows[0] || null
+        rentRoll: rrUpload.rows[0] || null,
+        workOrders: woUpload.rows[0] || null
       }
     });
   } catch(e) {
@@ -3128,7 +3255,19 @@ app.get('*', (req, res) => {
 // =============================================================================
 // START
 // =============================================================================
-initDB().then(() => {
+// ── Verify DB connectivity before running migrations ──
+async function checkDB() {
+  try {
+    await pool.query('SELECT 1');
+    console.log('✅ Database connected');
+  } catch(e) {
+    console.error('❌ FATAL: Cannot connect to database:', e.message);
+    console.error('   Check DATABASE_URL in Railway environment variables.');
+    process.exit(1);
+  }
+}
+
+checkDB().then(() => initDB()).then(() => {
   // Showing followup text poller — runs every 2 minutes
   setInterval(pollShowingFollowups, 2 * 60 * 1000);
   setTimeout(pollShowingFollowups, 10000); // first check 10s after boot
@@ -3142,4 +3281,4 @@ initDB().then(() => {
     console.log(`Deepgram: ${process.env.DEEPGRAM_API_KEY ? '✓' : '✗'}`);
     console.log(`Grok:     ${process.env.GROK_API_KEY ? '✓' : '✗'}`);
   });
-});
+}); // end checkDB().then(() => initDB()).then
