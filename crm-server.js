@@ -851,6 +851,60 @@ app.get('/api/smart-lists', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Bulk count endpoint — returns { listId: count } for all smart lists
+app.get('/api/smart-lists/counts', auth, async (req, res) => {
+  try {
+    const listsR = await pool.query('SELECT * FROM smart_lists ORDER BY sort_order');
+    const counts = {};
+    await Promise.all(listsR.rows.map(async list => {
+      try {
+        const f = list.filters || {};
+        if (f.type === 'upcoming_showings_72h') {
+          const r = await pool.query(`
+            SELECT COUNT(DISTINCT p.id)::int AS cnt
+            FROM people p
+            JOIN showings s ON s.connect_person_id = p.id::text
+              AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
+              AND s.status = 'Scheduled'
+          `);
+          counts[list.id] = r.rows[0]?.cnt || 0;
+        } else if (f.type === 'toured_no_followup') {
+          const days = parseInt(f.days_ago || 90);
+          const r = await pool.query(`
+            SELECT COUNT(DISTINCT p.id)::int AS cnt
+            FROM people p
+            JOIN showings s ON s.connect_person_id = p.id::text
+              AND s.showing_time < NOW()
+              AND s.showing_time > NOW() - INTERVAL '1 day' * $1
+              AND s.status = 'Completed'
+            JOIN LATERAL (
+              SELECT showing_time AS last_tour FROM showings
+              WHERE connect_person_id = p.id::text AND status = 'Completed' AND showing_time < NOW()
+              ORDER BY showing_time DESC LIMIT 1
+            ) s2 ON TRUE
+            LEFT JOIN activities a ON a.person_id::text = p.id::text
+            GROUP BY p.id, s2.last_tour
+            HAVING MAX(a.created_at) FILTER (
+              WHERE a.direction='outbound' AND a.created_at > s2.last_tour
+            ) IS NULL
+          `, [days]);
+          counts[list.id] = r.rows[0]?.cnt ?? r.rows.length;
+        } else {
+          let where = ['1=1']; let params = [];
+          if (f.stages?.length > 1) { params.push(f.stages); where.push(`stage=ANY($${params.length})`); }
+          else if (f.stage) { params.push(f.stage); where.push(`stage=$${params.length}`); }
+          if (f.tags?.length) { for (const t of f.tags) { params.push(t); where.push(`$${params.length}=ANY(tags)`); } }
+          const r = await pool.query(
+            `SELECT COUNT(*)::int AS cnt FROM people WHERE ${where.join(' AND ')}`, params
+          );
+          counts[list.id] = r.rows[0]?.cnt || 0;
+        }
+      } catch(e) { counts[list.id] = null; }
+    }));
+    res.json(counts);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/smart-lists', auth, async (req, res) => {
   try {
     const { name, filters = {} } = req.body;
@@ -1960,8 +2014,7 @@ async function initDB() {
     }
   } catch (e) { console.error('[DB] seed admin:', e.message); }
 
-  // Seed smart lists — only on first boot (DO NOTHING so deletes by users are respected)
-  // Add a 'deleted_smart_list_names' table to track user-deleted defaults
+  // Seed smart lists — only if not already present AND not previously deleted
   await run(`CREATE TABLE IF NOT EXISTS deleted_smart_lists (name TEXT PRIMARY KEY, deleted_at TIMESTAMPTZ DEFAULT NOW())`, 'create deleted_smart_lists');
   try {
     const smartListDefs = [
@@ -1974,15 +2027,27 @@ async function initDB() {
       { name: '🏠 Upcoming Showings',  filters: { type: 'upcoming_showings_72h' }, sort_order: 1 },
       { name: '👻 Tours — No Follow-Up', filters: { type: 'toured_no_followup', days_ago: 90 }, sort_order: 2 },
     ];
-    // Get list of user-deleted default lists so we don't recreate them
+    // Tombstone any default list that is NOT currently in smart_lists (was deleted before tombstones existed)
+    const existingR = await pool.query('SELECT name FROM smart_lists');
+    const existingNames = new Set(existingR.rows.map(r => r.name));
+    for (const sl of smartListDefs) {
+      if (!existingNames.has(sl.name)) {
+        // List is gone — make sure it's tombstoned so it won't re-seed
+        await pool.query(
+          `INSERT INTO deleted_smart_lists (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
+          [sl.name]
+        ).catch(() => {});
+      }
+    }
+    // Get full tombstone list
     const deletedR = await pool.query('SELECT name FROM deleted_smart_lists');
     const deletedNames = new Set(deletedR.rows.map(r => r.name));
     for (const sl of smartListDefs) {
-      if (deletedNames.has(sl.name)) continue; // user deleted this — respect their choice
+      if (deletedNames.has(sl.name)) continue; // user deleted this — never re-seed
       await pool.query(
         `INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) ON CONFLICT (name) DO NOTHING`,
         [sl.name, JSON.stringify(sl.filters), sl.sort_order]
-      ).catch(()=>{});
+      ).catch(() => {});
     }
   } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
 
