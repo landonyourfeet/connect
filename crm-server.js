@@ -2,8 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const multer  = require('multer');
 const crypto  = require('crypto');
-let XLSX;
-try { XLSX = require('xlsx'); } catch(e) { console.warn('[Showings] xlsx not installed — run: npm install xlsx'); }
 const { google } = require('googleapis');
 const path = require('path');
 const cors = require('cors');
@@ -2324,55 +2322,20 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
 // SHOWINGS API
 // =============================================================================
 
-// Upload showings XLSX
-app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, res) => {
+// Upload showings — accepts pre-parsed JSON rows from browser-side SheetJS
+// (no server-side xlsx dependency needed)
+app.post('/api/showings/upload', auth, async (req, res) => {
   try {
-    if (!XLSX) return res.status(503).json({ error: 'xlsx not installed on server' });
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-
-    // Find header row
-    let hi = -1;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i] && rows[i][0] === 'Guest Card Name') { hi = i; break; }
+    const { rows, filename } = req.body;
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'No rows provided' });
     }
-    if (hi === -1) return res.status(400).json({ error: 'Invalid format — could not find header row' });
-
-    const h = rows[hi];
-    const col = {
-      name: h.indexOf('Guest Card Name'), email: h.indexOf('Email'),
-      phone: h.indexOf('Phone Number'), property: h.indexOf('Property'),
-      unit: h.indexOf('Showing Unit'), time: h.indexOf('Showing Time'),
-      status: h.indexOf('Status'), type: h.indexOf('Type'),
-      assigned: h.indexOf('Assigned User'), desc: h.indexOf('Description'),
-      lastActDate: h.indexOf('Last Activity Date'), lastActType: h.indexOf('Last Activity Type'),
-    };
 
     const batchId = crypto.randomUUID();
     let inserted = 0, skipped = 0;
 
-    // Helper: safely parse a date value from xlsx (may be Date object, number, or string)
-    const parseXlsxDate = v => {
-      if (!v) return null;
-      if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
-      if (typeof v === 'number') {
-        // Excel serial date — xlsx should handle with cellDates:true but just in case
-        const d = new Date(Math.round((v - 25569) * 86400 * 1000));
-        return isNaN(d.getTime()) ? null : d;
-      }
-      const d = new Date(v);
-      return isNaN(d.getTime()) ? null : d;
-    };
-
-    for (let i = hi + 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row || !row[col.name]) continue;
-      // Skip property header rows (name but no time/email/phone/property cols)
-      const showingTime = parseXlsxDate(row[col.time]);
-      if (!showingTime) continue;
-      if (row[col.email] === null && row[col.phone] === null && row[col.property] === null) continue;
+    for (const row of rows) {
+      if (!row.guest_name || !row.showing_time) continue;
       try {
         await pool.query(
           `INSERT INTO showings (property,unit,guest_name,email,phone,showing_time,status,showing_type,assigned_user,description,last_activity_date,last_activity_type,upload_batch)
@@ -2380,24 +2343,26 @@ app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, 
            ON CONFLICT (property,guest_name,showing_time) DO UPDATE SET
              status=EXCLUDED.status, last_activity_type=EXCLUDED.last_activity_type,
              last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch`,
-          [ row[col.property]||null, row[col.unit]||null, String(row[col.name]).trim(),
-            row[col.email]||null, row[col.phone]||null, showingTime,
-            row[col.status]||null, row[col.type]||null, row[col.assigned]||null,
-            row[col.desc]||null, parseXlsxDate(row[col.lastActDate]),
-            row[col.lastActType]||null, batchId ]
+          [ row.property||null, row.unit||null, row.guest_name.trim(),
+            row.email||null, row.phone||null, new Date(row.showing_time),
+            row.status||null, row.showing_type||null, row.assigned_user||null,
+            row.description||null,
+            row.last_activity_date ? new Date(row.last_activity_date) : null,
+            row.last_activity_type||null, batchId ]
         );
         inserted++;
       } catch(e) {
-        console.warn('[Showings Upload] Row skip:', e.message, JSON.stringify(row).slice(0,120));
+        console.warn('[Showings Upload] Row skip:', e.message);
         skipped++;
       }
     }
+
     if (inserted === 0 && skipped === 0) {
-      return res.status(400).json({ error: `Parsed ${rows.length} rows but found no valid showings. Check file format.` });
+      return res.status(400).json({ error: 'No valid showings found in file. Check file format.' });
     }
     const uploader = req.agent?.name || req.agent?.id || null;
     await pool.query(`INSERT INTO showing_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
-      [req.file.originalname, uploader, inserted]);
+      [filename || 'showings.xlsx', uploader, inserted]);
     res.json({ ok: true, inserted, skipped, batchId });
   } catch(e) { console.error('[Showings Upload]', e.message); res.status(500).json({ error: e.message }); }
 });
