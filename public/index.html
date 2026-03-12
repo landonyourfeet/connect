@@ -3233,7 +3233,7 @@ async function doLogin() {
     authToken = data.token; currentUser = data.agent;
     localStorage.setItem('connect_token', authToken);
     localStorage.setItem('connect_user', JSON.stringify(currentUser));
-    launchApp();
+    await launchApp();
   } catch(e) {
     errEl.textContent = e.message || 'Invalid email or password.';
   } finally {
@@ -3284,7 +3284,59 @@ async function launchApp() {
   JirehOrganic.init();
   // Load my profile + team, then connect agent SSE
   loadMyProfile().then(() => connectAgentSse());
-  startNotifPoller();
+}
+
+async function loadMyProfile() {
+  try {
+    const me = await api('/api/auth/me');
+    if (me) { currentUser = me; updateSidebarUser(); }
+  } catch(e) { console.warn('[Profile]', e.message); }
+}
+
+function connectAgentSse() {
+  if (_agentSse) { try { _agentSse.close(); } catch(e){} }
+  const url = `/api/events/stream?token=${encodeURIComponent(authToken)}`;
+  _agentSse = new EventSource(url);
+  _agentSse.onopen = () => console.log('[SSE] Agent stream connected');
+  _agentSse.onerror = () => {
+    console.warn('[SSE] Agent stream error — reconnecting in 15s');
+    try { _agentSse.close(); } catch(e){}
+    _agentSse = null;
+    setTimeout(connectAgentSse, 15000);
+  };
+  _agentSse.onmessage = (e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      handleAgentSseEvent(payload);
+    } catch(err) {}
+  };
+}
+
+function handleAgentSseEvent(payload) {
+  if (!payload || !payload.type) return;
+  switch(payload.type) {
+    case 'crew_online':
+      // Update online indicator if dashboard is visible
+      if (typeof renderDashboard === 'function' && document.getElementById('sec-dashboard')?.style.display !== 'none') {
+        renderDashboard().catch(()=>{});
+      }
+      break;
+    case 'new_lead':
+      loadInboxCount().catch(()=>{});
+      loadSmartListCounts().catch(()=>{});
+      break;
+    case 'jareih_call_update':
+    case 'jareih_active_calls':
+      if (typeof handleJareihCallUpdate === 'function') handleJareihCallUpdate(payload);
+      if (typeof handleJareihActiveCalls === 'function' && payload.calls) handleJareihActiveCalls(payload.calls);
+      break;
+    case 'agent_status':
+      // Could update presence indicators here
+      break;
+    default:
+      // Forward to any legacy handlers
+      break;
+  }
 }
 
 function updateSidebarUser() {
