@@ -1735,9 +1735,12 @@ async function initDB() {
     last_activity_date TIMESTAMPTZ,
     last_activity_type TEXT,
     upload_batch TEXT,
+    feedback_sent BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(property, guest_name, showing_time)
   )`, 'create showings');
+  // Add feedback_sent column if upgrading existing table
+  await run(`ALTER TABLE showings ADD COLUMN IF NOT EXISTS feedback_sent BOOLEAN DEFAULT FALSE`, 'alter showings feedback_sent');
   await run(`CREATE TABLE IF NOT EXISTS showing_feedback (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     showing_id UUID REFERENCES showings(id) ON DELETE CASCADE,
@@ -1756,6 +1759,36 @@ async function initDB() {
     record_count INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`, 'create showing_uploads');
+
+  await run(`CREATE TABLE IF NOT EXISTS rent_roll (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    property TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    tenant_name TEXT,
+    status TEXT,
+    bedrooms TEXT,
+    sqft INTEGER,
+    market_rent NUMERIC(10,2),
+    rent NUMERIC(10,2),
+    deposit NUMERIC(10,2),
+    lease_from DATE,
+    lease_to DATE,
+    move_in DATE,
+    move_out DATE,
+    past_due NUMERIC(10,2) DEFAULT 0,
+    nsf_count INTEGER DEFAULT 0,
+    late_count INTEGER DEFAULT 0,
+    upload_batch TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(property, unit)
+  )`, 'create rent_roll');
+  await run(`CREATE TABLE IF NOT EXISTS rent_roll_uploads (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    filename TEXT,
+    uploaded_by TEXT,
+    unit_count INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`, 'create rent_roll_uploads');
 
   await run(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
 
@@ -2520,14 +2553,286 @@ app.get('/api/showings/by-contact', auth, async (req, res) => {
       conditions.push(`(LOWER(s.guest_name) LIKE $${params.length-1} OR LOWER(s.guest_name) LIKE $${params.length})`);
     }
 
+    const { since } = req.query;
+    if (since) {
+      params.push(since);
+      conditions.push(`1=1`); // placeholder — add date filter below
+    }
+
+    const sinceClause = since ? `AND s.showing_time >= $${params.length}` : '';
+
     const { rows } = await pool.query(`
       SELECT s.*, f.verdict, f.categories, f.notes, f.agent_name
       FROM showings s
       LEFT JOIN showing_feedback f ON f.showing_id = s.id
-      WHERE ${conditions.join(' OR ')}
+      WHERE (${conditions.slice(0, since ? conditions.length - 1 : conditions.length).join(' OR ')})
+      ${sinceClause}
       ORDER BY s.showing_time DESC
       LIMIT 50
     `, params);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
+// SHOWING FEEDBACK — public page + poller
+// =============================================================================
+
+// Public feedback submission (no auth — prospect fills this out)
+app.get('/feedback/:showingId', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tour Feedback — OKCREAL</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#eee;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:#141414;border:1px solid #2a2a2a;border-radius:16px;max-width:480px;width:100%;padding:32px}
+  h1{font-size:22px;font-weight:800;margin-bottom:4px;color:#fff}
+  .sub{font-size:13px;color:#888;margin-bottom:28px}
+  .verdict-row{display:flex;gap:10px;margin-bottom:24px}
+  .vbtn{flex:1;padding:16px 8px;border:2px solid #333;border-radius:12px;background:transparent;cursor:pointer;color:#888;font-size:13px;font-weight:700;text-align:center;transition:all .15s}
+  .vbtn.go.sel{border-color:#00e87a;color:#00e87a;background:rgba(0,232,122,.08)}
+  .vbtn.maybe.sel{border-color:#ff8c00;color:#ff8c00;background:rgba(255,140,0,.08)}
+  .vbtn.nogo.sel{border-color:#e8003a;color:#e8003a;background:rgba(232,0,58,.08)}
+  .vbtn .emoji{font-size:28px;display:block;margin-bottom:6px}
+  label{display:block;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#666;margin-bottom:8px}
+  .cats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
+  .cat{padding:6px 12px;border:1px solid #333;border-radius:20px;font-size:12px;cursor:pointer;color:#888;background:#1a1a1a;transition:all .12s}
+  .cat.sel{border-color:#e8003a;color:#e8003a;background:rgba(232,0,58,.08)}
+  textarea{width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:14px;padding:12px;resize:vertical;min-height:80px;font-family:inherit;margin-bottom:20px}
+  textarea:focus{outline:none;border-color:#444}
+  .submit{width:100%;padding:14px;background:#e8003a;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;letter-spacing:.05em}
+  .submit:disabled{opacity:.5;cursor:not-allowed}
+  .thanks{text-align:center;padding:40px 0}
+  .thanks .big{font-size:48px;margin-bottom:16px}
+  .thanks h2{font-size:22px;font-weight:800;margin-bottom:8px;color:#fff}
+  .logo{text-align:center;margin-bottom:24px;font-size:13px;letter-spacing:.15em;text-transform:uppercase;color:#555}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">OKCREAL</div>
+  <div id="form-wrap">
+    <h1>How did your tour go?</h1>
+    <div class="sub">Your feedback helps us improve every showing.</div>
+    <div class="verdict-row">
+      <button class="vbtn go" onclick="setV('go',this)"><span class="emoji">✅</span>I'm Interested</button>
+      <button class="vbtn maybe" onclick="setV('maybe',this)"><span class="emoji">🤔</span>Maybe</button>
+      <button class="vbtn nogo" onclick="setV('no-go',this)"><span class="emoji">❌</span>Not for Me</button>
+    </div>
+    <label>Anything to flag? (optional)</label>
+    <div class="cats" id="cats">
+      ${['smell','paint / walls','cleanliness','carpet / flooring','appliances','kitchen','bathroom','lighting','layout','curb appeal','parking','noise','neighborhood','price'].map(c=>`<div class="cat" onclick="toggleCat('${c}',this)">${c}</div>`).join('')}
+    </div>
+    <label>Other comments</label>
+    <textarea id="notes" placeholder="Tell us what you think..."></textarea>
+    <button class="submit" id="submit-btn" onclick="submitFeedback()" disabled>Select a rating above to continue</button>
+  </div>
+  <div id="thanks" class="thanks" style="display:none">
+    <div class="big">🎉</div>
+    <h2>Thank you!</h2>
+    <p style="color:#888;font-size:14px;margin-top:8px">We appreciate you taking the time to share your thoughts. Our team will be in touch soon!</p>
+  </div>
+</div>
+<script>
+  let verdict=null, cats=[];
+  function setV(v, el) {
+    verdict=v;
+    document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('sel'));
+    el.classList.add('sel');
+    const btn=document.getElementById('submit-btn');
+    btn.disabled=false; btn.textContent='Submit Feedback';
+  }
+  function toggleCat(c, el) {
+    if (cats.includes(c)) { cats=cats.filter(x=>x!==c); el.classList.remove('sel'); }
+    else { cats.push(c); el.classList.add('sel'); }
+  }
+  async function submitFeedback() {
+    const btn=document.getElementById('submit-btn');
+    btn.disabled=true; btn.textContent='Submitting...';
+    try {
+      const r = await fetch('/api/showings/${req.params.showingId}/public-feedback', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ verdict, categories: cats, notes: document.getElementById('notes').value })
+      });
+      if (!r.ok) throw new Error('Failed');
+      document.getElementById('form-wrap').style.display='none';
+      document.getElementById('thanks').style.display='';
+    } catch(e) { btn.disabled=false; btn.textContent='Try Again'; alert('Something went wrong. Please try again.'); }
+  }
+</script>
+</body></html>`);
+});
+
+// Public feedback endpoint (no auth)
+app.post('/api/showings/:id/public-feedback', async (req, res) => {
+  try {
+    const { verdict, categories = [], notes = '' } = req.body;
+    if (!verdict) return res.status(400).json({ error: 'verdict required' });
+    await pool.query(
+      `INSERT INTO showing_feedback (showing_id, agent_id, agent_name, verdict, categories, notes)
+       VALUES ($1, 'prospect', 'Prospect', $2, $3, $4)
+       ON CONFLICT (showing_id, agent_id) DO UPDATE SET
+         verdict=EXCLUDED.verdict, categories=EXCLUDED.categories, notes=EXCLUDED.notes, created_at=NOW()`,
+      [req.params.id, verdict, JSON.stringify(categories), notes]
+    );
+    broadcastToAll({ type: 'showing_feedback', showingId: req.params.id, verdict, source: 'prospect' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// In-progress showings endpoint (for bottom banner)
+app.get('/api/showings/in-progress', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, property, unit, guest_name, phone, showing_time, showing_type
+      FROM showings
+      WHERE status = 'Scheduled'
+        AND showing_time BETWEEN NOW() - INTERVAL '15 minutes' AND NOW()
+      ORDER BY showing_time ASC
+    `);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Background poller — texts leads 15 min after showing
+async function pollShowingFollowups() {
+  try {
+    const twilio = initTwilioFull() || initTwilio();
+    if (!twilio) return;
+    const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+    const appUrl = process.env.APP_URL || 'https://connect.okcreal.com';
+    // Find completed showings from last 2 min window (14-16 min after start) not yet texted
+    const { rows } = await pool.query(`
+      SELECT id, guest_name, phone, property
+      FROM showings
+      WHERE status = 'Scheduled'
+        AND phone IS NOT NULL
+        AND feedback_sent = FALSE
+        AND showing_time BETWEEN NOW() - INTERVAL '16 minutes' AND NOW() - INTERVAL '14 minutes'
+    `);
+    for (const s of rows) {
+      try {
+        const phone = s.phone.replace(/\D/g,'').replace(/^1/,'');
+        if (phone.length !== 10) continue;
+        const link = `${appUrl}/feedback/${s.id}`;
+        const firstName = (s.guest_name||'').split(',')[1]?.trim().split(' ')[0] || (s.guest_name||'').split(' ')[0] || 'there';
+        const msg = `Hi ${firstName}! Thanks so much for touring ${(s.property||'').split(' - ')[0]} — we're excited to hear how it went! Your feedback helps us improve the experience for everyone: ${link}`;
+        await twilio.messages.create({ body: msg, from: fromNum, to: `+1${phone}` });
+        await pool.query(`UPDATE showings SET feedback_sent=TRUE WHERE id=$1`, [s.id]);
+        console.log(`[Showings] Feedback text sent to ${firstName} (showing ${s.id})`);
+      } catch(e) { console.error('[Showings] Text error:', e.message); }
+    }
+  } catch(e) { console.error('[Showings Poller]', e.message); }
+}
+
+// =============================================================================
+// RENT ROLL API
+// =============================================================================
+
+// Upload rent roll (browser-parsed JSON)
+app.post('/api/rent-roll/upload', auth, async (req, res) => {
+  try {
+    const { rows, filename } = req.body;
+    if (!rows || !Array.isArray(rows) || !rows.length)
+      return res.status(400).json({ error: 'No rows provided' });
+
+    const batchId = crypto.randomUUID();
+    let upserted = 0;
+    for (const r of rows) {
+      if (!r.property || !r.unit) continue;
+      const toDate = v => v ? new Date(v) : null;
+      await pool.query(
+        `INSERT INTO rent_roll
+           (property,unit,tenant_name,status,bedrooms,sqft,market_rent,rent,deposit,
+            lease_from,lease_to,move_in,move_out,past_due,nsf_count,late_count,upload_batch,updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
+         ON CONFLICT (property,unit) DO UPDATE SET
+           tenant_name=EXCLUDED.tenant_name, status=EXCLUDED.status,
+           bedrooms=EXCLUDED.bedrooms, sqft=EXCLUDED.sqft,
+           market_rent=EXCLUDED.market_rent, rent=EXCLUDED.rent, deposit=EXCLUDED.deposit,
+           lease_from=EXCLUDED.lease_from, lease_to=EXCLUDED.lease_to,
+           move_in=EXCLUDED.move_in, move_out=EXCLUDED.move_out,
+           past_due=EXCLUDED.past_due, nsf_count=EXCLUDED.nsf_count,
+           late_count=EXCLUDED.late_count, upload_batch=EXCLUDED.upload_batch,
+           updated_at=NOW()`,
+        [ r.property, r.unit, r.tenant_name||null, r.status||null, r.bedrooms||null,
+          r.sqft||null, r.market_rent||null, r.rent||null, r.deposit||null,
+          toDate(r.lease_from), toDate(r.lease_to), toDate(r.move_in), toDate(r.move_out),
+          r.past_due||0, r.nsf_count||0, r.late_count||0, batchId ]
+      );
+      upserted++;
+    }
+    const uploader = req.agent?.name || req.agent?.id || null;
+    await pool.query(
+      `INSERT INTO rent_roll_uploads (filename,uploaded_by,unit_count) VALUES ($1,$2,$3)`,
+      [filename||'rent_roll.xlsx', uploader, upserted]
+    );
+    broadcastToAll({ type: 'rent_roll_updated', unitCount: upserted });
+    res.json({ ok: true, upserted });
+  } catch(e) { console.error('[Rent Roll Upload]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Last upload timestamp
+app.get('/api/rent-roll/last-upload', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT filename, uploaded_by, unit_count, created_at FROM rent_roll_uploads ORDER BY created_at DESC LIMIT 1`
+    );
+    res.json(rows[0] || null);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Rent roll status for all units of a property (for showings view)
+app.get('/api/rent-roll/by-property', auth, async (req, res) => {
+  try {
+    const { property } = req.query;
+    if (!property) return res.status(400).json({ error: 'property required' });
+    const { rows } = await pool.query(
+      `SELECT unit, tenant_name, status, rent, market_rent, lease_from, lease_to, move_in, late_count, past_due
+       FROM rent_roll WHERE property = $1 ORDER BY unit`,
+      [property]
+    );
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Rent info for a specific person (for contact record)
+// Matches by tenant name (last, first format) or fuzzy
+app.get('/api/rent-roll/by-person', auth, async (req, res) => {
+  try {
+    const { name, personId } = req.query;
+    if (!name) return res.json(null);
+    // Try exact match first, then fuzzy
+    const clean = name.toLowerCase().trim();
+    const { rows } = await pool.query(
+      `SELECT rr.*, rr.property, rr.unit
+       FROM rent_roll rr
+       WHERE LOWER(REPLACE(tenant_name, '  ', ' ')) LIKE $1
+          OR LOWER(REVERSE(SPLIT_PART(REVERSE(LOWER(tenant_name)), ' ', 1)) || ' ' || TRIM(LEADING FROM REPLACE(LOWER(tenant_name), REVERSE(SPLIT_PART(REVERSE(LOWER(tenant_name)), ' ', 1)), ''))) LIKE $1
+       LIMIT 3`,
+      ['%' + clean.split(' ').filter(Boolean).join('%') + '%']
+    );
+    res.json(rows[0] || null);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Occupancy summary per property (for showings tab)
+app.get('/api/rent-roll/occupancy', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT property,
+        COUNT(*) FILTER (WHERE status='Current')::int            AS occupied,
+        COUNT(*) FILTER (WHERE status LIKE 'Vacant%')::int       AS vacant,
+        COUNT(*) FILTER (WHERE status LIKE 'Notice%')::int       AS on_notice,
+        COUNT(*)::int                                             AS total_units,
+        MIN(updated_at)                                           AS last_updated
+      FROM rent_roll
+      GROUP BY property
+      ORDER BY property
+    `);
     res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2576,6 +2881,10 @@ app.get('/security', (req, res) => {
 // START
 // =============================================================================
 initDB().then(() => {
+  // Showing followup text poller — runs every 2 minutes
+  setInterval(pollShowingFollowups, 2 * 60 * 1000);
+  setTimeout(pollShowingFollowups, 10000); // first check 10s after boot
+
   app.listen(PORT, () => {
     console.log(`OKCREAL Connect running on port ${PORT}`);
     console.log(`Twilio Account:  ${process.env.TWILIO_ACCOUNT_SID ? '✓' : '✗'}`);
