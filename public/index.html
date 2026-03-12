@@ -2300,7 +2300,7 @@
         </div>
       </div>
       <div class="sidebar-nav" id="sidebar-nav">
-        <div class="nav-item" data-view="dashboard" onclick="navigate('dashboard')" id="nav-dashboard">
+        <div class="nav-item active" data-view="dashboard" onclick="navigate('dashboard')" id="nav-dashboard">
           <span class="nav-icon">⚡</span><span class="nav-label">Mission Control</span>
         </div>
         <div class="nav-item" data-view="inbox" onclick="navigate('inbox')">
@@ -2310,7 +2310,7 @@
         </div>
         <div class="nav-divider"></div>
         <div class="nav-section-label">People</div>
-        <div class="nav-item active" data-view="people" data-list-id="all" onclick="navigate('people','all')">
+        <div class="nav-item" data-view="people" data-list-id="all" onclick="navigate('people','all')">
           <span class="nav-icon">👥</span>
           All People
           <span class="nav-badge" id="badge-all">—</span>
@@ -7512,9 +7512,9 @@ async function renderDashboard() {
       <div>
         <div class="mc-title" style="display:flex;align-items:center;gap:10px">
           <span style="color:var(--red);font-size:28px;line-height:1">⬡</span>
-          OKC<span style="color:var(--red)">REAL</span>&nbsp;CONNECT
+          OKC<span style="color:var(--red)">REAL</span>&nbsp;<span style="color:var(--red);font-size:0.65em;letter-spacing:0.22em;opacity:0.85">COMMAND MODULE</span>
         </div>
-        <div style="font-size:8px;letter-spacing:0.22em;color:#444;margin-top:3px;text-transform:uppercase">Mission Control · Property Management Command</div>
+        <div style="font-size:8px;letter-spacing:0.22em;color:#444;margin-top:3px;text-transform:uppercase">OKCREAL Connect · Property Management Command</div>
       </div>
       <div style="text-align:right">
         <div class="mc-clock" id="mc-clock"></div>
