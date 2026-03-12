@@ -3286,6 +3286,18 @@ async function launchApp() {
   loadMyProfile().then(() => connectAgentSse());
 }
 
+// Showing alert poller — checks for upcoming showings needing attention
+let _showingAlertInterval = null;
+function startShowingAlertPoller() {
+  if (_showingAlertInterval) return;
+  _showingAlertInterval = setInterval(async () => {
+    try {
+      const data = await api('/api/showings?status=scheduled&limit=5');
+      // Future: surface a badge or toast for showings in next 30 min
+    } catch(e) {}
+  }, 5 * 60 * 1000); // every 5 minutes
+}
+
 async function loadMyProfile() {
   try {
     const me = await api('/api/auth/me');
@@ -5642,7 +5654,7 @@ async function initSecBadge() {
 
 // ── JIREH SECURITY — SSE + Alert System ────────────────────────────────
 // ── JIREH ORGANIC — sidebar connection-status canvas bar ────────────────────
-const JirehOrganic = (() => {
+var JirehOrganic = (() => {
   let _canvas = null;
   let _ctx = null;
   let _raf = null;
@@ -5717,7 +5729,7 @@ const JirehOrganic = (() => {
   };
 })();
 
-const JirehSecurity = (() => {
+var JirehSecurity = (() => {
   let _sse = null;
   let _dismissTimer = null;
   let _currentEvent = null;
