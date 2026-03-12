@@ -8282,11 +8282,20 @@ async function submitChangePassword() {
 function connectAgentSse() {
   if (_agentSse) return;
   _agentSse = new EventSource('/api/events/stream');
-  _agentSse.onopen = () => console.log('[AgentSSE] connected');
+  _agentSse.onopen = () => {
+    console.log('[AgentSSE] connected');
+    // Re-fetch dashboard stats now that our SSE conn is registered server-side
+    // Small delay to ensure agentConnections map is updated before query runs
+    if (typeof refreshDashboard === 'function') {
+      setTimeout(refreshDashboard, 800);
+    }
+  };
   _agentSse.onerror = () => {
     console.warn('[AgentSSE] reconnecting...');
     _agentSse.close(); _agentSse = null;
-    setTimeout(connectAgentSse, 8000);
+    setTimeout(() => {
+      connectAgentSse();
+    }, 8000);
   };
   _agentSse.onmessage = (e) => {
     try {
