@@ -1060,13 +1060,20 @@
     .people-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 
     /* ── SMART LIST LIST HEADER ──────────────────────────── */
-    #sl-list-header { display: none; flex-shrink: 0; padding: 7px 18px 7px 16px; border-bottom: 1px solid var(--red); background: linear-gradient(90deg, #0d0002 0%, #070000 100%); box-shadow: 0 1px 14px rgba(232,0,58,0.18); align-items: center; gap: 10px; }
+    #sl-list-header { display: none; flex-shrink: 0; padding: 7px 18px 7px 16px; border-bottom: 2px solid var(--red); background: linear-gradient(90deg, #1a0008 0%, #120004 100%); box-shadow: 0 2px 16px rgba(232,0,58,0.22); align-items: center; gap: 10px; }
     #sl-list-header.visible { display: flex; }
-    .sl-lh-icon { color: var(--red); font-family: var(--font-mono); font-size: 13px; opacity: 0.7; flex-shrink: 0; }
-    .sl-lh-name { font-family: var(--font-cond); font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tac-lh-name); text-shadow: 0 0 18px var(--tac-name-glow); }
-    .sl-lh-count { font-family: var(--font-mono); font-size: 10px; color: var(--tac-lh-sub); letter-spacing: 0.08em; margin-left: 4px; }
-    .sl-lh-edit { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--tac-lh-sub); background: var(--tac-lh-btn-bg); border: 1px solid var(--tac-border-2); padding: 4px 12px; border-radius: 2px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
-    .sl-lh-edit:hover { color: var(--red); border-color: var(--red); box-shadow: 0 0 8px rgba(232,0,58,0.2); }
+    .sl-lh-icon { color: var(--red); font-family: var(--font-mono); font-size: 13px; opacity: 1; flex-shrink: 0; }
+    .sl-lh-name { font-family: var(--font-cond); font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff; text-shadow: 0 0 14px rgba(232,0,58,0.5); }
+    .sl-lh-count { font-family: var(--font-mono); font-size: 10px; color: #cc8899; letter-spacing: 0.08em; margin-left: 4px; }
+    .sl-lh-edit { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: #ddaaaa; background: rgba(232,0,58,0.08); border: 1px solid rgba(232,0,58,0.35); padding: 4px 12px; border-radius: 2px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+    .sl-lh-edit:hover { color: #ffffff; border-color: var(--red); background: rgba(232,0,58,0.18); box-shadow: 0 0 10px rgba(232,0,58,0.3); }
+    /* Daylight override */
+    [data-theme="light"] #sl-list-header { background: linear-gradient(90deg, #fff0f3 0%, #fce8ed 100%); border-bottom-color: var(--red); box-shadow: 0 2px 10px rgba(232,0,58,0.12); }
+    [data-theme="light"] .sl-lh-name { color: #1c1c1e; text-shadow: none; }
+    [data-theme="light"] .sl-lh-count { color: #a0404a; }
+    [data-theme="light"] .sl-lh-icon { color: var(--red); }
+    [data-theme="light"] .sl-lh-edit { color: #8a2030; background: rgba(232,0,58,0.06); border-color: rgba(232,0,58,0.3); }
+    [data-theme="light"] .sl-lh-edit:hover { color: #fff; background: var(--red); border-color: var(--red); box-shadow: 0 2px 8px rgba(232,0,58,0.3); }
 
     /* ── SMART LIST NAV ITEMS ─────────────────────────── */
     .sl-nav-item { gap: 6px; }
@@ -2172,6 +2179,8 @@
                   <th onclick="sortPeople('name')" style="min-width:180px">Name <span class="sort-arrow">↕</span></th>
                   <th onclick="sortPeople('phone')" style="min-width:140px">Phone <span class="sort-arrow">↕</span></th>
                   <th onclick="sortPeople('stage')" style="min-width:110px">Stage <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('past_due_balance')" style="min-width:110px;display:none" id="th-past-due">Past Due <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('past_due_days')" style="min-width:100px;display:none" id="th-past-due-days">Days Late <span class="sort-arrow">↕</span></th>
                   <th style="min-width:140px">Tags</th>
                   <th onclick="sortPeople('last_activity')" style="min-width:120px">Last Activity <span class="sort-arrow">↕</span></th>
                   <th style="min-width:120px">Assigned</th>
@@ -2828,6 +2837,10 @@ async function loadPeople(listId = 'all') {
     peopleData = Array.isArray(data) ? data : (data.people || []);
     const total = data.total ?? peopleData.length;
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
+    const _isDelinqList = listName.toLowerCase().includes('delinquent');
+    ['th-past-due','th-past-due-days'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display=_isDelinqList?'':'none'; });
+    if (_isDelinqList && sortField !== 'past_due_days') { sortField='past_due_balance'; sortDir='desc'; }
+    else if (!_isDelinqList && sortField==='past_due_balance') { sortField='name'; sortDir='asc'; }
     document.getElementById('header-title').textContent = listName;
     document.getElementById('people-count').innerHTML = `<strong>${total.toLocaleString()}</strong> people`;
     const badge = document.getElementById('badge-' + listId);
@@ -2856,10 +2869,19 @@ function renderPeopleTable() {
     tbody.innerHTML = '<tr><td colspan="8"><div class="people-empty"><div class="empty-icon">👥</div><p>No contacts found</p></div></td></tr>';
     return;
   }
+  const _debtFields = ['past_due_balance','past_due_days'];
   const sorted = [...peopleData].sort((a, b) => {
-    let va = a[sortField] || '', vb = b[sortField] || '';
-    if (sortField === 'name') { va = ((a.first_name||'')+(a.last_name||'')).toLowerCase(); vb = ((b.first_name||'')+(b.last_name||'')).toLowerCase(); }
-    return sortDir === 'asc' ? va > vb ? 1 : -1 : va < vb ? 1 : -1;
+    let va, vb;
+    if (sortField === 'name') {
+      va = ((a.first_name||'')+(a.last_name||'')).toLowerCase();
+      vb = ((b.first_name||'')+(b.last_name||'')).toLowerCase();
+    } else if (_debtFields.includes(sortField)) {
+      const getCF = (p,k) => { const cf=p.custom_fields||{}; const v=p[k]!=null?p[k]:cf[k]; return (v!=null&&v!=='')?parseFloat(v):-1; };
+      va = getCF(a,sortField); vb = getCF(b,sortField);
+    } else {
+      va = a[sortField]||''; vb = b[sortField]||'';
+    }
+    return sortDir==='asc'?(va>vb?1:-1):(va<vb?1:-1);
   });
   tbody.innerHTML = sorted.map(p => {
     const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown';
@@ -2875,6 +2897,8 @@ function renderPeopleTable() {
       </div></td>
       <td><span class="phone-mono">${formatPhone(p.phone)}</span></td>
       <td><span class="stage-badge ${stageClass(stage)}">${esc(stage)}</span></td>
+      <td class="debt-cell" style="display:none">${(() => { const cf=p.custom_fields||{}; const bal=p.past_due_balance!=null?p.past_due_balance:cf.past_due_balance; if(bal==null||bal==='') return '<span style="color:var(--text-3)">—</span>'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:var(--red)">$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`; })()}</td>
+      <td class="debt-cell" style="display:none">${(() => { const cf=p.custom_fields||{}; const days=p.past_due_days!=null?p.past_due_days:cf.past_due_days; if(days==null||days==='') return '<span style="color:var(--text-3)">—</span>'; const d=parseInt(days); const color=d>=30?'#E8003A':d>=15?'#FF8C00':'var(--text-2)'; const bg=d>=30?'rgba(232,0,58,0.1)':d>=15?'rgba(255,140,0,0.1)':'transparent'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:${color};background:${bg};padding:2px 7px;border-radius:4px">${d}d</span>`; })()}</td>
       <td>${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join(' ')}</td>
       <td><span class="last-activity">${lastAct}</span></td>
       <td><span class="text-muted" style="font-size:12px">${esc(p.assigned_agent||'—')}</span></td>
