@@ -1737,8 +1737,10 @@ async function initDB() {
     upload_batch TEXT,
     feedback_sent BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
+    connect_person_id TEXT,
     UNIQUE(property, guest_name, showing_time)
   )`, 'create showings');
+  await run(`ALTER TABLE showings ADD COLUMN IF NOT EXISTS connect_person_id TEXT`, 'showings.connect_person_id');
   // Add feedback_sent column if upgrading existing table
   await run(`ALTER TABLE showings ADD COLUMN IF NOT EXISTS feedback_sent BOOLEAN DEFAULT FALSE`, 'alter showings feedback_sent');
   await run(`CREATE TABLE IF NOT EXISTS showing_feedback (
@@ -1992,6 +1994,17 @@ app.get('/api/events/stream', auth, (req, res) => {
 });
 
 // ─── MY PROFILE ───────────────────────────────────────────────────────────────
+// Fast availability update — called every time agent changes status
+app.post('/api/me/availability', auth, async (req, res) => {
+  try {
+    const { availability } = req.body;
+    if (!['online','busy','offline'].includes(availability)) return res.status(400).json({ error: 'Invalid' });
+    await pool.query(`UPDATE agents SET availability=$1, updated_at=NOW() WHERE id=$2`, [availability, req.agent.id]);
+    broadcastToAll({ type: 'agent_status', agentId: String(req.agent.id), name: req.agent.name, availability });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/me', auth, async (req, res) => {
   try {
     const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,avatar_b64,gmail_email,is_active FROM agents WHERE id=$1', [req.agent.id]);
@@ -2001,10 +2014,10 @@ app.get('/api/me', auth, async (req, res) => {
 
 app.put('/api/me', auth, async (req, res) => {
   try {
-    const { name, phone, avatar_color, avatar_b64 } = req.body;
+    const { name, phone, avatar_color, avatar_b64, availability } = req.body;
     const r = await pool.query(
-      `UPDATE agents SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_color = COALESCE($3, avatar_color), avatar_b64 = COALESCE($4, avatar_b64), updated_at = NOW() WHERE id=$5 RETURNING id,name,email,role,phone,avatar_color,avatar_b64,gmail_email`,
-      [name||null, phone||null, avatar_color||null, avatar_b64||null, req.agent.id]
+      `UPDATE agents SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_color = COALESCE($3, avatar_color), avatar_b64 = COALESCE($4, avatar_b64), availability = COALESCE($5, availability), updated_at = NOW() WHERE id=$6 RETURNING id,name,email,role,phone,avatar_color,avatar_b64,gmail_email`,
+      [name||null, phone||null, avatar_color||null, avatar_b64||null, availability||null, req.agent.id]
     );
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -2359,6 +2372,25 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
 
 // Upload showings — accepts pre-parsed JSON rows from browser-side SheetJS
 // (no server-side xlsx dependency needed)
+// Helper: parse AppFolio "Last, First" or "First Last" name format
+function parseShowingName(raw) {
+  if (!raw) return { first_name: 'Unknown', last_name: '' };
+  const s = raw.trim();
+  if (s.includes(',')) {
+    const [last, ...rest] = s.split(',');
+    return { last_name: last.trim(), first_name: rest.join(',').trim() };
+  }
+  const parts = s.split(' ').filter(Boolean);
+  return { first_name: parts[0] || 'Unknown', last_name: parts.slice(1).join(' ') };
+}
+
+// Helper: normalize phone to 10 digits
+function normPhone(p) {
+  if (!p) return null;
+  const d = String(p).replace(/\D/g,'');
+  return d.length === 11 && d.startsWith('1') ? d.slice(1) : d.length === 10 ? d : null;
+}
+
 app.post('/api/showings/upload', auth, async (req, res) => {
   try {
     const { rows, filename } = req.body;
@@ -2367,23 +2399,68 @@ app.post('/api/showings/upload', auth, async (req, res) => {
     }
 
     const batchId = crypto.randomUUID();
-    let inserted = 0, skipped = 0;
+    let inserted = 0, skipped = 0, leadsCreated = 0, leadsMatched = 0;
 
     for (const row of rows) {
       if (!row.guest_name || !row.showing_time) continue;
       try {
+        const phone10 = normPhone(row.phone);
+        const emailLow = row.email ? row.email.toLowerCase().trim() : null;
+
+        // ── 1. Find or create the Connect lead ──
+        let personId = null;
+
+        // Try match by phone first, then email
+        if (phone10) {
+          const r = await pool.query(
+            `SELECT id FROM people WHERE regexp_replace(phone,'\\D','','g') = $1 LIMIT 1`,
+            [phone10]
+          );
+          if (r.rows[0]) { personId = r.rows[0].id; leadsMatched++; }
+        }
+        if (!personId && emailLow) {
+          const r = await pool.query(
+            `SELECT id FROM people WHERE LOWER(email) = $1 LIMIT 1`,
+            [emailLow]
+          );
+          if (r.rows[0]) { personId = r.rows[0].id; leadsMatched++; }
+        }
+
+        // Create lead if not found
+        if (!personId) {
+          const { first_name, last_name } = parseShowingName(row.guest_name);
+          const propShort = (row.property||'').split(' - ')[0].substring(0, 60);
+          const showingDate = new Date(row.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+          const notes = `Auto-created from AppFolio showing import.\nProperty: ${propShort}${row.unit ? ' · Unit '+row.unit : ''}\nShowing: ${showingDate}${row.showing_type ? ' ('+row.showing_type+')' : ''}`;
+          const ins = await pool.query(
+            `INSERT INTO people (first_name, last_name, phone, email, stage, source, background, updated_at)
+             VALUES ($1,$2,$3,$4,'Lead','AppFolio Showing',$5,NOW()) RETURNING id`,
+            [first_name, last_name,
+             phone10 ? phone10 : null,
+             emailLow || null,
+             notes]
+          );
+          personId = ins.rows[0].id;
+          leadsCreated++;
+          broadcastToAll({ type: 'new_lead', personId, name: `${first_name} ${last_name}`.trim(), source: 'AppFolio Showing' });
+        }
+
+        // ── 2. Upsert the showing, linking to person ──
         await pool.query(
-          `INSERT INTO showings (property,unit,guest_name,email,phone,showing_time,status,showing_type,assigned_user,description,last_activity_date,last_activity_type,upload_batch)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          `INSERT INTO showings (property,unit,guest_name,email,phone,showing_time,status,showing_type,
+                                assigned_user,description,last_activity_date,last_activity_type,
+                                upload_batch,connect_person_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (property,guest_name,showing_time) DO UPDATE SET
              status=EXCLUDED.status, last_activity_type=EXCLUDED.last_activity_type,
-             last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch`,
+             last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch,
+             connect_person_id=EXCLUDED.connect_person_id`,
           [ row.property||null, row.unit||null, row.guest_name.trim(),
             row.email||null, row.phone||null, new Date(row.showing_time),
             row.status||null, row.showing_type||null, row.assigned_user||null,
             row.description||null,
             row.last_activity_date ? new Date(row.last_activity_date) : null,
-            row.last_activity_type||null, batchId ]
+            row.last_activity_type||null, batchId, String(personId) ]
         );
         inserted++;
       } catch(e) {
@@ -2398,7 +2475,7 @@ app.post('/api/showings/upload', auth, async (req, res) => {
     const uploader = req.agent?.name || req.agent?.id || null;
     await pool.query(`INSERT INTO showing_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
       [filename || 'showings.xlsx', uploader, inserted]);
-    res.json({ ok: true, inserted, skipped, batchId });
+    res.json({ ok: true, inserted, skipped, leadsCreated, leadsMatched, batchId });
   } catch(e) { console.error('[Showings Upload]', e.message); res.status(500).json({ error: e.message }); }
 });
 
@@ -2687,14 +2764,30 @@ app.post('/api/showings/:id/public-feedback', async (req, res) => {
 });
 
 // In-progress showings endpoint (for bottom banner)
+// Returns showing + any inbound call/sms activity from that person in last 20 min
 app.get('/api/showings/in-progress', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT id, property, unit, guest_name, phone, showing_time, showing_type
-      FROM showings
-      WHERE status = 'Scheduled'
-        AND showing_time BETWEEN NOW() - INTERVAL '15 minutes' AND NOW()
-      ORDER BY showing_time ASC
+      SELECT
+        s.id, s.property, s.unit, s.guest_name, s.phone, s.showing_time,
+        s.showing_type, s.connect_person_id,
+        -- Most recent inbound activity from this person during the showing window
+        act.type        AS alert_type,
+        act.body        AS alert_body,
+        act.created_at  AS alert_at
+      FROM showings s
+      LEFT JOIN LATERAL (
+        SELECT a.type, a.body, a.created_at
+        FROM activities a
+        WHERE a.person_id::text = s.connect_person_id
+          AND a.direction = 'inbound'
+          AND a.created_at > NOW() - INTERVAL '20 minutes'
+        ORDER BY a.created_at DESC
+        LIMIT 1
+      ) act ON TRUE
+      WHERE s.status = 'Scheduled'
+        AND s.showing_time BETWEEN NOW() - INTERVAL '15 minutes' AND NOW()
+      ORDER BY act.created_at DESC NULLS LAST, s.showing_time ASC
     `);
     res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
