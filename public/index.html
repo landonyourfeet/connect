@@ -2040,6 +2040,8 @@
     }
     loadGoogleMaps();
   </script>
+  <!-- SheetJS — client-side Excel parsing, no server dependency -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="app-glow-border"></div>
@@ -6373,33 +6375,95 @@ function renderShowingsView() {
 async function shUpload(input) {
   const file = input.files[0]; if (!file) return;
   const lbl = document.getElementById('sh-upload-lbl');
-  if (lbl) { lbl.dataset.orig = lbl.innerText.trim(); lbl.style.pointerEvents='none'; lbl.style.opacity='0.7'; }
-  const origText = lbl ? lbl.dataset.orig : '';
-  // Replace just the text node (first child), not the input
-  if (lbl) {
-    const textNode = [...lbl.childNodes].find(n => n.nodeType === 3);
-    if (textNode) textNode.nodeValue = '⏳ UPLOADING...';
-  }
+  const setLabel = txt => {
+    if (!lbl) return;
+    const tn = [...lbl.childNodes].find(n => n.nodeType === 3);
+    if (tn) tn.nodeValue = '\n          ' + txt + '\n          ';
+  };
+  setLabel('⏳ PARSING...');
+  if (lbl) { lbl.style.pointerEvents='none'; lbl.style.opacity='0.7'; }
+
   try {
-    const fd = new FormData(); fd.append('file', file);
-    const r = await fetch('/api/showings/upload', { method:'POST', headers:{ Authorization:'Bearer '+authToken }, body:fd });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Upload failed');
-    toast(`✅ Imported ${d.inserted} showings${d.skipped?' ('+d.skipped+' skipped)':''}`, 'success');
+    // Parse Excel entirely in the browser — no server xlsx dependency
+    if (typeof XLSX === 'undefined') throw new Error('SheetJS not loaded — refresh the page');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+    // Find header row
+    let hi = -1;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] && raw[i][0] === 'Guest Card Name') { hi = i; break; }
+    }
+    if (hi === -1) throw new Error('Invalid file — "Guest Card Name" header not found. Is this the AppFolio showings export?');
+
+    const h = raw[hi];
+    const ci = k => h.indexOf(k);
+    const cols = {
+      name: ci('Guest Card Name'), email: ci('Email'), phone: ci('Phone Number'),
+      property: ci('Property'), unit: ci('Showing Unit'), time: ci('Showing Time'),
+      status: ci('Status'), type: ci('Type'), assigned: ci('Assigned User'),
+      desc: ci('Description'), lastActDate: ci('Last Activity Date'), lastActType: ci('Last Activity Type'),
+    };
+
+    const toDate = v => {
+      if (!v) return null;
+      if (v instanceof Date) return isNaN(v) ? null : v.toISOString();
+      if (typeof v === 'number') {
+        // Excel serial number
+        const d = new Date(Math.round((v - 25569) * 86400000));
+        return isNaN(d) ? null : d.toISOString();
+      }
+      const d = new Date(v);
+      return isNaN(d) ? null : d.toISOString();
+    };
+
+    const rows = [];
+    for (let i = hi + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || !r[cols.name]) continue;
+      const showingTime = toDate(r[cols.time]);
+      if (!showingTime) continue;
+      // Skip property-group header rows
+      if (r[cols.email] === null && r[cols.phone] === null && r[cols.property] === null) continue;
+      rows.push({
+        guest_name:         String(r[cols.name]).trim(),
+        email:              r[cols.email]  || null,
+        phone:              r[cols.phone]  || null,
+        property:           r[cols.property] || null,
+        unit:               r[cols.unit]   || null,
+        showing_time:       showingTime,
+        status:             r[cols.status] || null,
+        showing_type:       r[cols.type]   || null,
+        assigned_user:      r[cols.assigned] || null,
+        description:        r[cols.desc]   || null,
+        last_activity_date: toDate(r[cols.lastActDate]),
+        last_activity_type: r[cols.lastActType] || null,
+      });
+    }
+
+    if (!rows.length) throw new Error('No valid showings found in file');
+    setLabel('⏳ SAVING ' + rows.length + ' ROWS...');
+
+    const resp = await fetch('/api/showings/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+      body: JSON.stringify({ rows, filename: file.name })
+    });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.error || 'Server error');
+
+    toast(`✅ Imported ${d.inserted} showings${d.skipped ? ' (' + d.skipped + ' skipped)' : ''}`, 'success');
     shLoadProps();
     shCheckLastUpload();
   } catch(e) {
     console.error('[shUpload]', e);
-    toast('Upload error: '+e.message, 'error');
+    toast('Upload error: ' + e.message, 'error');
   } finally {
-    if (lbl) {
-      const textNode = [...lbl.childNodes].find(n => n.nodeType === 3);
-      if (textNode) textNode.nodeValue = '\n          📁 UPLOAD DAILY REPORT\n          ';
-      lbl.style.pointerEvents='';
-      lbl.style.opacity='';
-      lbl.classList.remove('sh-btn-flash');
-    }
-    input.value='';
+    setLabel('📁 UPLOAD DAILY REPORT');
+    if (lbl) { lbl.style.pointerEvents=''; lbl.style.opacity=''; lbl.classList.remove('sh-btn-flash'); }
+    input.value = '';
   }
 }
 
