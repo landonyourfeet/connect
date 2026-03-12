@@ -230,7 +230,9 @@ app.get('/api/people', auth, async (req, res) => {
       });
       r.rows.forEach(p => { p.all_phones = phoneMap[p.id] || (p.phone ? [p.phone] : []); });
     }
-    res.json({ people: r.rows, total: parseInt(countR.rows[0].count) });
+    // Spread custom_fields into each person row so frontend gets flat access (past_due_balance etc.)
+    const people = r.rows.map(p => ({ ...p, ...(p.custom_fields || {}) }));
+    res.json({ people, total: parseInt(countR.rows[0].count) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2185,6 +2187,20 @@ app.post('/api/grokfub/people/:id/debt', requireGrokfubToken, async (req, res) =
     console.log(`[GROKFUB API] debt update person ${id}: balance=${cfPatch.past_due_balance ?? 'n/a'} days=${cfPatch.past_due_days ?? 'n/a'}`);
     res.json({ ok: true, ...cfPatch });
   } catch (e) { console.error('[GROKFUB API] debt update error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Debug: check what debt data is stored for a person
+app.get('/api/grokfub/people/:id/debt-check', requireGrokfubToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, first_name, last_name, stage, custom_fields,
+              custom_fields->>'past_due_balance' AS past_due_balance,
+              custom_fields->>'past_due_days'    AS past_due_days
+       FROM people WHERE id = $1`, [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/grokfub/people/:id/acknowledge-trigger', requireGrokfubToken, async (req, res) => {
