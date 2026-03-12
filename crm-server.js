@@ -2590,28 +2590,95 @@ function requireGrokfubToken(req, res, next) {
 }
 
 // ── JAREIH COMMAND LINE ──────────────────────────────────────────────────────
+
+// Pattern-based fallback parser (works without AI key)
+async function jareihPatternParse(command, peopleRows, properties) {
+  const cmd = command.toLowerCase().trim();
+  const people = peopleRows;
+
+  // Helper: find best person match in command
+  const findPerson = () => {
+    for (const p of people) {
+      const full = `${p.first_name} ${p.last_name||''}`.toLowerCase().trim();
+      const first = p.first_name.toLowerCase();
+      if (cmd.includes(full) || (full.length > 3 && cmd.includes(first))) return p;
+    }
+    return null;
+  };
+
+  // Navigate patterns
+  const navWords = { dashboard:'dashboard', 'mission control':'dashboard', inbox:'inbox', showings:'showings', admin:'admin', security:'security', people:'people', contacts:'people' };
+  for (const [word, view] of Object.entries(navWords)) {
+    if (cmd.includes(`go to ${word}`) || cmd.includes(`open ${word}`) || cmd.includes(`show ${word}`) || cmd === word) {
+      return { action:'navigate', summary:`Navigate to ${view}`, confirmPrompt:`Go to ${view}?`, params:{ view } };
+    }
+  }
+
+  // SMS patterns
+  if (cmd.includes('text') || cmd.includes('sms') || cmd.includes('message')) {
+    const person = findPerson();
+    // Extract message after "saying" / "that" / quotes
+    const msgMatch = command.match(/(?:saying|that|:)\s+"?(.+)"?$/i);
+    const message = msgMatch?.[1] || '';
+    if (person && message) {
+      return { action:'send_sms', summary:`Send SMS to ${person.first_name} ${person.last_name||''}`,
+        confirmPrompt:`Send this text to ${person.first_name} ${person.last_name||''} (${person.phone||'no phone'})?\n\n"${message}"`,
+        params:{ personId:person.id, personName:`${person.first_name} ${person.last_name||''}`, phone:person.phone, message } };
+    }
+    if (person) return { action:'unknown', summary:'', params:{ clarification:`What message should I send to ${person.first_name}?` } };
+  }
+
+  // Open contact
+  if (cmd.includes('open') || cmd.includes('pull up') || cmd.includes('find') || cmd.includes('show me')) {
+    const person = findPerson();
+    if (person) return { action:'open_contact', summary:`Open ${person.first_name} ${person.last_name||''}`,
+      confirmPrompt:`Open contact file for ${person.first_name} ${person.last_name||''}?`,
+      params:{ personId:person.id, personName:`${person.first_name} ${person.last_name||''}` } };
+  }
+
+  // Note
+  if (cmd.includes('note') || cmd.includes('log')) {
+    const person = findPerson();
+    const noteMatch = command.match(/(?:note|log)(?:\s+that|:)?\s+(.+)/i);
+    if (person && noteMatch) {
+      return { action:'add_note', summary:`Add note to ${person.first_name}`, confirmPrompt:`Add this note to ${person.first_name} ${person.last_name||''}?\n\n"${noteMatch[1]}"`,
+        params:{ personId:person.id, personName:`${person.first_name} ${person.last_name||''}`, note:noteMatch[1] } };
+    }
+  }
+
+  return null; // pattern didn't match — fall through to AI
+}
+
 app.post('/api/jareih/parse', auth, async (req, res) => {
-  const grok = initGrok();
-  if (!grok) return res.status(503).json({ error: 'AI not configured' });
   const { command, context } = req.body;
   if (!command) return res.status(400).json({ error: 'No command' });
 
-  // Build context string from recent people/showings if provided
-  const contextStr = context ? `\nCurrent context: ${JSON.stringify(context)}` : '';
-
-  // Fetch people names for matching
   const peopleR = await pool.query(
     `SELECT id, first_name, last_name, phone, stage FROM people ORDER BY updated_at DESC LIMIT 200`
   ).catch(() => ({ rows: [] }));
-  const peopleList = peopleR.rows.map(p =>
-    `${p.id}|${p.first_name} ${p.last_name||''}|${p.phone||''}|${p.stage}`
-  ).join('\n');
-
   const propertiesR = await pool.query(
     `SELECT DISTINCT property FROM showings ORDER BY property`
   ).catch(() => ({ rows: [] }));
-  const properties = propertiesR.rows.map(r => r.property).join(', ');
+  const properties = propertiesR.rows.map(r => r.property);
 
+  // Try pattern parser first (no AI needed)
+  const patternResult = await jareihPatternParse(command, peopleR.rows, properties);
+
+  const grok = initGrok();
+  if (!grok) {
+    // No AI — use pattern result or tell user to configure key
+    if (patternResult) return res.json(patternResult);
+    return res.json({
+      action: 'unknown',
+      summary: '',
+      confirmPrompt: '',
+      params: { clarification: 'AI is not configured (GROK_API_KEY missing or invalid in Railway). I can still handle basic commands like "text [name] saying [message]", "open [name]", "go to [page]", "add note to [name]".' }
+    });
+  }
+
+  // Use AI for complex commands
+  const peopleList = peopleR.rows.map(p => `${p.id}|${p.first_name} ${p.last_name||''}|${p.phone||''}|${p.stage}`).join('\n');
+  const contextStr = context ? `\nCurrent context: ${JSON.stringify(context)}` : '';
   const today = new Date().toISOString();
 
   try {
@@ -2624,7 +2691,7 @@ app.post('/api/jareih/parse', auth, async (req, res) => {
 Parse the agent's natural language command into a structured action plan.
 Today is ${today}.
 Available people (id|name|phone|stage):\n${peopleList}
-Available properties: ${properties}
+Available properties: ${properties.join(', ')}
 ${contextStr}
 
 Respond ONLY with valid JSON (no markdown). Schema:
@@ -2632,7 +2699,7 @@ Respond ONLY with valid JSON (no markdown). Schema:
   "action": one of: "send_sms" | "schedule_showing" | "add_note" | "create_contact" | "open_contact" | "navigate" | "add_task" | "unknown",
   "summary": "One sentence human-readable description of what will happen",
   "confirmPrompt": "Exact question to ask agent before executing, including all key details",
-  "params": { /* action-specific params */ }
+  "params": {}
 }
 
 Action params:
@@ -2645,8 +2712,7 @@ Action params:
 - add_task: { personId, personName, title, dueDate }
 - unknown: { clarification: "what you need to know" }
 
-Match person names fuzzily. For dates/times, resolve relative references like "tomorrow 2pm" to ISO strings.
-If multiple people match, pick the best match or set action=unknown and ask for clarification.`
+Match person names fuzzily. For dates/times, resolve relative references like "tomorrow 2pm" to ISO strings.`
       }, {
         role: 'user',
         content: command
@@ -2658,6 +2724,16 @@ If multiple people match, pick the best match or set action=unknown and ask for 
     const parsed = JSON.parse(clean);
     res.json(parsed);
   } catch(e) {
+    // AI failed — fall back to pattern result or friendly error
+    if (patternResult) return res.json(patternResult);
+    const isKeyErr = e.message?.includes('API key') || e.status === 401 || e.status === 400;
+    if (isKeyErr) {
+      return res.json({
+        action: 'unknown',
+        summary: '',
+        params: { clarification: 'The Grok API key in Railway is invalid or expired. Go to Railway → Variables → update GROK_API_KEY with a fresh key from console.x.ai. Basic commands (text, open contact, navigate) still work without AI.' }
+      });
+    }
     res.status(500).json({ error: e.message });
   }
 });
