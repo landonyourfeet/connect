@@ -1749,9 +1749,11 @@ async function initDB() {
     verdict TEXT NOT NULL CHECK (verdict IN ('go','no-go','maybe')),
     categories JSONB DEFAULT '[]',
     notes TEXT,
+    source TEXT DEFAULT 'agent',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(showing_id, agent_id)
   )`, 'create showing_feedback');
+  await run(`ALTER TABLE showing_feedback ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'agent'`, 'alter showing_feedback source');
   await run(`CREATE TABLE IF NOT EXISTS showing_uploads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     filename TEXT,
@@ -2452,11 +2454,11 @@ app.post('/api/showings/:id/feedback', auth, async (req, res) => {
     const agentName = req.agent?.name || 'Agent';
     const agentId   = req.agent?.id   || null;
     await pool.query(
-      `INSERT INTO showing_feedback (showing_id,agent_id,agent_name,verdict,categories,notes)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO showing_feedback (showing_id,agent_id,agent_name,verdict,categories,notes,source)
+       VALUES ($1,$2,$3,$4,$5,$6,'agent')
        ON CONFLICT (showing_id,agent_id) DO UPDATE SET
          verdict=EXCLUDED.verdict, categories=EXCLUDED.categories,
-         notes=EXCLUDED.notes, created_at=NOW()`,
+         notes=EXCLUDED.notes, source='agent', created_at=NOW()`,
       [req.params.id, agentId, agentName, verdict, JSON.stringify(categories), notes]
     );
     broadcastToAll({ type: 'showing_feedback', showingId: req.params.id, verdict });
@@ -2562,7 +2564,7 @@ app.get('/api/showings/by-contact', auth, async (req, res) => {
     const sinceClause = since ? `AND s.showing_time >= $${params.length}` : '';
 
     const { rows } = await pool.query(`
-      SELECT s.*, f.verdict, f.categories, f.notes, f.agent_name
+      SELECT s.*, f.verdict, f.categories, f.notes, f.agent_name, f.source AS feedback_source, f.created_at AS feedback_at
       FROM showings s
       LEFT JOIN showing_feedback f ON f.showing_id = s.id
       WHERE (${conditions.slice(0, since ? conditions.length - 1 : conditions.length).join(' OR ')})
@@ -2672,10 +2674,11 @@ app.post('/api/showings/:id/public-feedback', async (req, res) => {
     const { verdict, categories = [], notes = '' } = req.body;
     if (!verdict) return res.status(400).json({ error: 'verdict required' });
     await pool.query(
-      `INSERT INTO showing_feedback (showing_id, agent_id, agent_name, verdict, categories, notes)
-       VALUES ($1, 'prospect', 'Prospect', $2, $3, $4)
+      `INSERT INTO showing_feedback (showing_id, agent_id, agent_name, verdict, categories, notes, source)
+       VALUES ($1, 'prospect', 'Prospect via SMS link', $2, $3, $4, 'prospect')
        ON CONFLICT (showing_id, agent_id) DO UPDATE SET
-         verdict=EXCLUDED.verdict, categories=EXCLUDED.categories, notes=EXCLUDED.notes, created_at=NOW()`,
+         verdict=EXCLUDED.verdict, categories=EXCLUDED.categories, notes=EXCLUDED.notes,
+         source='prospect', created_at=NOW()`,
       [req.params.id, verdict, JSON.stringify(categories), notes]
     );
     broadcastToAll({ type: 'showing_feedback', showingId: req.params.id, verdict, source: 'prospect' });
