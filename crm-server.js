@@ -2014,6 +2014,11 @@ app.get('/api/events/stream', auth, (req, res) => {
   agentConnections.set(agentId, res);
   console.log(`[SSE] Agent ${req.agent.name} connected (${agentConnections.size} total)`);
   res.write(':ok\n\n');
+
+  // Tell ALL agents (including this one) the online count changed — triggers dashboard refresh
+  const onlineIds = Array.from(agentConnections.keys());
+  broadcastToAll({ type: 'crew_online', onlineCount: onlineIds.length, onlineIds, agentId, name: req.agent.name, event: 'connect' });
+
   const ping = setInterval(() => {
     try { res.write(':ping\n\n'); }
     catch(e) { clearInterval(ping); agentConnections.delete(agentId); }
@@ -2029,6 +2034,9 @@ app.get('/api/events/stream', auth, (req, res) => {
       }
     }
     console.log(`[SSE] Agent ${req.agent.name} disconnected (${agentConnections.size} total)`);
+    // Notify remaining agents the count dropped
+    const stillOnline = Array.from(agentConnections.keys());
+    broadcastToAll({ type: 'crew_online', onlineCount: stillOnline.length, onlineIds: stillOnline, agentId, name: req.agent.name, event: 'disconnect' });
   });
 });
 
