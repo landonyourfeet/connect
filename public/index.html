@@ -7085,7 +7085,15 @@ function shBuildPanel(property, showings, trends) {
             ${cats?`<div style="font-size:9px;color:var(--text-3);font-family:var(--font-mono);margin-top:3px">${esc(cats)}</div>`:''}
             ${s.notes?`<div style="font-size:11px;color:var(--text-2);margin-top:3px;font-style:italic">"${esc(s.notes)}"</div>`:''}
           </div>
-          <div class="sh-verdict-chip ${v==='no-go'?'nogo':v}">${v==='no-go'?'NO-GO':v==='none'?'RATE':v.toUpperCase()}</div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+            <div class="sh-verdict-chip ${v==='no-go'?'nogo':v}">${v==='no-go'?'NO-GO':v==='none'?'RATE':v.toUpperCase()}</div>
+            <button onclick="event.stopPropagation();shCopyFeedbackLink('${s.id}',this)" title="Copy feedback link to send to prospect"
+              style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:2px 7px;font-family:var(--font-mono);font-size:7px;letter-spacing:0.08em;cursor:pointer;border-radius:3px;transition:all 0.15s;white-space:nowrap"
+              onmouseover="this.style.borderColor='#6366f1';this.style.color='#6366f1'"
+              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-3)'">
+              🔗 COPY LINK
+            </button>
+          </div>
         </div>`;
       }).join('')}
     </div>`;
@@ -7162,6 +7170,30 @@ function shOpenFeedback(showingId) {
   document.body.appendChild(m);
   // Auto-load AI rec for this property
   if (s.property) shLoadAIRec(s.property);
+}
+
+function shCopyFeedbackLink(showingId, btn) {
+  const url = (window.location.origin) + '/feedback/' + showingId;
+  navigator.clipboard.writeText(url).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ COPIED';
+    btn.style.borderColor = 'var(--green)';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => {
+      btn.innerHTML = orig;
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--text-3)';
+    }, 2000);
+  }).catch(() => {
+    // Fallback for non-https
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    toast('Feedback link copied ✓', 'success');
+  });
 }
 
 async function shLoadAIRec(property) {
@@ -7543,6 +7575,11 @@ async function renderDashboard() {
               <span id="galaxy-vac-pct" style="font-family:var(--font-mono);font-size:9px;font-weight:700;width:36px;text-align:right;transition:color 0.6s">—</span>
               <span id="galaxy-vac-label" style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.12em;width:52px;transition:color 0.6s">—</span>
             </div>
+            <!-- PROBLEM PROPERTY ALERT -->
+            <div id="galaxy-problem-prop" style="display:none;align-items:center;gap:8px;padding:5px 8px;background:rgba(232,0,58,0.08);border:1px solid rgba(232,0,58,0.3);border-radius:4px;margin-top:2px">
+              <span id="galaxy-problem-led" style="width:7px;height:7px;border-radius:50%;background:#e8003a;flex-shrink:0"></span>
+              <span id="galaxy-problem-text" style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;color:#e8003a;flex:1"></span>
+            </div>
           </div>
           <canvas id="mc-galaxy-canvas" style="width:100%;display:block;cursor:crosshair"></canvas>
           <div id="mc-galaxy-tooltip" style="position:absolute;pointer-events:none;display:none;z-index:10;
@@ -7683,14 +7720,19 @@ function renderMcPanels(d, galaxy) {
   const totalVacant  = (galaxy||[]).reduce((s,p) => s+p.vacant, 0);
   const vacancyPct   = totalUnits ? Math.round((totalVacant/totalUnits)*100) : 0;
 
-  const lights = [
+    // Online count: prefer _liveOnlineIds (most accurate), then _liveOnlineCount, then API onlineCount
+    // Always at least 1 since the current user is viewing this dashboard
+    const liveOnlineCount = d._liveOnlineIds?.length ?? d._liveOnlineCount ?? d.onlineCount;
+    const onlineCount = Math.max(liveOnlineCount, currentUser ? 1 : 0);
+
+    const lights = [
     { label:'DATABASE', sublabel:'POSTGRES',
       color:'green', note:'NOMINAL' },
     { label:'TWILIO', sublabel:'SMS · CALLS',
       color:'green', note:'NOMINAL' },
-    { label:`${(d._liveOnlineCount??d.onlineCount)} AGENT${(d._liveOnlineCount??d.onlineCount)!==1?'S':''}`, sublabel:'ONLINE NOW',
-      color: (d._liveOnlineCount??d.onlineCount)===0?'red': (d._liveOnlineCount??d.onlineCount)<2?'amber':'green',
-      flash: (d._liveOnlineCount??d.onlineCount)===0, note: (d._liveOnlineCount??d.onlineCount)===0?'NO CREW':'STAFFED' },
+    { label:`${onlineCount} AGENT${onlineCount!==1?'S':''}`, sublabel:'ONLINE NOW',
+      color: onlineCount===0?'red': onlineCount<2?'amber':'green',
+      flash: onlineCount===0, note: onlineCount===0?'NO CREW':'STAFFED' },
     { label:'SHOWINGS', sublabel:'DAILY REPORT',
       color: shStatus.color, flash: shStatus.flash, note: shStatus.note },
     { label:'RENT ROLL', sublabel:'UNIT DATA',
@@ -7732,7 +7774,11 @@ function renderMcPanels(d, galaxy) {
       : `<div class="mc-agent-initials" style="background:${a.avatar_color||'#444'}" onclick="navigate('admin')" title="View profile">${esc(initials)}</div>`;
 
     // Map DB availability + online (SSE) to display state
-    const isSSEOnline = a.online; // has live browser tab open
+    // Use _liveOnlineIds if available (from crew_online events), fall back to a.online from API
+    const liveIds = d._liveOnlineIds || [];
+    const isSSEOnline = liveIds.length > 0
+      ? liveIds.includes(String(a.id))
+      : (a.online || (currentUser && String(a.id) === String(currentUser.id))); // current user is always online
     const avail = a.availability || 'online';
     // Status pill: reflects what the agent has SET, not just whether they have a tab open
     const statusClass = avail === 'busy' ? 'busy' : avail === 'offline' ? 'offline' : 'available';
@@ -7900,6 +7946,37 @@ function renderVacancyBar(galaxy) {
   pctEl.style.color = col.hex;
   lblEl.textContent = label;
   lblEl.style.color = col.hex;
+
+  // ── PROBLEM PROPERTY DETECTION ──────────────────────────────
+  // If one property contributes disproportionately to vacancy, flag it
+  const alertEl = document.getElementById('galaxy-problem-prop');
+  const alertLed = document.getElementById('galaxy-problem-led');
+  const alertTxt = document.getElementById('galaxy-problem-text');
+  if (alertEl && alertTxt && totalVacant > 0) {
+    // Find property with most vacant units
+    let worst = null;
+    for (const p of props) {
+      const v = parseInt(p.vacant) || 0;
+      if (!worst || v > worst.vacant) worst = { name: p.property, vacant: v, total: parseInt(p.total)||0 };
+    }
+    // Flag if: single property contributes >35% of all vacant units AND has 3+ vacant units
+    const worstShare = worst ? worst.vacant / totalVacant : 0;
+    if (worst && worstShare >= 0.35 && worst.vacant >= 3) {
+      const propShort = worst.name.replace(' - OKC Real', '').replace(' - OKC REAL', '').split(' - ')[0];
+      const contribution = Math.round(worstShare * 100);
+      alertTxt.textContent = `⚠ PROBLEM PROPERTY DETECTED — ${propShort}: ${worst.vacant} VACANT UNITS (${contribution}% OF TOTAL VACANCY)`;
+      alertEl.style.display = 'flex';
+      // Flash the LED
+      if (!alertEl._flashTimer) {
+        alertEl._flashTimer = setInterval(() => {
+          if (alertLed) alertLed.style.opacity = alertLed.style.opacity === '0' ? '1' : '0';
+        }, 600);
+      }
+    } else {
+      alertEl.style.display = 'none';
+      if (alertEl._flashTimer) { clearInterval(alertEl._flashTimer); alertEl._flashTimer = null; }
+    }
+  }
 }
 
 function initGalaxyCanvas(galaxy) {
@@ -8736,8 +8813,11 @@ function connectAgentSse() {
     console.log('[AgentSSE] connected');
     // Refresh notifications in case any arrived while disconnected
     loadNotifications();
-    // crew_online SSE event will arrive from the server immediately after open
-    // and will trigger a re-render with the correct online count — no polling needed
+    // Wait briefly for server to register this connection, then re-fetch
+    // dashboard stats so the ONLINE NOW light and crew LEDs show correctly
+    setTimeout(() => {
+      if (currentView === 'dashboard') refreshDashboard();
+    }, 400);
   };
   _agentSse.onerror = () => {
     console.warn('[AgentSSE] reconnecting...');
@@ -9207,7 +9287,9 @@ function closeFeedbackReport() {
 }
 
 // ── AI recommendation per property — feedback + live nearby listing search ──
-async function loadPropertyAI(propName, propData, elId) {
+async function loadPropertyAI(idx, elId) {
+  const propData = (window._frPropData || {})[idx];
+  const propName = propData ? propData.property.split(' - ')[0] : '?';
   const el = document.getElementById(elId);
   if (!el) return;
   el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:10px 0">
@@ -9277,6 +9359,9 @@ function renderFeedbackReport(d) {
     </div>`;
   };
 
+  // Store per-property data for AI buttons (avoids JSON-in-onclick quoting issues)
+  window._frPropData = {};
+
   // Per-property expanded cards with AI slot
   const propCards = (d.byProperty||[]).map((p, idx) => {
     const propName = p.property.split(' - ')[0];
@@ -9284,50 +9369,43 @@ function renderFeedbackReport(d) {
     const noW  = p.total > 0 ? Math.round((p.nogo/p.total)*100) : 0;
     const mayW = p.total > 0 ? Math.round((p.maybe/p.total)*100) : 0;
     const borderCol = noW > 50 ? '#e8003a' : noW > 25 ? '#ff8c00' : '#1e1e1e';
-    const aiId = `ai-rec-${idx}`;
-
-    // Collect notes for this property from recent feedback
+    const aiId = 'ai-rec-' + idx;
     const propNotes = (d.recent||[]).filter(r => r.property === p.property && r.notes).map(r => r.notes);
-    // Attach to propData for AI
-    const propData = { ...p, recentNotes: propNotes };
-
+    window._frPropData[idx] = { ...p, recentNotes: propNotes };
     const issueChips = (p.topIssues||[]).slice(0,6).map(i =>
-      `<span style="background:#1a1a1a;border:1px solid #252525;padding:2px 8px;border-radius:3px;font-size:8px;color:#888;letter-spacing:0.06em">${esc(i.cat)} ×${i.count}</span>`
+      '<span style="background:#1a1a1a;border:1px solid #252525;padding:2px 8px;border-radius:3px;font-size:8px;color:#888;letter-spacing:0.06em">' + esc(i.cat) + ' ×' + i.count + '</span>'
     ).join('');
-
-    return `<div style="background:#0d0d0d;border:1px solid ${borderCol};border-radius:6px;margin-bottom:12px;overflow:hidden">
-      <div style="padding:14px 16px;display:flex;align-items:center;gap:14px">
-        <div style="flex:1">
-          <div style="font-size:11px;letter-spacing:0.08em;color:#ccc;font-weight:700;margin-bottom:4px">${esc(propName)}</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">${issueChips||'<span style="font-size:8px;color:#333">No issues tagged</span>'}</div>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center;flex-shrink:0">
-          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#00e87a">${p.go}</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">GO</div></div>
-          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#ff8c00">${p.maybe}</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">MAYBE</div></div>
-          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#e8003a">${p.nogo}</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">NO-GO</div></div>
-          <div style="width:80px">
-            <div style="display:flex;height:8px;border-radius:2px;overflow:hidden;gap:1px">
-              ${goW  ? `<div style="flex:${goW};background:#00e87a"></div>` : ''}
-              ${mayW ? `<div style="flex:${mayW};background:#ff8c00"></div>` : ''}
-              ${noW  ? `<div style="flex:${noW};background:#e8003a"></div>` : ''}
-            </div>
-            <div style="font-size:7px;color:#444;margin-top:3px;text-align:center">${p.total} TOURS</div>
-          </div>
-        </div>
-      </div>
-      <!-- AI RECOMMENDATION -->
-      <div style="padding:0 16px 14px">
-        <div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:4px">🤖 AI RECOMMENDATION</div>
-        <div id="${aiId}">
-          <button onclick="loadPropertyAI('${esc(propName).replace(/'/g,"\\'")}', ${JSON.stringify(propData).replace(/</g,'\\u003c')}, '${aiId}')" 
-            style="background:transparent;border:1px solid #252525;color:#555;padding:5px 12px;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;cursor:pointer;border-radius:3px;transition:all 0.15s"
-            onmouseover="this.style.borderColor='#6366f1';this.style.color='#6366f1'" 
-            onmouseout="this.style.borderColor='#252525';this.style.color='#555'">
-            ✦ GENERATE RECOMMENDATION
-          </button>
-        </div>
-      </div>
-    </div>`;
+    const goBar  = goW  ? '<div style="flex:' + goW  + ';background:#00e87a"></div>' : '';
+    const mayBar = mayW ? '<div style="flex:' + mayW + ';background:#ff8c00"></div>' : '';
+    const noBar  = noW  ? '<div style="flex:' + noW  + ';background:#e8003a"></div>' : '';
+    return '<div style="background:#0d0d0d;border:1px solid ' + borderCol + ';border-radius:6px;margin-bottom:12px;overflow:hidden">'
+      + '<div style="padding:14px 16px;display:flex;align-items:center;gap:14px">'
+        + '<div style="flex:1">'
+          + '<div style="font-size:11px;letter-spacing:0.08em;color:#ccc;font-weight:700;margin-bottom:4px">' + esc(propName) + '</div>'
+          + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + (issueChips || '<span style="font-size:8px;color:#333">No issues tagged</span>') + '</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:10px;align-items:center;flex-shrink:0">'
+          + '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#00e87a">' + p.go + '</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">GO</div></div>'
+          + '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#ff8c00">' + p.maybe + '</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">MAYBE</div></div>'
+          + '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#e8003a">' + p.nogo + '</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">NO-GO</div></div>'
+          + '<div style="width:80px">'
+            + '<div style="display:flex;height:8px;border-radius:2px;overflow:hidden;gap:1px">' + goBar + mayBar + noBar + '</div>'
+            + '<div style="font-size:7px;color:#444;margin-top:3px;text-align:center">' + p.total + ' TOURS</div>'
+          + '</div>'
+        + '</div>'
+      + '</div>'
+      + '<div style="padding:0 16px 14px">'
+        + '<div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:4px">\u{1F916} AI RECOMMENDATION</div>'
+        + '<div id="' + aiId + '">'
+          + '<button onclick="loadPropertyAI(' + idx + ', \'' + aiId + '\')" '
+          + 'style="background:transparent;border:1px solid #252525;color:#555;padding:5px 12px;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;cursor:pointer;border-radius:3px;transition:all 0.15s" '
+          + 'onmouseover="this.style.borderColor=\'#6366f1\';this.style.color=\'#6366f1\'" '
+          + 'onmouseout="this.style.borderColor=\'#252525\';this.style.color=\'#555\'">'
+          + '\u2736 GENERATE RECOMMENDATION'
+          + '</button>'
+        + '</div>'
+      + '</div>'
+    + '</div>';
   }).join('');
 
   // Full feedback log
