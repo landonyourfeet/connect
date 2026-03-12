@@ -244,7 +244,8 @@ app.get('/api/people/:id', auth, async (req, res) => {
       FROM people WHERE id=$1
     `, [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
-    res.json(r.rows[0]);
+    const row = r.rows[0];
+    res.json({ ...row, ...(row.custom_fields || {}) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1746,7 +1747,7 @@ async function initDB() {
 
   // Seed custom fields
   try {
-    await pool.query(`INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES ('past_due_balance','Past Due Balance','number',0), ('payment_commitment_date','Payment Commitment Date','date',1), ('unit_number','Unit Number','text',2), ('lease_end_date','Lease End Date','date',3) ON CONFLICT (key) DO NOTHING`);
+    await pool.query(`INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES ('past_due_balance','Past Due Balance','number',0), ('past_due_days','Days Past Due','number',1), ('payment_commitment_date','Payment Commitment Date','date',2), ('unit_number','Unit Number','text',3), ('lease_end_date','Lease End Date','date',4) ON CONFLICT (key) DO NOTHING`);
   } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
 
   // Seed call line
@@ -2165,6 +2166,27 @@ app.post('/api/grokfub/people/:id/stage', requireGrokfubToken, async (req, res) 
   } catch (e) { console.error('[GROKFUB API] POST /stage error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// Dedicated debt update — GrokFUB calls this whenever balance or days change
+app.post('/api/grokfub/people/:id/debt', requireGrokfubToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { balance, days_past_due, stage } = req.body;
+    if (balance == null && days_past_due == null) return res.status(400).json({ error: 'balance or days_past_due required' });
+    const cfPatch = {};
+    if (balance       != null) cfPatch.past_due_balance = parseFloat(balance);
+    if (days_past_due != null) cfPatch.past_due_days    = parseInt(days_past_due);
+    const updates = ['custom_fields = custom_fields || $1::jsonb', 'updated_at = NOW()'];
+    const params  = [JSON.stringify(cfPatch)];
+    if (stage) { params.push(stage); updates.push(`stage = $${params.length}`); }
+    params.push(id);
+    await pool.query(`UPDATE people SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+    // Broadcast live update to any open Connect tabs
+    broadcastToAll({ type: 'debt_update', personId: id, ...cfPatch, ...(stage ? { stage } : {}) });
+    console.log(`[GROKFUB API] debt update person ${id}: balance=${cfPatch.past_due_balance ?? 'n/a'} days=${cfPatch.past_due_days ?? 'n/a'}`);
+    res.json({ ok: true, ...cfPatch });
+  } catch (e) { console.error('[GROKFUB API] debt update error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/grokfub/people/:id/acknowledge-trigger', requireGrokfubToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2181,29 +2203,85 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
   try {
     const { tenants = [], clearOthers = false } = req.body;
     let synced = 0, cleared = 0, notFound = 0;
+
+    // Build map: last10digits -> { stage, balance, days_past_due }
     const phoneMap = new Map();
     for (const t of tenants) {
       if (!t.phone) continue;
       const digits = t.phone.replace(/\D/g, '').slice(-10);
-      if (digits) phoneMap.set(digits, t.stage || 'Delinquent');
+      if (digits) phoneMap.set(digits, {
+        stage:         t.stage || 'Delinquent',
+        balance:       t.balance        != null ? t.balance        : t.past_due_balance  != null ? t.past_due_balance  : null,
+        days_past_due: t.days_past_due  != null ? t.days_past_due  : t.days             != null ? t.days             : null,
+      });
     }
-    for (const [digits, stage] of phoneMap.entries()) {
-      const result = await pool.query(`UPDATE people SET stage = $1, updated_at = NOW() WHERE id IN (SELECT DISTINCT p.id FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', '', 'g'), 10) = $2 OR RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $2) RETURNING id`, [stage, digits]);
-      if (result.rowCount > 0) synced += result.rowCount; else notFound++;
+
+    for (const [digits, data] of phoneMap.entries()) {
+      // Find matching people
+      const found = await pool.query(
+        `SELECT DISTINCT p.id FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
+         WHERE RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', '', 'g'), 10) = $1
+            OR RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $1`,
+        [digits]
+      );
+      if (!found.rowCount) { notFound++; continue; }
+
+      // Build custom_fields patch — only set keys GrokFUB is providing
+      const cfPatch = {};
+      if (data.balance       != null) cfPatch.past_due_balance = parseFloat(data.balance);
+      if (data.days_past_due != null) cfPatch.past_due_days    = parseInt(data.days_past_due);
+      const cfJson = JSON.stringify(cfPatch);
+
+      for (const row of found.rows) {
+        await pool.query(
+          `UPDATE people SET stage = $1, custom_fields = custom_fields || $2::jsonb, updated_at = NOW() WHERE id = $3`,
+          [data.stage, cfJson, row.id]
+        );
+      }
+      synced += found.rowCount;
     }
+
     if (clearOthers && phoneMap.size > 0) {
-      const delinquents = await pool.query(`SELECT p.id, p.phone, array_agg(pp.phone) as alt_phones FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE p.stage = 'Delinquent' GROUP BY p.id`);
+      const delinquents = await pool.query(
+        `SELECT p.id, p.phone, array_agg(pp.phone) as alt_phones
+         FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
+         WHERE p.stage = 'Delinquent' GROUP BY p.id`
+      );
       for (const person of delinquents.rows) {
         const allPhones = [person.phone, ...(person.alt_phones || [])].filter(Boolean).map(ph => ph.replace(/\D/g, '').slice(-10));
         if (!allPhones.some(d => phoneMap.has(d))) {
-          await pool.query('UPDATE people SET stage = $1, updated_at = NOW() WHERE id = $2', ['Resident', person.id]);
+          await pool.query(
+            `UPDATE people SET stage = $1, custom_fields = custom_fields || '{"past_due_balance":null,"past_due_days":null}'::jsonb, updated_at = NOW() WHERE id = $2`,
+            ['Resident', person.id]
+          );
           cleared++;
         }
       }
     }
+
     console.log(`[GROKFUB API] bulk-stage-sync: ${synced} synced, ${cleared} cleared, ${notFound} not found`);
     res.json({ ok: true, synced, cleared, notFound });
   } catch (e) { console.error('[GROKFUB API] bulk-stage-sync error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
+// SPA CATCH-ALL — serve index.html for /file/:id, /inbox, /admin, etc.
+// Must be AFTER all API routes
+// =============================================================================
+app.get('/file/:id', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.get('/list/:id', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.get('/inbox', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.get('/security', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // =============================================================================
