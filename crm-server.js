@@ -254,7 +254,7 @@ app.get('/api/people', auth, async (req, res) => {
         }
         // ── SPECIAL: Toured — No Follow-Up ──────────────────────────────────
         if (f.type === 'toured_no_followup') {
-          const days = parseInt(f.days_ago || 90); // default: tours in past 90 days
+          const days = parseInt(f.days_ago || 7); // default: tours in past 7 days
           const shR = await pool.query(`
             SELECT
               p.*,
@@ -869,7 +869,7 @@ app.get('/api/smart-lists/counts', auth, async (req, res) => {
           `);
           counts[list.id] = r.rows[0]?.cnt || 0;
         } else if (f.type === 'toured_no_followup') {
-          const days = parseInt(f.days_ago || 90);
+          const days = parseInt(f.days_ago || 7);
           const r = await pool.query(`
             SELECT COUNT(DISTINCT p.id)::int AS cnt
             FROM people p
@@ -2025,21 +2025,9 @@ async function initDB() {
       { name: 'Evicting',             filters: { stage: 'Evicting' }, sort_order: 4 },
       { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
       { name: '🏠 Upcoming Showings',  filters: { type: 'upcoming_showings_72h' }, sort_order: 1 },
-      { name: '👻 Tours — No Follow-Up', filters: { type: 'toured_no_followup', days_ago: 90 }, sort_order: 2 },
+      { name: '👻 Tours — No Follow-Up', filters: { type: 'toured_no_followup', days_ago: 7 }, sort_order: 2 },
     ];
-    // Tombstone any default list that is NOT currently in smart_lists (was deleted before tombstones existed)
-    const existingR = await pool.query('SELECT name FROM smart_lists');
-    const existingNames = new Set(existingR.rows.map(r => r.name));
-    for (const sl of smartListDefs) {
-      if (!existingNames.has(sl.name)) {
-        // List is gone — make sure it's tombstoned so it won't re-seed
-        await pool.query(
-          `INSERT INTO deleted_smart_lists (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
-          [sl.name]
-        ).catch(() => {});
-      }
-    }
-    // Get full tombstone list
+    // Only seed lists that aren't tombstoned
     const deletedR = await pool.query('SELECT name FROM deleted_smart_lists');
     const deletedNames = new Set(deletedR.rows.map(r => r.name));
     for (const sl of smartListDefs) {
@@ -2050,6 +2038,11 @@ async function initDB() {
       ).catch(() => {});
     }
   } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
+
+  // Migrate toured_no_followup to 7-day window (was 90)
+  await pool.query(
+    `UPDATE smart_lists SET filters = filters || '{"days_ago":7}'::jsonb WHERE name = '👻 Tours — No Follow-Up' AND (filters->>'days_ago')::int != 7`
+  ).catch(() => {});
 
   // Seed custom fields
   try {
