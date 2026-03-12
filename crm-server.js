@@ -198,6 +198,44 @@ app.get('/api/people', auth, async (req, res) => {
       const listR = await pool.query('SELECT filters FROM smart_lists WHERE id=$1', [smartListId]);
       if (listR.rows[0]?.filters) {
         const f = listR.rows[0].filters;
+
+        // ── SPECIAL: Upcoming Showings 72h ───────────────────────────────────
+        if (f.type === 'upcoming_showings_72h') {
+          // Join showings → people, annotate with next showing time + last outbound contact
+          const shR = await pool.query(`
+            SELECT
+              p.*,
+              MIN(s.showing_time)                                              AS next_showing_time,
+              s2.property                                                      AS showing_property,
+              s2.unit                                                          AS showing_unit,
+              s2.showing_type                                                  AS showing_type,
+              MAX(a.created_at) FILTER (WHERE a.direction='outbound')         AS last_outbound_at,
+              MAX(a.created_at) FILTER (WHERE a.direction='inbound')          AS last_inbound_at
+            FROM people p
+            JOIN showings s ON s.connect_person_id = p.id::text
+              AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
+              AND s.status = 'Scheduled'
+            -- grab property/unit from the soonest showing
+            JOIN LATERAL (
+              SELECT property, unit, showing_type FROM showings
+              WHERE connect_person_id = p.id::text
+                AND showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
+                AND status = 'Scheduled'
+              ORDER BY showing_time ASC LIMIT 1
+            ) s2 ON TRUE
+            LEFT JOIN activities a ON a.person_id::text = p.id::text
+              AND a.created_at > NOW() - INTERVAL '14 days'
+            GROUP BY p.id, s2.property, s2.unit, s2.showing_type
+            ORDER BY MIN(s.showing_time) ASC
+          `);
+          const people = shR.rows.map(p => ({
+            ...p, ...(p.custom_fields || {}),
+            needs_contact: !p.last_outbound_at  // never been contacted outbound
+          }));
+          return res.json({ people, total: people.length });
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         if (f.stages?.length > 1) { params.push(f.stages); where.push(`p.stage=ANY($${params.length})`); }
         else if (f.stage)  { params.push(f.stage); where.push(`p.stage=$${params.length}`); }
         if (f.tags?.length) {
@@ -1815,6 +1853,7 @@ async function initDB() {
       { name: 'Active Leads',         filters: { stage: 'Lead' }, sort_order: 3 },
       { name: 'Evicting',             filters: { stage: 'Evicting' }, sort_order: 4 },
       { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
+      { name: '🏠 Upcoming Showings',  filters: { type: 'upcoming_showings_72h' }, sort_order: 1 },
     ];
     for (const sl of smartListDefs) {
       await pool.query(`INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) ON CONFLICT (name) DO UPDATE SET filters=EXCLUDED.filters`,
