@@ -3070,41 +3070,11 @@ app.get('/api/dashboard/stats', auth, async (req, res) => {
 
 // =============================================================================
 // SPA CATCH-ALL — serve index.html for /file/:id, /inbox, /admin, etc.
-// Must be AFTER all API routes
 // =============================================================================
-app.get('/file/:id', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/list/:id', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/inbox', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/security', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
+// SPA CATCH-ALL — must be AFTER all API routes
+// Serves index.html for every frontend path: /dashboard, /showings, /inbox, etc.
 // =============================================================================
-// SPA CATCH-ALL — serve index.html for /file/:id, /inbox, /admin, etc.
-// Must be AFTER all API routes
-// =============================================================================
-app.get('/file/:id', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/list/:id', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/inbox', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/security', (req, res) => {
+app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
