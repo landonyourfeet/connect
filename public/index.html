@@ -2645,25 +2645,31 @@
               RUN
             </button>
             <!-- Jareih result/confirm popover -->
-            <!-- Jareih chat window (fixed bottom-right) -->
-            <div id="jareih-popover" style="display:none;position:fixed;bottom:24px;right:24px;width:400px;
-              background:var(--bg-2);border:1px solid rgba(232,0,58,0.35);border-radius:14px;
-              box-shadow:0 20px 60px rgba(0,0,0,0.65),0 0 0 1px rgba(232,0,58,0.1);
-              z-index:9500;overflow:hidden;animation:jareihSlideUp 0.22s cubic-bezier(0.34,1.56,0.64,1)">
+            <!-- Jareih chat window - drops down from bar -->
+            <div id="jareih-popover" style="display:none;position:absolute;top:44px;right:0;width:420px;
+              background:var(--bg-2);border:1px solid rgba(232,0,58,0.4);border-radius:0 0 14px 14px;
+              box-shadow:0 16px 48px rgba(0,0,0,0.6),0 0 0 1px rgba(232,0,58,0.08);
+              z-index:9500;overflow:hidden;animation:jareihSlideUp 0.2s cubic-bezier(0.34,1.3,0.64,1)">
               <!-- Chat header -->
               <div style="display:flex;align-items:center;justify-content:space-between;
-                padding:11px 14px;background:linear-gradient(135deg,#1a0008 0%,#2a0010 100%);
-                border-bottom:1px solid rgba(232,0,58,0.25)">
+                padding:10px 14px;background:linear-gradient(135deg,#1a0008 0%,#2d0012 100%);
+                border-bottom:1px solid rgba(232,0,58,0.2)">
                 <div style="display:flex;align-items:center;gap:8px">
-                  <span style="font-size:15px;color:var(--red)">⬡</span>
-                  <span style="font-size:12px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.1em;color:#fff">JAREIH</span>
-                  <span style="font-size:9px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:0.05em">AI COMMAND</span>
+                  <span style="font-size:14px;color:var(--red)">⬡</span>
+                  <span style="font-size:11px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.12em;color:#fff">JAREIH</span>
+                  <span id="jareih-status-dot" style="font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:0.05em;font-family:var(--font-mono)">READY</span>
                 </div>
-                <button onclick="Jareih.close()" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;transition:color .15s"
-                  onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">✕</button>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <button onclick="Jareih.clearChat()" title="Clear conversation" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em;padding:2px 6px;transition:color .15s;border-radius:4px"
+                    onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">CLEAR</button>
+                  <button onclick="Jareih.close()" title="Close" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;transition:color .15s"
+                    onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.35)'">✕</button>
+                </div>
               </div>
-              <!-- Chat body -->
-              <div id="jareih-chat-body" style="padding:16px 16px 12px"></div>
+              <!-- Scrollable chat thread -->
+              <div id="jareih-chat-body" style="max-height:360px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth"></div>
+              <!-- Action buttons row (confirm/cancel) -->
+              <div id="jareih-action-row" style="display:none;padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px"></div>
             </div>
           </div>
           <!-- Notification Bell -->
@@ -5686,112 +5692,151 @@ function secOpenFile()  { JirehSecurity.openFile(); }
 // ── JIREH ORGANIC — living light organism ───────────────────────────────
 // ── JAREIH COMMAND LINE ───────────────────────────────────────────────────────
 const Jareih = (() => {
-  let _pending = null; // pending parsed action awaiting confirmation
+  let _pending = null;
+  let _history = [];
 
   function keydown(e) {
     if (e.key === 'Enter') submit();
     if (e.key === 'Escape') close();
   }
 
+  function openWindow() {
+    const pop = document.getElementById('jareih-popover');
+    if (!pop) return;
+    pop.style.display = 'block';
+    pop.style.animation = 'none';
+    requestAnimationFrame(() => { pop.style.animation = ''; });
+    setTimeout(() => document.addEventListener('click', outsideClick), 50);
+  }
+
+  function appendBubble(role, text, type) {
+    _history.push({ role, text, type: type || (role === 'user' ? 'user' : 'reply') });
+    renderThread();
+  }
+
+  function renderThread() {
+    const body = document.getElementById('jareih-chat-body');
+    if (!body) return;
+    body.innerHTML = _history.map(m => {
+      const isUser = m.role === 'user';
+      const color = m.type === 'success' ? 'var(--green)' : m.type === 'error' ? 'var(--red)' : m.type === 'clarify' ? 'var(--amber)' : 'var(--text-2)';
+      const icon  = m.type === 'success' ? '✓' : m.type === 'error' ? '⚠' : m.type === 'clarify' ? '?' : '⬡';
+      if (m.type === 'typing') {
+        return `<div style="display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:12px">
+          <span style="animation:spin 1s linear infinite;display:inline-block;font-size:14px">⟳</span> Thinking…</div>`;
+      }
+      if (isUser) {
+        return `<div style="display:flex;justify-content:flex-end">
+          <div style="max-width:82%;background:rgba(232,0,58,0.1);border:1px solid rgba(232,0,58,0.18);
+            border-radius:10px 10px 2px 10px;padding:8px 11px;font-size:12px;font-family:var(--font-mono);
+            color:var(--text);line-height:1.5">${esc(m.text)}</div></div>`;
+      }
+      return `<div style="display:flex;align-items:flex-start;gap:8px">
+        <span style="font-size:13px;color:${color};flex-shrink:0;margin-top:2px">${icon}</span>
+        <div style="font-size:12.5px;color:var(--text);line-height:1.6;white-space:pre-wrap;flex:1">${esc(m.text)}</div>
+      </div>`;
+    }).join('');
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function setStatus(text) {
+    const dot = document.getElementById('jareih-status-dot');
+    if (dot) dot.textContent = text;
+  }
+
   async function submit() {
     const input = document.getElementById('jareih-input');
     const cmd = input.value.trim();
-    if (!cmd) return;
-    showSpinner(true);
-    closePopover();
+    if (!cmd) { openWindow(); return; }
+    appendBubble('user', cmd);
+    input.value = '';
+    openWindow();
+    setStatus('THINKING…');
+    setThinking(true);
+    _history.push({ role: 'jareih', text: '…', type: 'typing' });
+    renderThread();
     try {
       const parsed = await api('/api/jareih/parse', 'POST', { command: cmd });
-      showSpinner(false);
-      if (parsed.error) { showPopover('error', `⚠ ${parsed.error}`); return; }
+      _history = _history.filter(m => m.type !== 'typing');
+      setThinking(false);
+      setStatus('READY');
+      if (parsed.error) { appendBubble('jareih', parsed.error, 'error'); return; }
       if (parsed.action === 'unknown') {
-        showPopover('clarify', parsed.params?.clarification || parsed.summary || 'I need more info.');
+        appendBubble('jareih', parsed.params?.clarification || parsed.summary || 'I need more info.', 'clarify');
         return;
       }
       _pending = { cmd, parsed };
-      showConfirm(parsed);
+      appendBubble('jareih', parsed.confirmPrompt || parsed.summary, 'confirm');
+      showActionButtons();
     } catch(e) {
-      showSpinner(false);
-      showPopover('error', `⚠ Error: ${e.message}`);
+      _history = _history.filter(m => m.type !== 'typing');
+      setThinking(false); setStatus('READY');
+      appendBubble('jareih', `Error: ${e.message}`, 'error');
     }
   }
 
-  function showConfirm(parsed) {
-    const pop = document.getElementById('jareih-popover');
-    const body = document.getElementById('jareih-chat-body');
-    if (body) body.innerHTML = `
-      <div style="font-size:11px;font-weight:700;color:var(--red);letter-spacing:0.08em;font-family:var(--font-mono);margin-bottom:10px">CONFIRM ACTION</div>
-      <div style="font-size:13px;color:var(--text);line-height:1.6;margin-bottom:16px;white-space:pre-wrap">${esc(parsed.confirmPrompt || parsed.summary)}</div>
-      <div style="display:flex;gap:8px">
-        <button onclick="Jareih.execute()" style="flex:1;height:36px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.06em;cursor:pointer;transition:background .15s"
-          onmouseover="this.style.background='#c0001e'" onmouseout="this.style.background='var(--red)'">✓ EXECUTE</button>
-        <button onclick="Jareih.close()" style="flex:1;height:36px;background:var(--bg-3);color:var(--text-2);border:1px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✕ CANCEL</button>
-      </div>`;
-    pop.style.display = 'block';
-    setTimeout(() => document.addEventListener('click', outsideClick), 50);
+  function showActionButtons() {
+    const row = document.getElementById('jareih-action-row');
+    if (!row) return;
+    row.style.display = 'flex';
+    row.innerHTML = `
+      <button onclick="Jareih.execute()" style="flex:1;height:34px;background:var(--red);color:#fff;border:none;border-radius:7px;
+        font-size:11px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.08em;cursor:pointer;transition:background .15s"
+        onmouseover="this.style.background='#c0001e'" onmouseout="this.style.background='var(--red)'">✓ EXECUTE</button>
+      <button onclick="Jareih.cancelAction()" style="flex:1;height:34px;background:var(--bg-3);color:var(--text-2);
+        border:1px solid var(--border);border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">✕ CANCEL</button>`;
+  }
+
+  function hideActionButtons() {
+    const row = document.getElementById('jareih-action-row');
+    if (row) { row.style.display = 'none'; row.innerHTML = ''; }
   }
 
   async function execute() {
     if (!_pending) return;
     const { cmd, parsed } = _pending;
     const { action, params } = parsed;
-    closePopover();
-    showSpinner(true);
+    hideActionButtons();
+    setStatus('EXECUTING…'); setThinking(true);
+    _history.push({ role: 'jareih', text: '…', type: 'typing' });
+    renderThread();
     try {
       let resultMsg = '';
       switch(action) {
         case 'send_sms': {
-          if (!params.phone && !params.personId) throw new Error('No phone number found for this contact');
-          await api('/api/twilio/sms', 'POST', {
-            to: params.phone,
-            body: params.message,
-            personId: params.personId || null
-          });
-          resultMsg = `✓ SMS sent to ${params.personName || params.phone}`;
+          if (!params.phone && !params.personId) throw new Error('No phone number found');
+          await api('/api/twilio/sms', 'POST', { to: params.phone, body: params.message, personId: params.personId || null });
+          resultMsg = `SMS sent to ${params.personName || params.phone}`;
           api('/api/jareih/history', 'POST', { command: cmd, result: parsed }).catch(()=>{});
           if (params.personId) openContact(params.personId);
           break;
         }
         case 'schedule_showing': {
           await api('/api/jareih/showing', 'POST', params);
-          resultMsg = `✓ Showing scheduled for ${params.personName || 'guest'} at ${params.property}`;
+          resultMsg = `Showing scheduled for ${params.personName || 'guest'} at ${params.property}`;
           api('/api/jareih/history', 'POST', { command: cmd, result: parsed }).catch(()=>{});
           navigate('showings');
           break;
         }
         case 'add_note': {
           if (!params.personId) throw new Error('Contact not found');
-          await api('/api/activities', 'POST', {
-            personId: params.personId,
-            type: 'note',
-            body: params.note,
-            direction: 'outbound'
-          });
-          resultMsg = `✓ Note added for ${params.personName}`;
+          await api('/api/activities', 'POST', { personId: params.personId, type: 'note', body: params.note, direction: 'outbound' });
+          resultMsg = `Note added for ${params.personName}`;
           api('/api/jareih/history', 'POST', { command: cmd, result: parsed }).catch(()=>{});
           openContact(params.personId);
           break;
         }
         case 'add_task': {
           if (!params.personId) throw new Error('Contact not found');
-          await api('/api/tasks', 'POST', {
-            personId: params.personId,
-            title: params.title,
-            due_date: params.dueDate || null
-          });
-          resultMsg = `✓ Task added for ${params.personName}`;
+          await api('/api/tasks', 'POST', { personId: params.personId, title: params.title, due_date: params.dueDate || null });
+          resultMsg = `Task added for ${params.personName}`;
           api('/api/jareih/history', 'POST', { command: cmd, result: parsed }).catch(()=>{});
           openContact(params.personId);
           break;
         }
         case 'create_contact': {
-          const p = await api('/api/people', 'POST', {
-            firstName: params.firstName,
-            lastName: params.lastName || '',
-            phone: params.phone || '',
-            email: params.email || '',
-            stage: params.stage || 'Lead'
-          });
-          resultMsg = `✓ Contact created: ${params.firstName} ${params.lastName||''}`;
+          const p = await api('/api/people', 'POST', { firstName: params.firstName, lastName: params.lastName || '', phone: params.phone || '', email: params.email || '', stage: params.stage || 'Lead' });
+          resultMsg = `Contact created: ${params.firstName} ${params.lastName||''}`;
           api('/api/jareih/history', 'POST', { command: cmd, result: parsed }).catch(()=>{});
           if (p.id) openContact(p.id);
           break;
@@ -5799,73 +5844,50 @@ const Jareih = (() => {
         case 'open_contact': {
           if (!params.personId) throw new Error('Contact not found');
           openContact(params.personId);
-          resultMsg = `✓ Opening ${params.personName}`;
+          resultMsg = `Opening ${params.personName}`;
           break;
         }
         case 'navigate': {
           navigate(params.view);
-          resultMsg = `✓ Navigated to ${params.view}`;
+          resultMsg = `Navigated to ${params.view}`;
           break;
         }
-        default:
-          resultMsg = '✓ Done';
+        default: resultMsg = 'Done';
       }
-      showSpinner(false);
-      showPopover('success', resultMsg);
-      document.getElementById('jareih-input').value = '';
+      _history = _history.filter(m => m.type !== 'typing');
+      setThinking(false); setStatus('READY');
+      appendBubble('jareih', resultMsg, 'success');
       _pending = null;
-      setTimeout(closePopover, 3000);
     } catch(e) {
-      showSpinner(false);
-      showPopover('error', `⚠ Failed: ${e.message}`);
+      _history = _history.filter(m => m.type !== 'typing');
+      setThinking(false); setStatus('READY');
+      appendBubble('jareih', `Failed: ${e.message}`, 'error');
       _pending = null;
     }
   }
 
-  function showPopover(type, msg) {
-    const pop = document.getElementById('jareih-popover');
-    const body = document.getElementById('jareih-chat-body');
-    const color = type === 'success' ? 'var(--green)' : type === 'error' ? 'var(--red)' : 'var(--amber)';
-    const icon = type==='success'?'✓':type==='error'?'⚠':'?';
-    if (body) body.innerHTML = `<div style="display:flex;align-items:flex-start;gap:12px">
-      <span style="color:${color};font-size:20px;flex-shrink:0;margin-top:1px">${icon}</span>
-      <span style="font-size:13px;color:var(--text);line-height:1.6">${esc(msg)}</span>
-    </div>`;
-    pop.style.display = 'block';
-    setTimeout(() => document.addEventListener('click', outsideClick), 50);
+  function cancelAction() {
+    hideActionButtons();
+    appendBubble('jareih', 'Cancelled.', 'reply');
+    _pending = null;
   }
 
-  function showSpinner(on) {
+  function setThinking(on) {
     const s = document.getElementById('jareih-spinner');
     if (s) s.style.display = on ? 'block' : 'none';
     const btn = document.getElementById('jareih-run-btn');
     if (btn) {
-      if (on) {
-        btn.classList.add('jareih-thinking');
-        btn.textContent = '⟳';
-      } else {
-        btn.classList.remove('jareih-thinking');
-        btn.textContent = 'RUN';
-      }
+      if (on) { btn.classList.add('jareih-thinking'); btn.textContent = '⟳'; }
+      else    { btn.classList.remove('jareih-thinking'); btn.textContent = 'RUN'; }
     }
-    // Also open chat window when thinking starts
-    if (on) {
-      const pop = document.getElementById('jareih-popover');
-      const body = document.getElementById('jareih-chat-body');
-      if (body) body.innerHTML = `<div style="display:flex;align-items:center;gap:12px;color:var(--text-3);font-size:13px">
-        <span style="font-size:20px;animation:spin 1s linear infinite;display:inline-block">⟳</span>
-        Jareih is thinking…
-      </div>`;
-      if (pop) pop.style.display = 'block';
-    }
+  }
+
+  function clearChat() {
+    _history = []; _pending = null;
+    hideActionButtons(); renderThread(); setStatus('READY');
   }
 
   function close() {
-    closePopover();
-    _pending = null;
-  }
-
-  function closePopover() {
     const pop = document.getElementById('jareih-popover');
     if (pop) pop.style.display = 'none';
     document.removeEventListener('click', outsideClick);
@@ -5874,10 +5896,10 @@ const Jareih = (() => {
   function outsideClick(e) {
     const bar = document.getElementById('jareih-bar');
     const pop = document.getElementById('jareih-popover');
-    if (bar && !bar.contains(e.target) && pop && !pop.contains(e.target)) closePopover();
+    if (bar && !bar.contains(e.target) && pop && !pop.contains(e.target)) close();
   }
 
-  return { submit, execute, close, keydown };
+  return { submit, execute, cancelAction, clearChat, close, keydown, openWindow };
 })();
 
 // ── LEAD SCRAPER ─────────────────────────────────────────────────────────────
