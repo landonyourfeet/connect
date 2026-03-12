@@ -143,10 +143,12 @@ app.get('/favicon.svg', (req, res) => {
 });
 
 const auth = async (req, res, next) => {
+  // Accept token from Authorization header OR ?token= query param (needed for EventSource/SSE)
   const h = req.headers.authorization;
-  if (!h?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
+  const rawToken = h?.startsWith('Bearer ') ? h.slice(7) : (req.query.token || null);
+  if (!rawToken) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const decoded = jwt.verify(h.slice(7), JWT_SECRET);
+    const decoded = jwt.verify(rawToken, JWT_SECRET);
     const r = await pool.query('SELECT * FROM agents WHERE id=$1 AND is_active=true', [decoded.id]);
     if (!r.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
     req.agent = r.rows[0];
