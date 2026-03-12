@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const multer  = require('multer');
+const XLSX    = require('xlsx');
 const { google } = require('googleapis');
 const path = require('path');
 const cors = require('cors');
@@ -1719,7 +1720,44 @@ async function initDB() {
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT NULL`, 'activities.sms_status');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_error TEXT DEFAULT NULL`, 'activities.sms_error');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS message_sid TEXT DEFAULT NULL`, 'activities.message_sid');
-  await run(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
+  await run(`CREATE TABLE IF NOT EXISTS showings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    property TEXT NOT NULL,
+    unit TEXT,
+    guest_name TEXT,
+    email TEXT,
+    phone TEXT,
+    showing_time TIMESTAMPTZ,
+    status TEXT,
+    showing_type TEXT,
+    assigned_user TEXT,
+    description TEXT,
+    last_activity_date TIMESTAMPTZ,
+    last_activity_type TEXT,
+    upload_batch TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(property, guest_name, showing_time)
+  )`, 'create showings');
+  await run(`CREATE TABLE IF NOT EXISTS showing_feedback (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    showing_id UUID REFERENCES showings(id) ON DELETE CASCADE,
+    agent_id TEXT,
+    agent_name TEXT,
+    verdict TEXT NOT NULL CHECK (verdict IN ('go','no-go','maybe')),
+    categories JSONB DEFAULT '[]',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(showing_id, agent_id)
+  )`, 'create showing_feedback');
+  await run(`CREATE TABLE IF NOT EXISTS showing_uploads (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    filename TEXT,
+    uploaded_by TEXT,
+    record_count INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`, 'create showing_uploads');
+
+  await run(`CREATE TABLE IF NOT EXISTS tasks (`id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
 
   // Seed admin
   try {
@@ -2278,6 +2316,219 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
     console.log(`[GROKFUB API] bulk-stage-sync: ${synced} synced, ${cleared} cleared, ${notFound} not found`);
     res.json({ ok: true, synced, cleared, notFound });
   } catch (e) { console.error('[GROKFUB API] bulk-stage-sync error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
+// SHOWINGS API
+// =============================================================================
+
+// Upload showings XLSX
+app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+    // Find header row
+    let hi = -1;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i][0] === 'Guest Card Name') { hi = i; break; }
+    }
+    if (hi === -1) return res.status(400).json({ error: 'Invalid format — could not find header row' });
+
+    const h = rows[hi];
+    const col = {
+      name: h.indexOf('Guest Card Name'), email: h.indexOf('Email'),
+      phone: h.indexOf('Phone Number'), property: h.indexOf('Property'),
+      unit: h.indexOf('Showing Unit'), time: h.indexOf('Showing Time'),
+      status: h.indexOf('Status'), type: h.indexOf('Type'),
+      assigned: h.indexOf('Assigned User'), desc: h.indexOf('Description'),
+      lastActDate: h.indexOf('Last Activity Date'), lastActType: h.indexOf('Last Activity Type'),
+    };
+
+    const batchId = require('crypto').randomUUID();
+    let inserted = 0, skipped = 0;
+    for (let i = hi + 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || !row[col.name] || !row[col.time]) continue;
+      if (row[col.email] === null && row[col.phone] === null && row[col.property] === null) continue; // property header row
+      try {
+        await pool.query(
+          `INSERT INTO showings (property,unit,guest_name,email,phone,showing_time,status,showing_type,assigned_user,description,last_activity_date,last_activity_type,upload_batch)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           ON CONFLICT (property,guest_name,showing_time) DO UPDATE SET
+             status=EXCLUDED.status, last_activity_type=EXCLUDED.last_activity_type,
+             last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch`,
+          [ row[col.property], row[col.unit]||null, row[col.name], row[col.email]||null,
+            row[col.phone]||null, row[col.time] instanceof Date ? row[col.time] : new Date(row[col.time]),
+            row[col.status]||null, row[col.type]||null, row[col.assigned]||null,
+            row[col.desc]||null,
+            row[col.lastActDate] ? (row[col.lastActDate] instanceof Date ? row[col.lastActDate] : new Date(row[col.lastActDate])) : null,
+            row[col.lastActType]||null, batchId ]
+        );
+        inserted++;
+      } catch(e) { skipped++; }
+    }
+    await pool.query(`INSERT INTO showing_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
+      [req.file.originalname, req.agent?.id || null, inserted]);
+    res.json({ ok: true, inserted, skipped, batchId });
+  } catch(e) { console.error('[Showings Upload]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Get property summary
+app.get('/api/showings/properties', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        s.property,
+        COUNT(*)::int                                            AS total_showings,
+        COUNT(*) FILTER (WHERE s.status='Completed')::int       AS completed,
+        COUNT(*) FILTER (WHERE s.status='Scheduled')::int       AS scheduled,
+        COUNT(*) FILTER (WHERE s.status ILIKE '%Cancel%')::int  AS canceled,
+        COUNT(f.id)::int                                        AS feedback_count,
+        COUNT(*) FILTER (WHERE f.verdict='go')::int             AS go_count,
+        COUNT(*) FILTER (WHERE f.verdict='no-go')::int          AS nogo_count,
+        COUNT(*) FILTER (WHERE f.verdict='maybe')::int          AS maybe_count,
+        MAX(s.showing_time)                                      AS last_showing
+      FROM showings s
+      LEFT JOIN showing_feedback f ON f.showing_id = s.id
+      GROUP BY s.property
+      ORDER BY last_showing DESC NULLS LAST
+    `);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get showings for a property
+app.get('/api/showings', auth, async (req, res) => {
+  try {
+    const { property, status } = req.query;
+    let where = ['1=1']; const params = [];
+    if (property) { params.push(property); where.push(`s.property = $${params.length}`); }
+    if (status)   { params.push(status);   where.push(`s.status   = $${params.length}`); }
+    const { rows } = await pool.query(`
+      SELECT s.*,
+        f.verdict, f.categories, f.notes, f.agent_name, f.agent_id AS feedback_agent_id,
+        f.created_at AS feedback_at
+      FROM showings s
+      LEFT JOIN showing_feedback f ON f.showing_id = s.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY s.showing_time DESC
+    `, params);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save / update feedback
+app.post('/api/showings/:id/feedback', auth, async (req, res) => {
+  try {
+    const { verdict, categories = [], notes = '' } = req.body;
+    if (!verdict) return res.status(400).json({ error: 'verdict required' });
+    const agentName = req.agent?.name || 'Agent';
+    const agentId   = req.agent?.id   || null;
+    await pool.query(
+      `INSERT INTO showing_feedback (showing_id,agent_id,agent_name,verdict,categories,notes)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (showing_id,agent_id) DO UPDATE SET
+         verdict=EXCLUDED.verdict, categories=EXCLUDED.categories,
+         notes=EXCLUDED.notes, created_at=NOW()`,
+      [req.params.id, agentId, agentName, verdict, JSON.stringify(categories), notes]
+    );
+    broadcastToAll({ type: 'showing_feedback', showingId: req.params.id, verdict });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get trends for a property — aggregate categories + notes
+app.get('/api/showings/trends', auth, async (req, res) => {
+  try {
+    const { property } = req.query;
+    if (!property) return res.status(400).json({ error: 'property required' });
+    const { rows } = await pool.query(`
+      SELECT f.verdict, f.categories, f.notes, f.agent_name, f.created_at, s.guest_name, s.showing_time
+      FROM showing_feedback f
+      JOIN showings s ON s.id = f.showing_id
+      WHERE s.property = $1
+      ORDER BY f.created_at DESC
+    `, [property]);
+
+    // Tally categories
+    const catCounts = {};
+    let go=0, nogo=0, maybe=0;
+    for (const r of rows) {
+      if (r.verdict === 'go')     go++;
+      if (r.verdict === 'no-go')  nogo++;
+      if (r.verdict === 'maybe')  maybe++;
+      for (const c of (r.categories || [])) {
+        catCounts[c] = (catCounts[c] || 0) + 1;
+      }
+    }
+    const topIssues = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).map(([cat,count])=>({cat,count}));
+    res.json({ go, nogo, maybe, total: rows.length, topIssues, feedback: rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Upcoming showings — next 90 minutes, used by alert poller
+// Also tries to match to a Connect person for "View Lead File" deep-link
+app.get('/api/showings/upcoming', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT s.id, s.property, s.unit, s.guest_name, s.phone, s.email,
+             s.showing_time, s.status, s.showing_type,
+             p.id AS connect_person_id
+      FROM showings s
+      LEFT JOIN LATERAL (
+        SELECT p.id FROM people p
+        WHERE (p.phone IS NOT NULL AND p.phone = s.phone)
+           OR (p.email IS NOT NULL AND LOWER(p.email) = LOWER(s.email))
+        LIMIT 1
+      ) p ON TRUE
+      WHERE s.status = 'Scheduled'
+        AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '90 minutes'
+      ORDER BY s.showing_time ASC
+    `);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Showings for a specific contact — matched by phone, email, or name
+app.get('/api/showings/by-contact', auth, async (req, res) => {
+  try {
+    const { phone, email, name } = req.query;
+    if (!phone && !email && !name) return res.json([]);
+
+    const conditions = [];
+    const params = [];
+
+    if (phone) {
+      const digits = phone.replace(/\D/g,'').slice(-10);
+      params.push('%' + digits);
+      conditions.push(`regexp_replace(s.phone,'[^0-9]','','g') LIKE $${params.length}`);
+    }
+    if (email) {
+      params.push(email.toLowerCase());
+      conditions.push(`LOWER(s.email) = $${params.length}`);
+    }
+    if (name) {
+      // AppFolio format: "Last, First" — try fuzzy match
+      params.push('%' + name.toLowerCase().replace(/,\s*/,' ').trim() + '%');
+      const nameParts = name.split(',').map(x=>x.trim());
+      const reversed = (nameParts[1]||'') + ' ' + (nameParts[0]||'');
+      params.push('%' + reversed.toLowerCase().trim() + '%');
+      conditions.push(`(LOWER(s.guest_name) LIKE $${params.length-1} OR LOWER(s.guest_name) LIKE $${params.length})`);
+    }
+
+    const { rows } = await pool.query(`
+      SELECT s.*, f.verdict, f.categories, f.notes, f.agent_name
+      FROM showings s
+      LEFT JOIN showing_feedback f ON f.showing_id = s.id
+      WHERE ${conditions.join(' OR ')}
+      ORDER BY s.showing_time DESC
+      LIMIT 50
+    `, params);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // =============================================================================
