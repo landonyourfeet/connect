@@ -2352,10 +2352,27 @@ app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, 
 
     const batchId = crypto.randomUUID();
     let inserted = 0, skipped = 0;
+
+    // Helper: safely parse a date value from xlsx (may be Date object, number, or string)
+    const parseXlsxDate = v => {
+      if (!v) return null;
+      if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+      if (typeof v === 'number') {
+        // Excel serial date — xlsx should handle with cellDates:true but just in case
+        const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+        return isNaN(d.getTime()) ? null : d;
+      }
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
     for (let i = hi + 1; i < rows.length; i++) {
       const row = rows[i];
-      if (!row || !row[col.name] || !row[col.time]) continue;
-      if (row[col.email] === null && row[col.phone] === null && row[col.property] === null) continue; // property header row
+      if (!row || !row[col.name]) continue;
+      // Skip property header rows (name but no time/email/phone/property cols)
+      const showingTime = parseXlsxDate(row[col.time]);
+      if (!showingTime) continue;
+      if (row[col.email] === null && row[col.phone] === null && row[col.property] === null) continue;
       try {
         await pool.query(
           `INSERT INTO showings (property,unit,guest_name,email,phone,showing_time,status,showing_type,assigned_user,description,last_activity_date,last_activity_type,upload_batch)
@@ -2363,18 +2380,24 @@ app.post('/api/showings/upload', auth, uploadMemory.single('file'), async (req, 
            ON CONFLICT (property,guest_name,showing_time) DO UPDATE SET
              status=EXCLUDED.status, last_activity_type=EXCLUDED.last_activity_type,
              last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch`,
-          [ row[col.property], row[col.unit]||null, row[col.name], row[col.email]||null,
-            row[col.phone]||null, row[col.time] instanceof Date ? row[col.time] : new Date(row[col.time]),
+          [ row[col.property]||null, row[col.unit]||null, String(row[col.name]).trim(),
+            row[col.email]||null, row[col.phone]||null, showingTime,
             row[col.status]||null, row[col.type]||null, row[col.assigned]||null,
-            row[col.desc]||null,
-            row[col.lastActDate] ? (row[col.lastActDate] instanceof Date ? row[col.lastActDate] : new Date(row[col.lastActDate])) : null,
+            row[col.desc]||null, parseXlsxDate(row[col.lastActDate]),
             row[col.lastActType]||null, batchId ]
         );
         inserted++;
-      } catch(e) { skipped++; }
+      } catch(e) {
+        console.warn('[Showings Upload] Row skip:', e.message, JSON.stringify(row).slice(0,120));
+        skipped++;
+      }
     }
+    if (inserted === 0 && skipped === 0) {
+      return res.status(400).json({ error: `Parsed ${rows.length} rows but found no valid showings. Check file format.` });
+    }
+    const uploader = req.agent?.name || req.agent?.id || null;
     await pool.query(`INSERT INTO showing_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
-      [req.file.originalname, req.agent?.id || null, inserted]);
+      [req.file.originalname, uploader, inserted]);
     res.json({ ok: true, inserted, skipped, batchId });
   } catch(e) { console.error('[Showings Upload]', e.message); res.status(500).json({ error: e.message }); }
 });
@@ -2469,6 +2492,16 @@ app.get('/api/showings/trends', auth, async (req, res) => {
     }
     const topIssues = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).map(([cat,count])=>({cat,count}));
     res.json({ go, nogo, maybe, total: rows.length, topIssues, feedback: rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Last upload info — for the "stale data" warning
+app.get('/api/showings/last-upload', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT filename, uploaded_by, record_count, created_at FROM showing_uploads ORDER BY created_at DESC LIMIT 1`
+    );
+    res.json(rows[0] || null);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
