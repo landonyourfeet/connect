@@ -4289,141 +4289,116 @@ async function checkDB() {
 // Stack: Twilio Media Streams → Deepgram STT → Grok 3 → Deepgram Aura TTS (Ara)
 // =============================================================================
 
+// =============================================================================
+// JAREIH AI CALL CONTROL CENTER  v2
+// Architecture: Twilio Conference → all parties in one room
+//   • Contact leg  → Conference jcall-{callId}
+//   • AI bridge    → Conference jcall-{callId} + Media Stream (Deepgram + Grok/Ara)
+//   • Monitor agent→ Conference jcall-{callId} muted=true (listen only)
+//   • Active agent → Conference jcall-{callId} muted=false (take over)
+// =============================================================================
+
 const jareihCalls = new Map(); // callId → session
 
-// ─── TTS: Deepgram Aura "Ara" ─────────────────────────────────────────────────
+// ─── helpers ─────────────────────────────────────────────────────────────────
+function jcConferenceName(callId) { return `jcall-${callId}`; }
+
+// ─── TTS: Deepgram Aura Ara ───────────────────────────────────────────────────
 async function araTTS(text) {
   const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000&container=none';
   const resp = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ text })
   });
-  if (!resp.ok) throw new Error(`Deepgram TTS error: ${resp.status} ${await resp.text()}`);
-  const buf = await resp.arrayBuffer();
-  return Buffer.from(buf);
+  if (!resp.ok) throw new Error(`Deepgram TTS ${resp.status}: ${await resp.text()}`);
+  return Buffer.from(await resp.arrayBuffer());
 }
 
-// ─── Send audio back through Twilio media stream ──────────────────────────────
 async function speakToCall(callId, text) {
   const session = jareihCalls.get(callId);
-  if (!session || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || session.araMuted || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
   try {
-    // Clear any currently playing audio
     session.ws.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
     const audio = await araTTS(text);
-    // Send in 160-byte mulaw chunks (20ms each at 8000hz)
     const CHUNK = 160;
     for (let i = 0; i < audio.length; i += CHUNK) {
-      if (!session.ws || session.ws.readyState !== WebSocket.OPEN) break;
+      if (!session.ws || session.ws.readyState !== WebSocket.OPEN || session.araMuted) break;
       session.ws.send(JSON.stringify({
-        event: 'media',
-        streamSid: session.streamSid,
+        event: 'media', streamSid: session.streamSid,
         media: { payload: audio.slice(i, i + CHUNK).toString('base64') }
       }));
       await new Promise(r => setTimeout(r, 20));
     }
-    // End of speech mark
     session.ws.send(JSON.stringify({ event: 'mark', streamSid: session.streamSid, mark: { name: 'ara_done' } }));
-  } catch(e) {
-    console.error('[Ara TTS]', e.message);
-  }
+  } catch(e) { console.error('[Ara TTS]', e.message); }
 }
 
-// ─── Grok conversation brain ──────────────────────────────────────────────────
+// ─── Grok brain ───────────────────────────────────────────────────────────────
 async function araRespond(callId, contactSpeech) {
   const session = jareihCalls.get(callId);
-  if (!session) return null;
+  if (!session || session.araMuted) return null;
   const grok = initGrok();
-  if (!grok) return "Hello, thank you for answering. I'll follow up another time. Have a great day!";
+  if (!grok) return "Hello, thanks for answering. I'll follow up another time. Have a great day!";
 
-  // Build system prompt on first turn
   if (!session.grokHistory) {
     const ctx = session.context;
-    const actSummary = (ctx.recentActivity || []).slice(0, 8)
-      .map(a => `[${a.type}] ${(a.body || '').slice(0, 120)}`)
-      .join('\n');
+    const actSummary = (ctx.recentActivity||[]).slice(0,8).map(a=>`[${a.type}] ${(a.body||'').slice(0,120)}`).join('\n');
     session.grokHistory = [{
       role: 'system',
-      content: `You are Ara, a professional and friendly AI leasing agent calling on behalf of OKCREAL property management.
-You are calling ${ctx.name} (${ctx.stage || 'Lead'}).
+      content: `You are Ara, a professional AI leasing agent calling on behalf of OKCREAL property management.
+Calling: ${ctx.name} (stage: ${ctx.stage||'Lead'})
 GOAL: ${session.goal}
-Contact notes: ${ctx.notes || 'none'}
-Recent activity:\n${actSummary || 'none'}
+Notes: ${ctx.notes||'none'}
+Recent activity:\n${actSummary||'none'}
 
 RULES:
-- Keep every response SHORT — 1-3 sentences, natural phone speech
-- Never mention you are an AI unless directly asked
-- If asked, say "I'm Ara, calling on behalf of OKCREAL"
-- When the goal is achieved OR the contact clearly wants to end the call, close warmly and append [END_CALL]
-- If goal achieved, also append [GOAL_ACHIEVED]
-- Never use markdown, lists, or formatting — pure spoken language only
-- Be warm, confident, and direct`
+- Keep every response SHORT — 1-3 sentences, natural phone speech only
+- Never reveal you are AI unless directly asked; if asked say "I'm Ara with OKCREAL"
+- When goal achieved OR contact clearly wants to end the call, close warmly and append [END_CALL]
+- If goal achieved also append [GOAL_ACHIEVED]
+- No markdown, no lists — pure spoken language`
     }];
   }
 
-  if (contactSpeech) {
-    session.grokHistory.push({ role: 'user', content: contactSpeech });
-  } else {
-    // Opening line
-    session.grokHistory.push({ role: 'user', content: '[CALL_CONNECTED]' });
-  }
-
-  const r = await grok.chat.completions.create({
-    model: 'grok-3',
-    max_tokens: 120,
-    messages: session.grokHistory
-  });
+  session.grokHistory.push({ role: 'user', content: contactSpeech || '[CALL_CONNECTED]' });
+  const r = await grok.chat.completions.create({ model: 'grok-3', max_tokens: 120, messages: session.grokHistory });
   const raw = r.choices[0].message.content.trim();
   session.grokHistory.push({ role: 'assistant', content: raw });
 
-  // Check signals
-  if (raw.includes('[END_CALL]')) session.shouldEnd = true;
+  if (raw.includes('[END_CALL]'))      session.shouldEnd    = true;
   if (raw.includes('[GOAL_ACHIEVED]')) session.goalAchieved = true;
 
   const clean = raw.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
-  session.transcript.push({ role: 'ara', text: clean });
+  session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
 
-  // Broadcast live transcript to agent
-  broadcastToAll({
-    type: 'jareih_call_update',
-    callId,
-    personId: session.personId,
-    event: 'ara_spoke',
-    text: clean
-  });
-
+  broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'ara_spoke', text: clean });
   return clean;
 }
 
-// ─── Finalize call → save to timeline ────────────────────────────────────────
+// ─── Finalize — save to timeline ─────────────────────────────────────────────
 async function finalizeJareihCall(callId, twilioStatus, duration) {
   const session = jareihCalls.get(callId);
   if (!session || session.finalized) return;
   session.finalized = true;
 
   const transcriptText = session.transcript
-    .map(t => `${t.role === 'ara' ? 'Ara (AI)' : session.context.name}: ${t.text}`)
+    .map(t => `${t.role === 'ara' ? 'Ara (AI)' : t.role === 'agent' ? `Agent` : session.context.name}: ${t.text}`)
     .join('\n');
 
-  let summary = `Call ended with status: ${twilioStatus}.`;
+  let summary = `Call ${twilioStatus}.`;
   if (transcriptText && initGrok()) {
     try {
       const grok = initGrok();
-      const s = await grok.chat.completions.create({
-        model: 'grok-3', max_tokens: 200,
-        messages: [{ role: 'user', content:
-          `Summarize this outbound AI call in 2-3 sentences. Goal was: "${session.goal}"\nWas the goal achieved? ${session.goalAchieved ? 'Yes' : 'Unknown'}\n\nTranscript:\n${transcriptText}` }]
-      });
+      const s = await grok.chat.completions.create({ model:'grok-3', max_tokens:200, messages:[{role:'user',content:
+        `Summarize this outbound call in 2-3 sentences. Goal: "${session.goal}". Achieved: ${session.goalAchieved?'Yes':'Unknown'}.\nTranscript:\n${transcriptText}`}] });
       summary = s.choices[0].message.content.trim();
-    } catch(e) { /* keep default */ }
+    } catch(e) {}
   }
 
+  const tookOver = session.transcript.some(t => t.role === 'agent');
   const body = [
-    `📞 Jareih AI Call — ${session.goalAchieved ? '✅ Goal Achieved' : twilioStatus === 'completed' ? '📋 Completed' : `⚠ ${twilioStatus}`}`,
+    `📞 ${session.araActive && !tookOver ? 'Jareih AI Call' : tookOver ? 'Jareih AI Call (Agent Joined)' : 'Call'} — ${session.goalAchieved ? '✅ Goal Achieved' : twilioStatus === 'completed' ? '📋 Completed' : `⚠ ${twilioStatus}`}`,
     `Goal: ${session.goal}`,
     '',
     `Summary: ${summary}`,
@@ -4433,26 +4408,35 @@ async function finalizeJareihCall(callId, twilioStatus, duration) {
 
   try {
     await pool.query(
-      `INSERT INTO activities (person_id, agent_id, type, body, direction, duration, created_at)
-       VALUES ($1,$2,'call',$3,'outbound',$4,NOW())`,
-      [session.personId, session.agentId, body, duration || 0]
+      `INSERT INTO activities (person_id,agent_id,type,body,direction,duration,created_at) VALUES ($1,$2,'call',$3,'outbound',$4,NOW())`,
+      [session.personId, session.agentId, body, duration||0]
     );
   } catch(e) { console.error('[Jareih finalize]', e.message); }
 
-  broadcastToAll({
-    type: 'jareih_call_update',
-    callId,
-    personId: session.personId,
-    event: 'call_ended',
-    summary,
-    goalAchieved: session.goalAchieved,
-    status: twilioStatus
-  });
-
+  broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'call_ended', summary, goalAchieved:session.goalAchieved, status:twilioStatus });
+  broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
   jareihCalls.delete(callId);
 }
 
-// ─── WebSocket server: Twilio Media Streams ───────────────────────────────────
+// ─── Active calls list for the UI panel ──────────────────────────────────────
+function getActiveCallsPayload() {
+  return Array.from(jareihCalls.entries()).map(([callId, s]) => ({
+    callId,
+    personId: s.personId,
+    contactName: s.context.name,
+    contactPhone: s.context.phone,
+    contactStage: s.context.stage,
+    goal: s.goal,
+    agentId: s.agentId,
+    araActive: !s.araMuted,
+    startedAt: s.startedAt,
+    status: s.callStatus || 'initiated',
+    transcript: s.transcript.slice(-20),
+    listeners: s.listeners || []
+  }));
+}
+
+// ─── WebSocket server: Twilio Media Streams ──────────────────────────────────
 function setupJareihCallWS(server) {
   const wss = new WebSocket.Server({ noServer: true });
 
@@ -4463,43 +4447,31 @@ function setupJareihCallWS(server) {
   });
 
   wss.on('connection', async (ws, req) => {
-    const callId = req.url.replace('/ws/jareih-call/', '').split('?')[0];
+    const callId = req.url.replace('/ws/jareih-call/','').split('?')[0];
     const session = jareihCalls.get(callId);
     if (!session) { ws.close(); return; }
 
     session.ws = ws;
     session.streamSid = null;
-    session.transcript = session.transcript || [];
-    session.utteranceBuffer = '';
-    session.lastSpeech = 0;
-    session.araLock = false; // prevent overlapping Ara responses
+    session.araLock = false;
 
-    console.log(`[Jareih call] WebSocket connected for callId=${callId}`);
-
-    // ── Deepgram STT WebSocket ───────────────────────────────────────────────
+    // Deepgram STT
     const dgWs = new WebSocket(
       'wss://api.deepgram.com/v1/listen?' + [
-        'encoding=mulaw', 'sample_rate=8000', 'channels=1',
-        'model=nova-2', 'punctuate=true', 'smart_format=true',
-        'interim_results=true', 'endpointing=600', 'utterance_end_ms=1200'
+        'encoding=mulaw','sample_rate=8000','channels=1','model=nova-2',
+        'punctuate=true','smart_format=true','interim_results=true',
+        'endpointing=600','utterance_end_ms=1200'
       ].join('&'),
       { headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` } }
     );
-
-    dgWs.on('open', () => console.log('[Jareih call] Deepgram STT connected'));
-
+    dgWs.on('open', ()=>console.log(`[Ara] Deepgram connected callId=${callId}`));
     dgWs.on('message', async raw => {
-      let msg;
-      try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
-
+      let msg; try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
       if (msg.type === 'Results' && msg.is_final) {
         const text = msg.channel?.alternatives?.[0]?.transcript?.trim();
-        if (!text || session.araLock) return;
-
-        session.transcript.push({ role: 'contact', text });
-        broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'contact_spoke', text });
-
-        // Get Ara response
+        if (!text || session.araLock || session.araMuted) return;
+        session.transcript.push({ role:'contact', ts:Date.now(), text });
+        broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'contact_spoke', text });
         session.araLock = true;
         try {
           const response = await araRespond(callId, text);
@@ -4508,32 +4480,24 @@ function setupJareihCallWS(server) {
             setTimeout(async () => {
               try {
                 const tc = initTwilioFull();
-                if (tc && session.callSid) await tc.calls(session.callSid).update({ status: 'completed' });
+                if (tc && session.contactCallSid) await tc.calls(session.contactCallSid).update({ status:'completed' });
               } catch(e) {}
-            }, 1200);
+            }, 1400);
           }
-        } catch(e) { console.error('[Jareih respond]', e.message); }
+        } catch(e) { console.error('[Ara respond]', e.message); }
         finally { session.araLock = false; }
       }
     });
+    dgWs.on('error', e => console.error('[Ara DG]', e.message));
 
-    dgWs.on('error', e => console.error('[Jareih DG]', e.message));
-    dgWs.on('close', () => console.log('[Jareih call] Deepgram closed'));
-
-    // ── Twilio Media Stream messages ─────────────────────────────────────────
     ws.on('message', async raw => {
-      let msg;
-      try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
-
-      switch (msg.event) {
-        case 'connected':
-          console.log('[Jareih call] Twilio stream connected');
-          break;
-
+      let msg; try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
+      switch(msg.event) {
         case 'start':
           session.streamSid = msg.start?.streamSid || msg.streamSid;
-          console.log(`[Jareih call] Stream started sid=${session.streamSid}`);
-          // Ara greets the contact
+          session.callStatus = 'connected';
+          broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'status', status:'connected' });
+          broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
           setTimeout(async () => {
             try {
               const greeting = await araRespond(callId, null);
@@ -4541,29 +4505,41 @@ function setupJareihCallWS(server) {
             } catch(e) { console.error('[Ara greeting]', e.message); }
           }, 800);
           break;
-
         case 'media':
           if (dgWs.readyState === WebSocket.OPEN && msg.media?.payload) {
             dgWs.send(Buffer.from(msg.media.payload, 'base64'));
           }
           break;
-
         case 'stop':
           dgWs.close();
           break;
       }
     });
-
-    ws.on('close', () => {
-      dgWs.close();
-      console.log(`[Jareih call] WS closed for ${callId}`);
-    });
-
-    ws.on('error', e => console.error('[Jareih WS]', e.message));
+    ws.on('close', () => { dgWs.close(); console.log(`[Ara] WS closed ${callId}`); });
+    ws.on('error', e => console.error('[Ara WS]', e.message));
   });
 }
 
-// ─── API: Initiate a Jareih AI call ──────────────────────────────────────────
+// ─── Conference token for monitoring agents ───────────────────────────────────
+function buildConferenceToken(agentId, conferenceRoom) {
+  const { AccessToken } = require('twilio').jwt;
+  const { VoiceGrant } = AccessToken;
+  const token = new AccessToken(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_API_KEY_SID,
+    process.env.TWILIO_API_KEY_SECRET,
+    { identity: `monitor-${agentId}`, ttl: 3600 }
+  );
+  token.addGrant(new VoiceGrant({ outgoingApplicationSid: process.env.TWILIO_TWIML_APP_SID, incomingAllow: true }));
+  return token.toJwt();
+}
+
+// ─── API: list active calls ───────────────────────────────────────────────────
+app.get('/api/jareih/active-calls', auth, (req, res) => {
+  res.json({ calls: getActiveCallsPayload() });
+});
+
+// ─── API: Initiate Jareih AI call ─────────────────────────────────────────────
 app.post('/api/jareih/call', auth, async (req, res) => {
   const { personId, goal } = req.body;
   if (!personId || !goal) return res.status(400).json({ error: 'personId and goal required' });
@@ -4571,13 +4547,12 @@ app.post('/api/jareih/call', auth, async (req, res) => {
   const personR = await pool.query('SELECT * FROM people WHERE id=$1', [personId]);
   const person = personR.rows[0];
   if (!person) return res.status(404).json({ error: 'Contact not found' });
-  if (!person.phone) return res.status(400).json({ error: 'Contact has no phone number on file' });
+  if (!person.phone) return res.status(400).json({ error: 'Contact has no phone number' });
 
   const actsR = await pool.query(
-    `SELECT type, body, direction, created_at FROM activities WHERE person_id=$1 ORDER BY created_at DESC LIMIT 15`,
+    `SELECT type,body,direction,created_at FROM activities WHERE person_id=$1 ORDER BY created_at DESC LIMIT 15`,
     [String(personId)]
   );
-
   const callId = `jc-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
   jareihCalls.set(callId, {
@@ -4585,43 +4560,70 @@ app.post('/api/jareih/call', auth, async (req, res) => {
     agentId: String(req.agent.id),
     goal,
     context: {
-      name: `${person.first_name} ${person.last_name || ''}`.trim(),
-      phone: person.phone,
-      stage: person.stage,
-      notes: person.notes,
+      name: `${person.first_name} ${person.last_name||''}`.trim(),
+      phone: person.phone, stage: person.stage,
+      notes: person.notes, email: person.email,
       recentActivity: actsR.rows
     },
     transcript: [],
-    callSid: null,
-    shouldEnd: false,
-    goalAchieved: false,
-    finalized: false
+    contactCallSid: null, aiBridgeCallSid: null,
+    araMuted: false, araActive: true,
+    shouldEnd: false, goalAchieved: false, finalized: false,
+    startedAt: Date.now(), callStatus: 'initiated',
+    listeners: []
   });
 
   try {
     const tc = initTwilioFull();
     if (!tc) throw new Error('Twilio not configured');
     const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
-    const call = await tc.calls.create({
-      to: person.phone,
-      from: fromNum,
-      url: `${process.env.APP_URL}/api/jareih/call-twiml/${callId}`,
+
+    // Call the contact — puts them in a Conference room
+    const contactCall = await tc.calls.create({
+      to: person.phone, from: fromNum,
+      url: `${process.env.APP_URL}/api/jareih/contact-twiml/${callId}`,
       statusCallback: `${process.env.APP_URL}/api/jareih/call-status/${callId}`,
       statusCallbackMethod: 'POST',
-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
+      statusCallbackEvent: ['initiated','ringing','answered','completed']
     });
-    jareihCalls.get(callId).callSid = call.sid;
-    res.json({ ok: true, callId, callSid: call.sid, contactName: jareihCalls.get(callId).context.name });
+    jareihCalls.get(callId).contactCallSid = contactCall.sid;
+
+    // AI bridge call — joins same conference + streams audio to Ara
+    const aiCall = await tc.calls.create({
+      to: fromNum, from: fromNum,
+      url: `${process.env.APP_URL}/api/jareih/ai-bridge-twiml/${callId}`,
+      statusCallback: `${process.env.APP_URL}/api/jareih/ai-bridge-status/${callId}`,
+      statusCallbackMethod: 'POST'
+    });
+    jareihCalls.get(callId).aiBridgeCallSid = aiCall.sid;
+
+    broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
+    res.json({ ok:true, callId, contactCallSid:contactCall.sid, contactName:person.first_name });
   } catch(e) {
     jareihCalls.delete(callId);
     res.status(500).json({ error: e.message });
   }
 });
 
-// TwiML: connect call to WebSocket media stream
-app.all('/api/jareih/call-twiml/:callId', (req, res) => {
+// Contact TwiML — joins the conference
+app.all('/api/jareih/contact-twiml/:callId', (req, res) => {
   const { callId } = req.params;
-  const wsBase = (process.env.APP_URL || '').replace('https://', 'wss://').replace('http://', 'ws://');
+  const confName = jcConferenceName(callId);
+  res.type('text/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial>
+    <Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true"
+      statusCallback="${process.env.APP_URL}/api/jareih/conf-events/${callId}"
+      statusCallbackEvent="start end join leave">${confName}</Conference>
+  </Dial>
+</Response>`);
+});
+
+// AI bridge TwiML — connects to media stream (Ara reads/writes audio)
+app.all('/api/jareih/ai-bridge-twiml/:callId', (req, res) => {
+  const { callId } = req.params;
+  const wsBase = (process.env.APP_URL||'').replace('https://','wss://').replace('http://','ws://');
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -4633,30 +4635,155 @@ app.all('/api/jareih/call-twiml/:callId', (req, res) => {
 </Response>`);
 });
 
-// Twilio status callback
-app.post('/api/jareih/call-status/:callId', async (req, res) => {
-  const { callId } = req.params;
-  const { CallStatus, CallDuration } = req.body;
+// Conference events callback
+app.post('/api/jareih/conf-events/:callId', (req, res) => {
   res.sendStatus(200);
+  const { callId } = req.params;
+  const { StatusCallbackEvent, CallSid, Muted } = req.body;
   const session = jareihCalls.get(callId);
   if (!session) return;
-  if (['completed', 'failed', 'busy', 'no-answer', 'canceled'].includes(CallStatus)) {
-    await finalizeJareihCall(callId, CallStatus, parseInt(CallDuration) || 0);
+  console.log(`[Ara conf] ${StatusCallbackEvent} callId=${callId}`);
+});
+
+// Contact/status callback
+app.post('/api/jareih/call-status/:callId', async (req, res) => {
+  res.sendStatus(200);
+  const { callId } = req.params;
+  const { CallStatus, CallDuration } = req.body;
+  const session = jareihCalls.get(callId);
+  if (!session) return;
+  session.callStatus = CallStatus;
+  if (['completed','failed','busy','no-answer','canceled'].includes(CallStatus)) {
+    await finalizeJareihCall(callId, CallStatus, parseInt(CallDuration)||0);
   } else {
-    broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'status', status: CallStatus });
+    broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'status', status:CallStatus });
+    broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
   }
 });
 
-// Hang up a Jareih call manually
+app.post('/api/jareih/ai-bridge-status/:callId', (req, res) => { res.sendStatus(200); });
+
+// ─── Mute / unmute Ara ────────────────────────────────────────────────────────
+app.post('/api/jareih/toggle-ara', auth, async (req, res) => {
+  const { callId, mute } = req.body;
+  const session = jareihCalls.get(callId);
+  if (!session) return res.status(404).json({ error: 'Call not found' });
+  session.araMuted = !!mute;
+  session.araActive = !mute;
+  if (mute && session.ws && session.ws.readyState === WebSocket.OPEN) {
+    // Silence Ara immediately
+    session.ws.send(JSON.stringify({ event:'clear', streamSid:session.streamSid }));
+  }
+  broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'ara_toggle', araMuted:session.araMuted });
+  broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
+  res.json({ ok:true, araMuted:session.araMuted });
+});
+
+// ─── Agent join the conference (listen or speak) ──────────────────────────────
+app.post('/api/jareih/call-join', auth, async (req, res) => {
+  const { callId, mode } = req.body; // mode: 'listen' | 'speak'
+  const session = jareihCalls.get(callId);
+  if (!session) return res.status(404).json({ error: 'Call not found' });
+  if (!process.env.TWILIO_API_KEY_SID) return res.status(503).json({ error:'Twilio API Key not configured' });
+  try {
+    const token = buildConferenceToken(req.agent.id, jcConferenceName(callId));
+    const confName = jcConferenceName(callId);
+    const muted = mode !== 'speak';
+    if (!muted) {
+      // Agent taking over — silence Ara
+      session.araMuted = true;
+      session.araActive = false;
+      if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+        session.ws.send(JSON.stringify({ event:'clear', streamSid:session.streamSid }));
+      }
+      session.transcript.push({ role:'agent', ts:Date.now(), text:'[Agent joined and took over]' });
+      broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'agent_joined', agentId:req.agent.id, agentName:req.agent.name, muted });
+    } else {
+      session.listeners = session.listeners || [];
+      if (!session.listeners.find(l => l.agentId === String(req.agent.id))) {
+        session.listeners.push({ agentId:String(req.agent.id), name:req.agent.name });
+      }
+      broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'agent_listening', agentId:req.agent.id, agentName:req.agent.name });
+    }
+    broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
+    res.json({ ok:true, token, confName, muted });
+  } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+// ─── Hang up ──────────────────────────────────────────────────────────────────
 app.post('/api/jareih/call-hangup', auth, async (req, res) => {
   const { callId } = req.body;
   const session = jareihCalls.get(callId);
-  if (!session) return res.status(404).json({ error: 'Call not found' });
+  if (!session) return res.status(404).json({ error:'Call not found' });
   try {
     const tc = initTwilioFull();
-    if (tc && session.callSid) await tc.calls(session.callSid).update({ status: 'completed' });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    if (tc) {
+      if (session.contactCallSid)  await tc.calls(session.contactCallSid).update({ status:'completed' }).catch(()=>{});
+      if (session.aiBridgeCallSid) await tc.calls(session.aiBridgeCallSid).update({ status:'completed' }).catch(()=>{});
+    }
+    res.json({ ok:true });
+  } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+// ─── Bring Ara into an existing regular call ──────────────────────────────────
+// Agent is on a call (callSid known), they want Ara to assist or take over
+app.post('/api/jareih/inject-ara', auth, async (req, res) => {
+  const { callSid, personId, goal } = req.body;
+  if (!callSid || !personId || !goal) return res.status(400).json({ error:'callSid, personId, goal required' });
+
+  const personR = await pool.query('SELECT * FROM people WHERE id=$1', [personId]);
+  const person = personR.rows[0];
+  if (!person) return res.status(404).json({ error:'Contact not found' });
+
+  const actsR = await pool.query(
+    `SELECT type,body,direction,created_at FROM activities WHERE person_id=$1 ORDER BY created_at DESC LIMIT 15`,
+    [String(personId)]
+  );
+  const callId = `jc-inject-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+  jareihCalls.set(callId, {
+    personId: String(personId),
+    agentId: String(req.agent.id),
+    goal,
+    context: {
+      name: `${person.first_name} ${person.last_name||''}`.trim(),
+      phone: person.phone, stage: person.stage,
+      notes: person.notes, email: person.email,
+      recentActivity: actsR.rows
+    },
+    transcript: [{ role:'agent', ts:Date.now(), text:'[Agent was on call — injected Ara AI]' }],
+    contactCallSid: callSid, aiBridgeCallSid: null,
+    araMuted: false, araActive: true,
+    shouldEnd: false, goalAchieved: false, finalized: false,
+    startedAt: Date.now(), callStatus: 'connected', listeners: []
+  });
+
+  try {
+    const tc = initTwilioFull();
+    if (!tc) throw new Error('Twilio not configured');
+    const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+
+    // Move the existing call into a conference
+    await tc.calls(callSid).update({
+      url: `${process.env.APP_URL}/api/jareih/contact-twiml/${callId}`,
+      method: 'POST'
+    });
+
+    // Launch AI bridge into same conference
+    const aiCall = await tc.calls.create({
+      to: fromNum, from: fromNum,
+      url: `${process.env.APP_URL}/api/jareih/ai-bridge-twiml/${callId}`,
+      statusCallback: `${process.env.APP_URL}/api/jareih/ai-bridge-status/${callId}`,
+      statusCallbackMethod: 'POST'
+    });
+    jareihCalls.get(callId).aiBridgeCallSid = aiCall.sid;
+
+    broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
+    res.json({ ok:true, callId });
+  } catch(e) {
+    jareihCalls.delete(callId);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 
