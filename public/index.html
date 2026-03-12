@@ -3121,10 +3121,10 @@ async function loadPeople(listId = 'all') {
     const total = data.total ?? peopleData.length;
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
     _isDelinqList = listName.toLowerCase().includes('delinquent');
-    const _isTourList = _listMeta?.filters?.type === 'toured_no_followup';
     const _listMeta = smartLists.find(l=>String(l.id)===String(listId));
     window._isShowingsList     = _listMeta?.filters?.type === 'upcoming_showings_72h';
     window._isTourFollowupList = _listMeta?.filters?.type === 'toured_no_followup';
+    const _isTourList = _listMeta?.filters?.type === 'toured_no_followup';
     ['th-past-due','th-past-due-days'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display=_isDelinqList?'':'none'; });
     if (_isDelinqList && sortField !== 'past_due_days') { sortField='past_due_balance'; sortDir='desc'; }
     else if (!_isDelinqList && sortField==='past_due_balance') { sortField='name'; sortDir='asc'; }
