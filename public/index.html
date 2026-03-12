@@ -2498,6 +2498,8 @@
       <button class="call-btn call-btn-mute" id="mute-btn" onclick="toggleMute()">🎤 Mute</button>
       <button class="call-btn call-btn-hold" id="hold-btn" onclick="toggleHold()">⏸ Hold</button>
       <button class="call-btn call-btn-end" onclick="endCall()">✕ End</button>
+      <button class="call-btn" id="inject-ara-btn" onclick="injectAraToCall()" title="Bring Ara AI into this call"
+        style="background:rgba(0,200,120,0.15);color:#00cc78;border:1px solid rgba(0,200,120,0.3);font-size:10px;padding:4px 10px;font-family:var(--font-mono);font-weight:800;border-radius:6px">⬡ ARA</button>
     </div>
   </div>
   <!-- Unknown caller action tray — shown after answering an unmatched number -->
@@ -2672,6 +2674,16 @@
               <!-- Action buttons row (confirm/cancel) -->
               <div id="jareih-action-row" style="display:none;padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px"></div>
             </div>
+          </div>
+          <!-- Live Calls Badge -->
+          <div style="position:relative;display:inline-flex">
+            <button id="live-calls-btn" onclick="toggleLiveCallsPanel()" title="Live AI Calls"
+              style="width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--bg-3);
+                     cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .15s"
+              onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='var(--bg-3)'">📞</button>
+            <span id="live-calls-badge" style="display:none;position:absolute;top:-4px;right:-4px;
+              background:var(--red);color:#fff;font-size:9px;font-weight:800;padding:2px 5px;
+              border-radius:10px;min-width:16px;text-align:center;pointer-events:none"></span>
           </div>
           <!-- Notification Bell -->
           <div style="position:relative;display:inline-flex">
@@ -6040,6 +6052,28 @@ function handleJareihCallUpdate(payload) {
       }, 1500);
     }
   }
+}
+
+// ── Inject Ara into an existing active call ──────────────────────────────────
+async function injectAraToCall() {
+  if (!activeCall) { toast('No active call','error'); return; }
+  const callSid = activeCall.parameters?.CallSid || activeCall._callSid || null;
+  if (!callSid) { toast('Cannot get call SID — Ara inject unavailable','error'); return; }
+  const goal = prompt('What should Ara try to accomplish on this call?');
+  if (!goal) return;
+  const personId = currentPersonId || _incomingMatchedPerson?.id;
+  if (!personId) { toast('Please open a contact file first','error'); return; }
+  try {
+    const r = await api('/api/jareih/inject-ara','POST',{ callSid, personId, goal });
+    if (r.ok) {
+      window._jareihActiveCall = { callId: r.callId, personId: String(personId) };
+      Jareih.openWindow();
+      Jareih.appendCallStatus('⬡ Ara AI injected into call — taking over…');
+      toast('Ara is now on the call','success');
+      const btn = document.getElementById('jareih-hangup-btn');
+      if (btn) btn.style.display = 'inline-flex';
+    } else { toast(r.error||'Inject failed','error'); }
+  } catch(e) { toast('Inject error: '+e.message,'error'); }
 }
 
 async function syncGmailContact(personId) {
@@ -9597,6 +9631,8 @@ function connectAgentSse() {
         }
       } else if (payload.type === 'jareih_call_update') {
         handleJareihCallUpdate(payload);
+      } else if (payload.type === 'jareih_active_calls') {
+        handleJareihActiveCalls(payload.calls || []);
       } else if (payload.type === 'agent_status') {
         // Another agent changed their status — refresh dashboard crew panel if visible
         if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
@@ -10340,6 +10376,336 @@ ${propSections}
     if (btn) { btn.textContent = '⬇ DOWNLOAD PDF'; btn.disabled = false; }
   }
 }
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     LIVE CALL CONTROL CENTER PANEL
+══════════════════════════════════════════════════════════════════════════════ -->
+<div id="live-calls-panel" style="display:none;position:fixed;top:0;right:0;width:480px;height:100vh;
+  background:var(--bg-1);border-left:1px solid var(--border);z-index:8800;
+  display:none;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,0.4)">
+
+  <!-- Panel header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;
+    padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;
+    background:linear-gradient(135deg,#1a0008,#2a0010)">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:16px">📞</span>
+      <span style="font-size:13px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.1em;color:#fff">LIVE CALL CENTER</span>
+      <span id="lcp-count" style="font-size:10px;background:rgba(232,0,58,0.3);color:#ff6688;border-radius:8px;padding:2px 7px;font-family:var(--font-mono)">0 active</span>
+    </div>
+    <button onclick="toggleLiveCallsPanel()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:18px;cursor:pointer;transition:color .15s"
+      onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">✕</button>
+  </div>
+
+  <!-- No calls state -->
+  <div id="lcp-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-3);gap:12px">
+    <div style="font-size:40px;opacity:0.3">📞</div>
+    <div style="font-size:13px;font-weight:600">No active AI calls</div>
+    <div style="font-size:11px;max-width:260px;text-align:center;line-height:1.6">Tell Jareih to "call [contact name] about [goal]" to start an AI-powered outbound call</div>
+  </div>
+
+  <!-- Active calls list -->
+  <div id="lcp-calls-list" style="flex:1;overflow-y:auto;display:none"></div>
+</div>
+
+<!-- Individual call detail panel (slides over the list) -->
+<div id="lcp-detail" style="display:none;position:fixed;top:0;right:0;width:480px;height:100vh;
+  background:var(--bg-1);border-left:1px solid var(--border);z-index:8900;flex-direction:column;
+  box-shadow:-8px 0 40px rgba(0,0,0,0.4)">
+  <div id="lcp-detail-inner" style="display:flex;flex-direction:column;height:100%"></div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// LIVE CALL CONTROL CENTER
+// ════════════════════════════════════════════════════════════════════════════
+let _lccOpen = false;
+let _lccActiveCalls = [];
+let _lccDetailCallId = null;
+let _lccVoiceDevice = null;  // Twilio Voice SDK device for monitoring
+let _lccVoiceConn = null;
+
+// ── Toggle panel ─────────────────────────────────────────────────────────────
+function toggleLiveCallsPanel() {
+  _lccOpen = !_lccOpen;
+  const panel = document.getElementById('live-calls-panel');
+  if (panel) panel.style.display = _lccOpen ? 'flex' : 'none';
+  if (_lccOpen) renderLccCallsList();
+}
+
+// ── Update badge ──────────────────────────────────────────────────────────────
+function updateLccBadge(count) {
+  const badge = document.getElementById('live-calls-badge');
+  const btn   = document.getElementById('live-calls-btn');
+  if (!badge || !btn) return;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = 'block';
+    btn.style.borderColor = 'var(--red)';
+    btn.style.boxShadow = '0 0 10px rgba(232,0,58,0.4)';
+  } else {
+    badge.style.display = 'none';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.boxShadow = 'none';
+  }
+  const cnt = document.getElementById('lcp-count');
+  if (cnt) cnt.textContent = `${count} active`;
+}
+
+// ── Render calls list ─────────────────────────────────────────────────────────
+function renderLccCallsList() {
+  const list  = document.getElementById('lcp-calls-list');
+  const empty = document.getElementById('lcp-empty');
+  if (!list || !empty) return;
+  if (!_lccActiveCalls.length) {
+    list.style.display  = 'none';
+    empty.style.display = 'flex';
+    return;
+  }
+  list.style.display  = 'flex';
+  empty.style.display = 'none';
+  list.style.flexDirection = 'column';
+  list.style.gap = '0';
+
+  list.innerHTML = _lccActiveCalls.map(call => {
+    const statusColor = call.status === 'connected' ? 'var(--green)' : call.status === 'ringing' ? 'var(--amber)' : 'var(--text-3)';
+    const statusLabel = { initiated:'Dialing…', ringing:'Ringing…', connected:'Live', completed:'Ended' }[call.status] || call.status;
+    const lastLine = call.transcript?.slice(-1)[0];
+    const preview = lastLine ? `${lastLine.role === 'ara' ? '🎙' : '👤'} ${(lastLine.text||'').slice(0,60)}` : 'Waiting for connection…';
+    const elapsed = call.startedAt ? Math.floor((Date.now() - call.startedAt)/1000) : 0;
+    const mm = Math.floor(elapsed/60).toString().padStart(2,'0');
+    const ss = (elapsed%60).toString().padStart(2,'0');
+
+    return `<div onclick="openLccDetail('${call.callId}')" style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s"
+      onmouseover="this.style.background='var(--bg-2)'" onmouseout="this.style.background='transparent'">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:18px">👤</span>
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${esc(call.contactName)}</div>
+            <div style="font-size:10px;color:var(--text-3)">${esc(call.contactPhone||'')} · ${esc(call.contactStage||'')}</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;font-weight:700;color:${statusColor}">${statusLabel}</div>
+          <div style="font-size:10px;color:var(--text-3);font-family:var(--font-mono)">${mm}:${ss}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-2);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(preview)}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
+        ${call.araActive ? '<span style="font-size:9px;background:rgba(0,200,120,0.15);color:#00cc78;border-radius:8px;padding:2px 7px;font-family:var(--font-mono);font-weight:700">⬡ ARA ACTIVE</span>' : '<span style="font-size:9px;background:var(--bg-3);color:var(--text-3);border-radius:8px;padding:2px 7px;font-family:var(--font-mono)">ARA MUTED</span>'}
+        ${(call.listeners||[]).map(l=>`<span style="font-size:9px;background:var(--bg-3);color:var(--text-2);border-radius:8px;padding:2px 7px">👂 ${esc(l.name)}</span>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Open call detail ───────────────────────────────────────────────────────────
+async function openLccDetail(callId) {
+  _lccDetailCallId = callId;
+  const panel = document.getElementById('lcp-detail');
+  if (panel) panel.style.display = 'flex';
+  renderLccDetail(callId);
+
+  // Also load the contact file
+  const call = _lccActiveCalls.find(c => c.callId === callId);
+  if (call?.personId) {
+    try {
+      const [person, activities] = await Promise.all([
+        api(`/api/people/${call.personId}`),
+        api(`/api/activities?personId=${call.personId}`)
+      ]);
+      _lccDetailPerson = person;
+      _lccDetailActivities = activities;
+      renderLccDetail(callId);
+    } catch(e) {}
+  }
+}
+
+let _lccDetailPerson = null;
+let _lccDetailActivities = [];
+
+function renderLccDetail(callId) {
+  const call = _lccActiveCalls.find(c => c.callId === callId);
+  const inner = document.getElementById('lcp-detail-inner');
+  if (!inner) return;
+  const person = _lccDetailPerson;
+  const statusColor = call?.status === 'connected' ? 'var(--green)' : 'var(--amber)';
+  const elapsed = call?.startedAt ? Math.floor((Date.now() - call.startedAt)/1000) : 0;
+  const mm = Math.floor(elapsed/60).toString().padStart(2,'0');
+  const ss = (elapsed%60).toString().padStart(2,'0');
+
+  inner.innerHTML = `
+    <!-- Detail header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;
+      background:linear-gradient(135deg,#1a0008,#2a0010);border-bottom:1px solid rgba(232,0,58,0.2);flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <button onclick="closeLccDetail()" style="background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:18px;padding:0 4px"
+          onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.5)'">←</button>
+        <div>
+          <div style="font-size:13px;font-weight:800;color:#fff">${esc(call?.contactName||'Unknown')}</div>
+          <div style="font-size:10px;color:${statusColor};font-family:var(--font-mono)">${call?.status?.toUpperCase()||'--'} · ${mm}:${ss}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px">
+        ${person ? `<button onclick="openContact('${call?.personId}');toggleLiveCallsPanel();" title="Open full contact file"
+          style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-family:var(--font-mono)">📋 FILE</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Call controls -->
+    <div style="display:flex;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
+      ${call?.araActive
+        ? `<button onclick="lccToggleAra('${callId}',true)" style="flex:1;min-width:100px;height:32px;background:rgba(232,0,58,0.15);color:var(--red);border:1px solid rgba(232,0,58,0.3);border-radius:6px;font-size:10px;font-weight:800;font-family:var(--font-mono);cursor:pointer;letter-spacing:0.05em">⬡ MUTE ARA</button>`
+        : `<button onclick="lccToggleAra('${callId}',false)" style="flex:1;min-width:100px;height:32px;background:rgba(0,200,120,0.12);color:#00cc78;border:1px solid rgba(0,200,120,0.3);border-radius:6px;font-size:10px;font-weight:800;font-family:var(--font-mono);cursor:pointer;letter-spacing:0.05em">▶ RESUME ARA</button>`
+      }
+      <button onclick="lccJoinCall('${callId}','listen')" style="flex:1;min-width:100px;height:32px;background:var(--bg-3);color:var(--text-2);border:1px solid var(--border);border-radius:6px;font-size:10px;font-weight:700;font-family:var(--font-mono);cursor:pointer">👂 LISTEN</button>
+      <button onclick="lccJoinCall('${callId}','speak')" style="flex:1;min-width:100px;height:32px;background:rgba(30,100,255,0.15);color:#4488ff;border:1px solid rgba(30,100,255,0.3);border-radius:6px;font-size:10px;font-weight:800;font-family:var(--font-mono);cursor:pointer">🎤 JOIN CALL</button>
+      <button onclick="lccHangup('${callId}')" style="flex:1;min-width:100px;height:32px;background:rgba(232,0,58,0.2);color:var(--red);border:1px solid rgba(232,0,58,0.4);border-radius:6px;font-size:10px;font-weight:800;font-family:var(--font-mono);cursor:pointer">📴 HANG UP</button>
+    </div>
+
+    <!-- Split: transcript + contact file -->
+    <div style="flex:1;display:flex;overflow:hidden">
+
+      <!-- Transcript -->
+      <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden">
+        <div style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.08em;border-bottom:1px solid var(--border);flex-shrink:0">LIVE TRANSCRIPT</div>
+        <div id="lcc-transcript-${callId}" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;scroll-behavior:smooth">
+          ${(call?.transcript||[]).map(t => `
+            <div style="display:flex;${t.role==='ara'||t.role==='agent'?'justify-content:flex-start':'justify-content:flex-end'}">
+              <div style="max-width:85%;padding:6px 10px;border-radius:8px;font-size:11px;line-height:1.5;
+                ${t.role==='ara'?'background:rgba(0,200,120,0.1);border:1px solid rgba(0,200,120,0.2);color:var(--text)':
+                  t.role==='agent'?'background:rgba(30,100,255,0.1);border:1px solid rgba(30,100,255,0.2);color:var(--text)':
+                  'background:var(--bg-3);border:1px solid var(--border);color:var(--text)'}">
+                <span style="font-size:9px;font-weight:700;opacity:0.6;display:block;margin-bottom:2px;font-family:var(--font-mono)">
+                  ${t.role==='ara'?'🎙 ARA':t.role==='agent'?'🎤 AGENT':`👤 ${esc(call?.contactName||'')}`}</span>
+                ${esc(t.text)}
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- Contact file snapshot -->
+      <div style="width:200px;overflow-y:auto;flex-shrink:0">
+        <div style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.08em;border-bottom:1px solid var(--border)">CONTACT FILE</div>
+        ${person ? `
+          <div style="padding:10px">
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:2px">${esc(person.first_name)} ${esc(person.last_name||'')}</div>
+            <div style="font-size:10px;color:var(--text-3);margin-bottom:8px">${esc(person.stage||'')}</div>
+            ${person.email?`<div style="font-size:10px;color:var(--text-2);margin-bottom:3px;word-break:break-all">✉ ${esc(person.email)}</div>`:''}
+            ${person.phone?`<div style="font-size:10px;color:var(--text-2);margin-bottom:8px">📱 ${esc(person.phone)}</div>`:''}
+            ${person.notes?`<div style="font-size:10px;color:var(--text-3);line-height:1.5;margin-bottom:8px;border-top:1px solid var(--border);padding-top:8px">${esc(person.notes.slice(0,200))}</div>`:''}
+            <div style="font-size:9px;font-weight:700;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em;margin-bottom:6px">RECENT ACTIVITY</div>
+            ${(_lccDetailActivities||[]).slice(0,6).map(a=>`
+              <div style="font-size:9px;color:var(--text-3);margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">
+                <span style="font-weight:700;color:var(--text-2)">${a.type}</span> · ${new Date(a.created_at).toLocaleDateString()}
+                <div style="margin-top:2px;line-height:1.4">${esc((a.body||'').slice(0,60))}${a.body?.length>60?'…':''}</div>
+              </div>`).join('')}
+          </div>
+        ` : `<div style="padding:14px;font-size:11px;color:var(--text-3)">Loading…</div>`}
+      </div>
+    </div>
+
+    <!-- Goal bar -->
+    <div style="padding:8px 14px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg-2)">
+      <span style="font-size:10px;font-weight:700;color:var(--text-3);font-family:var(--font-mono)">GOAL:</span>
+      <span style="font-size:11px;color:var(--text-2);margin-left:6px">${esc(call?.goal||'')}</span>
+    </div>`;
+
+  // Scroll transcript to bottom
+  const tx = document.getElementById(`lcc-transcript-${callId}`);
+  if (tx) tx.scrollTop = tx.scrollHeight;
+}
+
+function closeLccDetail() {
+  const panel = document.getElementById('lcp-detail');
+  if (panel) panel.style.display = 'none';
+  _lccDetailCallId = null;
+  _lccDetailPerson = null;
+  _lccDetailActivities = [];
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+async function lccToggleAra(callId, mute) {
+  try {
+    await api('/api/jareih/toggle-ara','POST',{ callId, mute });
+  } catch(e) { toast('Error: '+e.message,'error'); }
+}
+
+async function lccHangup(callId) {
+  if (!confirm('Hang up this call?')) return;
+  try {
+    await api('/api/jareih/call-hangup','POST',{ callId });
+    closeLccDetail();
+    // Also kill in Jareih chat
+    window._jareihActiveCall = null;
+    const btn = document.getElementById('jareih-hangup-btn');
+    if (btn) btn.style.display = 'none';
+  } catch(e) { toast('Hangup error: '+e.message,'error'); }
+}
+
+async function lccJoinCall(callId, mode) {
+  try {
+    const r = await api('/api/jareih/call-join','POST',{ callId, mode });
+    if (!r.ok) { toast(r.error||'Join failed','error'); return; }
+    toast(`${mode==='speak'?'Joining call — Ara muted':'Listening in on call'}…`,'success');
+
+    // Init Twilio Voice SDK and join the conference
+    if (!_lccVoiceDevice) {
+      const tokenR = await api('/api/twilio/token','POST',{});
+      const { Device } = Twilio;
+      _lccVoiceDevice = new Device(tokenR.token, { codecPreferences:['opus','pcmu'], edge:'ashburn' });
+      await _lccVoiceDevice.register();
+    }
+    // Call ourselves (use the conference TwiML app endpoint)
+    _lccVoiceConn = await _lccVoiceDevice.connect({
+      params: { To: r.confName, Muted: mode === 'listen' ? 'true' : 'false' }
+    });
+    toast(mode === 'speak' ? '🎤 You are live on the call' : '👂 Listening to call audio', 'success');
+
+    // Show leave button
+    const existing = document.getElementById('lcc-leave-btn');
+    if (!existing) {
+      const leaveBtn = document.createElement('button');
+      leaveBtn.id = 'lcc-leave-btn';
+      leaveBtn.textContent = '📵 Leave';
+      leaveBtn.onclick = lccLeaveCall;
+      leaveBtn.style.cssText = 'position:fixed;bottom:80px;right:500px;z-index:9900;background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer;font-family:var(--font-mono)';
+      document.body.appendChild(leaveBtn);
+    }
+  } catch(e) { toast('Join error: '+e.message,'error'); }
+}
+
+function lccLeaveCall() {
+  if (_lccVoiceConn) { _lccVoiceConn.disconnect(); _lccVoiceConn = null; }
+  const btn = document.getElementById('lcc-leave-btn');
+  if (btn) btn.remove();
+  toast('Left the call', 'success');
+}
+
+// ── Handle SSE updates ────────────────────────────────────────────────────────
+function handleJareihActiveCalls(calls) {
+  _lccActiveCalls = calls;
+  updateLccBadge(calls.length);
+  if (_lccOpen) renderLccCallsList();
+  if (_lccDetailCallId) {
+    const still = calls.find(c => c.callId === _lccDetailCallId);
+    if (still) renderLccDetail(_lccDetailCallId);
+    else closeLccDetail();
+  }
+}
+
+// On boot, fetch active calls
+api('/api/jareih/active-calls').then(r => { if (r.calls) handleJareihActiveCalls(r.calls); }).catch(()=>{});
+
+// Timer refresh for call durations
+setInterval(() => {
+  if (_lccActiveCalls.length) {
+    if (_lccOpen) renderLccCallsList();
+    if (_lccDetailCallId) renderLccDetail(_lccDetailCallId);
+  }
+}, 1000);
 </script>
 
 </body>
