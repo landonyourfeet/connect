@@ -3073,7 +3073,29 @@ async function loadSmartLists() {
   try {
     smartLists = await api('/api/smart-lists');
     renderSmartListsNav();
+    // Pre-populate badge counts without waiting for each list to be clicked
+    loadSmartListCounts();
   } catch(e) { console.warn('Smart lists:', e.message); }
+}
+
+async function loadSmartListCounts() {
+  try {
+    const counts = await api('/api/smart-lists/counts');
+    for (const [listId, count] of Object.entries(counts)) {
+      const badge = document.getElementById('badge-' + listId);
+      if (!badge) continue;
+      if (count === null) { badge.textContent = '—'; continue; }
+      badge.textContent = count > 999 ? '999+' : count;
+      const list = smartLists.find(l => String(l.id) === String(listId));
+      const name = (list?.name || '').toLowerCase();
+      const isUrgent = name.includes('delinquent') || name.includes('evict') || list?.filters?.type === 'toured_no_followup';
+      if (isUrgent && count > 0) {
+        badge.style.background = 'var(--red)';
+        badge.style.color = '#fff';
+        badge.classList.add('urgent');
+      }
+    }
+  } catch(e) { /* counts are cosmetic — fail silently */ }
 }
 
 function renderSmartListsNav() {
