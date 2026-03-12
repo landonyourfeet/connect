@@ -834,7 +834,15 @@ app.put('/api/smart-lists/:id', auth, async (req, res) => {
 
 app.delete('/api/smart-lists/:id', auth, async (req, res) => {
   try {
+    // Record deletion so default lists don't re-seed on next deploy
+    const delR = await pool.query('SELECT name FROM smart_lists WHERE id=$1', [req.params.id]);
     await pool.query('DELETE FROM smart_lists WHERE id=$1', [req.params.id]);
+    if (delR.rows[0]?.name) {
+      await pool.query(
+        `INSERT INTO deleted_smart_lists (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
+        [delR.rows[0].name]
+      ).catch(()=>{});
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1083,6 +1091,22 @@ app.post('/api/twilio/sms-inbound', async (req, res) => {
       body: Body,
       createdAt: actR.rows[0].created_at
     });
+
+    // Create notifications for all active agents
+    try {
+      const agentsR = await pool.query('SELECT id FROM agents WHERE is_active=true');
+      const preview = Body.length > 80 ? Body.substring(0, 80) + '…' : Body;
+      const senderName = person ? `${person.first_name} ${person.last_name||''}`.trim() : From;
+      for (const ag of agentsR.rows) {
+        await createNotification({
+          recipientId: ag.id,
+          type: 'inbound_sms',
+          personId: person?.id || null,
+          activityId: actR.rows[0].id,
+          body: `💬 ${senderName}: "${preview}"`
+        });
+      }
+    } catch(e) { console.warn('[SMS Notif]', e.message); }
 
   } catch (e) {
     console.error('[SMS Inbound] Error:', e.message);
@@ -1882,7 +1906,9 @@ async function initDB() {
     }
   } catch (e) { console.error('[DB] seed admin:', e.message); }
 
-  // Seed smart lists
+  // Seed smart lists — only on first boot (DO NOTHING so deletes by users are respected)
+  // Add a 'deleted_smart_list_names' table to track user-deleted defaults
+  await run(`CREATE TABLE IF NOT EXISTS deleted_smart_lists (name TEXT PRIMARY KEY, deleted_at TIMESTAMPTZ DEFAULT NOW())`, 'create deleted_smart_lists');
   try {
     const smartListDefs = [
       { name: 'Delinquent Residents', filters: { stage: 'Delinquent' }, sort_order: 0 },
@@ -1893,9 +1919,15 @@ async function initDB() {
       { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
       { name: '🏠 Upcoming Showings',  filters: { type: 'upcoming_showings_72h' }, sort_order: 1 },
     ];
+    // Get list of user-deleted default lists so we don't recreate them
+    const deletedR = await pool.query('SELECT name FROM deleted_smart_lists');
+    const deletedNames = new Set(deletedR.rows.map(r => r.name));
     for (const sl of smartListDefs) {
-      await pool.query(`INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) ON CONFLICT (name) DO UPDATE SET filters=EXCLUDED.filters`,
-        [sl.name, JSON.stringify(sl.filters), sl.sort_order]).catch(()=>{});
+      if (deletedNames.has(sl.name)) continue; // user deleted this — respect their choice
+      await pool.query(
+        `INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) ON CONFLICT (name) DO NOTHING`,
+        [sl.name, JSON.stringify(sl.filters), sl.sort_order]
+      ).catch(()=>{});
     }
   } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
 
@@ -2276,6 +2308,18 @@ app.post('/api/leads/inbound', async (req, res) => {
     const notes = [fields.property && `Interested in: ${fields.property}`, fields.source && `Source: ${fields.source}`, fields.message && `Message: ${fields.message}`].filter(Boolean).join('\n');
     const ins = await pool.query(`INSERT INTO people (first_name,last_name,email,phone,stage,source,notes,updated_at) VALUES ($1,$2,$3,$4,'Lead',$5,$6,NOW()) RETURNING id`, [fields.first_name||'Unknown', fields.last_name||'', fields.email||null, phone, fields.source||'Email Lead', notes||null]);
     broadcastToAll({ type: 'new_lead', personId: ins.rows[0].id, name: `${fields.first_name} ${fields.last_name}`, source: fields.source });
+    // Notify all active agents of new inbound lead
+    try {
+      const agentsR2 = await pool.query('SELECT id FROM agents WHERE is_active=true');
+      for (const ag of agentsR2.rows) {
+        await createNotification({
+          recipientId: ag.id,
+          type: 'new_lead',
+          personId: String(ins.rows[0].id),
+          body: `🏠 New lead: ${fields.first_name} ${fields.last_name||''} (${fields.source||'Web'})`
+        });
+      }
+    } catch(e) {}
     res.json({ created: true, id: ins.rows[0].id });
   } catch(e) { console.error('[leads/inbound]', e.message); res.status(500).json({ error: e.message }); }
 });
