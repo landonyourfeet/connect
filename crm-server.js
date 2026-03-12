@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const http    = require('http');
+const WebSocket = require('ws');
 const multer  = require('multer');
 const crypto  = require('crypto');
 const { google } = require('googleapis');
@@ -10,6 +12,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
@@ -2536,6 +2539,314 @@ setTimeout(backgroundGmailSync, 10000);
 setInterval(backgroundGmailSync, 15 * 60 * 1000);
 
 // ─── LEAD INBOUND EMAIL WEBHOOK ───────────────────────────────────────────────
+// =============================================================================
+// GMAIL LEAD SCRAPER — pulls lead emails from connected Gmail accounts
+// =============================================================================
+
+// Known lead notification senders from listing platforms
+const LEAD_SENDER_PATTERNS = [
+  /zillow\.com/i,
+  /apartments\.com/i,
+  /apartmentlist\.com/i,
+  /rent\.com/i,
+  /rentpath\.com/i,
+  /trulia\.com/i,
+  /hotpads\.com/i,
+  /zumper\.com/i,
+  /cozy\.co/i,
+  /doorsteps\.com/i,
+  /realtor\.com/i,
+  /facebook\.com/i,
+  /lead/i,
+  /inquiry/i,
+  /contact.*request/i,
+  /showing.*request/i,
+  /rental.*inquiry/i,
+  /apartment.*inquiry/i,
+  /new.*lead/i,
+  /prospective.*tenant/i,
+  /appfolio\.com/i,
+  /buildium/i,
+  /yardi/i,
+  /forrent\.com/i,
+  /padmapper/i,
+  /craigslist/i,
+];
+
+function looksLikeLead(from, subject) {
+  const text = `${from} ${subject}`.toLowerCase();
+  return LEAD_SENDER_PATTERNS.some(p => p.test(text));
+}
+
+// AI extraction — same as inbound webhook but reusable
+async function extractLeadFromEmail({ from, subject, body }) {
+  const grok = initGrok();
+  if (!grok) {
+    // Pattern-based fallback — extract what we can with regex
+    const emailMatch = body.match(/[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}/g);
+    const phoneMatch = body.match(/(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g);
+    const nameMatch = body.match(/(?:name|from|contact)[:\s]+([A-Z][a-z]+ [A-Z][a-z]+)/i);
+    return {
+      is_lead: true,
+      first_name: nameMatch?.[1]?.split(' ')[0] || 'Lead',
+      last_name: nameMatch?.[1]?.split(' ')[1] || '',
+      email: emailMatch?.find(e => !e.includes('noreply') && !e.includes('zillow') && !e.includes('apartments')) || '',
+      phone: phoneMatch?.[0]?.replace(/\D/g,'').slice(-10) || '',
+      source: from.includes('zillow') ? 'Zillow' : from.includes('apartments') ? 'Apartments.com' : from.includes('zumper') ? 'Zumper' : from.includes('trulia') ? 'Trulia' : 'Email Lead',
+      property: '',
+      message: body.substring(0, 500),
+    };
+  }
+  try {
+    const r = await grok.chat.completions.create({
+      model: 'grok-3', max_tokens: 400,
+      messages: [{ role: 'user', content:
+        `Extract rental lead contact info from this email notification. Return ONLY JSON, no markdown.
+From: ${from}
+Subject: ${subject}
+Body: ${body.substring(0, 3000)}
+
+JSON format:
+{
+  "is_lead": true/false,
+  "first_name": "",
+  "last_name": "",
+  "email": "prospect's email (not the platform's)",
+  "phone": "10 digits only, no formatting",
+  "source": "platform name (Zillow, Apartments.com, etc)",
+  "property": "property name or address they inquired about",
+  "unit": "unit number if mentioned",
+  "message": "their inquiry message verbatim",
+  "move_in_date": "if mentioned",
+  "bedrooms": "if mentioned"
+}
+Set is_lead=false for system notifications, billing emails, spam, or emails with no prospect contact info.` }]
+    });
+    const raw = r.choices[0].message.content.replace(/```json?|```/g,'').trim();
+    return JSON.parse(raw);
+  } catch(e) {
+    console.warn('[LeadScraper] AI extract failed:', e.message);
+    return null;
+  }
+}
+
+// Core scraper — runs for a single agent's Gmail
+async function scrapeGmailLeads(agent, opts = {}) {
+  const { maxResults = 50, labelFilter = '' } = opts;
+  const results = { scanned: 0, created: 0, updated: 0, skipped: 0, errors: 0 };
+  if (!agent.gmail_refresh_token) return results;
+
+  try {
+    const oauth2 = getGmailOAuth(agent);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
+
+    // Search inbox for lead-like emails — last 30 days, unprocessed
+    const query = [
+      'newer_than:30d',
+      '-label:lead-processed',
+      '(subject:inquiry OR subject:lead OR subject:contact OR subject:showing OR subject:"rental inquiry" OR subject:"new message" OR from:zillow.com OR from:apartments.com OR from:zumper.com OR from:trulia.com OR from:hotpads.com OR from:rent.com OR from:apartmentlist.com OR from:realtor.com OR from:padmapper.com OR from:appfolio.com)',
+    ].join(' ');
+
+    const listRes = await gmail.users.messages.list({ userId: 'me', q: query, maxResults });
+    const messages = listRes.data.messages || [];
+    results.scanned = messages.length;
+
+    // Create "lead-processed" label if it doesn't exist
+    let processedLabelId = null;
+    try {
+      const labelsRes = await gmail.users.labels.list({ userId: 'me' });
+      const existing = labelsRes.data.labels?.find(l => l.name === 'lead-processed');
+      if (existing) {
+        processedLabelId = existing.id;
+      } else {
+        const created = await gmail.users.labels.create({ userId: 'me', requestBody: { name: 'lead-processed', labelListVisibility: 'labelHide', messageListVisibility: 'hide' } });
+        processedLabelId = created.data.id;
+      }
+    } catch(e) { /* labels are optional */ }
+
+    for (const { id: msgId } of messages) {
+      // Skip already-processed message IDs
+      const seen = await pool.query('SELECT 1 FROM lead_scraper_log WHERE gmail_message_id=$1 LIMIT 1', [msgId]);
+      if (seen.rows.length) { results.skipped++; continue; }
+
+      try {
+        const msg = await gmail.users.messages.get({ userId: 'me', id: msgId, format: 'full' });
+        const headers = msg.data.payload?.headers || [];
+        const hdr = n => headers.find(h => h.name.toLowerCase() === n.toLowerCase())?.value || '';
+        const from = hdr('From');
+        const subject = hdr('Subject');
+        const body = extractGmailBody(msg.data.payload);
+
+        // Quick filter — skip if it really doesn't look like a lead
+        if (!looksLikeLead(from, subject) && !opts.force) {
+          await pool.query('INSERT INTO lead_scraper_log (gmail_message_id, agent_id, result, from_addr, subject) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+            [msgId, agent.id, 'skipped_filter', from, subject]);
+          results.skipped++;
+          // Still label it so we don't re-scan
+          if (processedLabelId) gmail.users.messages.modify({ userId:'me', id:msgId, requestBody:{ addLabelIds:[processedLabelId] } }).catch(()=>{});
+          continue;
+        }
+
+        const fields = await extractLeadFromEmail({ from, subject, body });
+        if (!fields || !fields.is_lead) {
+          await pool.query('INSERT INTO lead_scraper_log (gmail_message_id, agent_id, result, from_addr, subject) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+            [msgId, agent.id, 'not_lead', from, subject]);
+          results.skipped++;
+          if (processedLabelId) gmail.users.messages.modify({ userId:'me', id:msgId, requestBody:{ addLabelIds:[processedLabelId] } }).catch(()=>{});
+          continue;
+        }
+
+        if (!fields.first_name && !fields.email && !fields.phone) {
+          results.skipped++;
+          if (processedLabelId) gmail.users.messages.modify({ userId:'me', id:msgId, requestBody:{ addLabelIds:[processedLabelId] } }).catch(()=>{});
+          continue;
+        }
+
+        // Dedup — check email then phone
+        let existingPerson = null;
+        if (fields.email) {
+          const d = await pool.query('SELECT id, first_name, last_name, stage FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1', [fields.email]);
+          existingPerson = d.rows[0] || null;
+        }
+        if (!existingPerson && fields.phone) {
+          const digits = fields.phone.replace(/\D/g,'').slice(-10);
+          const d = await pool.query(`SELECT id, first_name, last_name, stage FROM people WHERE regexp_replace(COALESCE(phone,''),'\\D','','g') LIKE $1 LIMIT 1`, [`%${digits}`]);
+          existingPerson = d.rows[0] || null;
+        }
+
+        const phone = fields.phone ? '+1' + fields.phone.replace(/\D/g,'').slice(-10) : null;
+        const notes = [
+          fields.property && `Interested in: ${fields.property}`,
+          fields.unit && `Unit: ${fields.unit}`,
+          fields.move_in_date && `Move-in: ${fields.move_in_date}`,
+          fields.bedrooms && `Bedrooms: ${fields.bedrooms}`,
+          fields.source && `Source: ${fields.source}`,
+          fields.message && `Message: ${fields.message}`,
+        ].filter(Boolean).join('\n');
+
+        let personId;
+        if (existingPerson) {
+          // UPDATE — add activity note with new inquiry, maybe update stage
+          personId = existingPerson.id;
+          const updateFields = [];
+          const updateVals = [];
+          if (fields.email && !existingPerson.email) { updateFields.push(`email=$${updateVals.length+1}`); updateVals.push(fields.email); }
+          if (phone && !existingPerson.phone) { updateFields.push(`phone=$${updateVals.length+1}`); updateVals.push(phone); }
+          if (updateFields.length) {
+            updateVals.push(personId);
+            await pool.query(`UPDATE people SET ${updateFields.join(',')} WHERE id=$${updateVals.length}`, updateVals).catch(()=>{});
+          }
+          await pool.query(
+            `INSERT INTO activities (person_id, agent_id, type, body, direction, created_at) VALUES ($1,$2,'note',$3,'inbound',NOW())`,
+            [String(personId), String(agent.id), `🏠 New inquiry via ${fields.source||'Email'}\n\n${notes}`]
+          );
+          results.updated++;
+        } else {
+          // CREATE new lead
+          const ins = await pool.query(
+            `INSERT INTO people (first_name,last_name,email,phone,stage,source,background,updated_at)
+             VALUES ($1,$2,$3,$4,'Lead',$5,$6,NOW()) RETURNING id`,
+            [fields.first_name||'Lead', fields.last_name||'', fields.email||null, phone, fields.source||'Email Lead', notes||null]
+          );
+          personId = ins.rows[0].id;
+          // Log initial inquiry as activity
+          if (notes) {
+            await pool.query(
+              `INSERT INTO activities (person_id, agent_id, type, body, direction, created_at) VALUES ($1,$2,'note',$3,'inbound',NOW())`,
+              [String(personId), String(agent.id), `🏠 Initial inquiry via ${fields.source||'Email'}\n\n${notes}`]
+            );
+          }
+          // Notify all agents
+          const agentsR = await pool.query('SELECT id FROM agents WHERE is_active=true');
+          for (const ag of agentsR.rows) {
+            await createNotification({
+              recipientId: ag.id,
+              type: 'new_lead',
+              personId: String(personId),
+              body: `🏠 New lead: ${fields.first_name} ${fields.last_name||''} (${fields.source||'Email'})`
+            }).catch(()=>{});
+          }
+          broadcastToAll({ type: 'new_lead', personId, name: `${fields.first_name} ${fields.last_name||''}`, source: fields.source });
+          results.created++;
+        }
+
+        // Log the processed message
+        await pool.query(
+          `INSERT INTO lead_scraper_log (gmail_message_id, agent_id, result, from_addr, subject, person_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+          [msgId, agent.id, existingPerson ? 'updated' : 'created', from, subject, String(personId)]
+        );
+
+        // Apply processed label so we never re-scan
+        if (processedLabelId) {
+          gmail.users.messages.modify({ userId:'me', id:msgId, requestBody:{ addLabelIds:[processedLabelId] } }).catch(()=>{});
+        }
+      } catch(msgErr) {
+        console.warn('[LeadScraper] msg error:', msgErr.message);
+        results.errors++;
+      }
+    }
+  } catch(e) {
+    console.error('[LeadScraper] agent error:', e.message);
+    results.errors++;
+  }
+  return results;
+}
+
+// Run scraper for all connected agents
+async function runLeadScraper(opts = {}) {
+  try {
+    const agentsR = await pool.query(
+      `SELECT id, name, gmail_refresh_token, gmail_email FROM agents WHERE gmail_refresh_token IS NOT NULL AND is_active=true`
+    );
+    if (!agentsR.rows.length) return;
+    let total = { scanned:0, created:0, updated:0, skipped:0 };
+    for (const agent of agentsR.rows) {
+      const r = await scrapeGmailLeads(agent, opts);
+      total.scanned += r.scanned; total.created += r.created; total.updated += r.updated; total.skipped += r.skipped;
+    }
+    if (total.created || total.updated) console.log(`[LeadScraper] scanned:${total.scanned} created:${total.created} updated:${total.updated}`);
+  } catch(e) { console.error('[LeadScraper] run error:', e.message); }
+}
+
+// Boot: create log table, then run scraper
+async function initLeadScraper() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lead_scraper_log (
+      id SERIAL PRIMARY KEY,
+      gmail_message_id TEXT UNIQUE NOT NULL,
+      agent_id TEXT,
+      result TEXT,
+      from_addr TEXT,
+      subject TEXT,
+      person_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(()=>{});
+  // Run 15s after boot, then every 5 minutes
+  setTimeout(runLeadScraper, 15000);
+  setInterval(runLeadScraper, 5 * 60 * 1000);
+}
+initLeadScraper();
+
+// Manual trigger endpoint
+app.post('/api/lead-scraper/run', auth, async (req, res) => {
+  const agentR = await pool.query('SELECT id, name, gmail_refresh_token, gmail_email FROM agents WHERE id=$1', [req.agent.id]);
+  const agent = agentR.rows[0];
+  if (!agent?.gmail_refresh_token) return res.status(400).json({ error: 'Gmail not connected for your account' });
+  const results = await scrapeGmailLeads(agent, { maxResults: 100, force: req.body.force });
+  res.json(results);
+});
+
+// Get scraper log / status
+app.get('/api/lead-scraper/log', auth, async (req, res) => {
+  const r = await pool.query(`
+    SELECT l.*, p.first_name, p.last_name FROM lead_scraper_log l
+    LEFT JOIN people p ON p.id::text = l.person_id
+    ORDER BY l.created_at DESC LIMIT 100
+  `).catch(() => ({ rows: [] }));
+  res.json(r.rows);
+});
+
 app.post('/api/leads/inbound', async (req, res) => {
   const secret = process.env.LEADS_WEBHOOK_SECRET;
   if (secret && req.query.token !== secret) return res.status(401).json({ error: 'unauthorized' });
@@ -2628,6 +2939,21 @@ async function jareihPatternParse(command, peopleRows, properties) {
     if (person) return { action:'unknown', summary:'', params:{ clarification:`What message should I send to ${person.first_name}?` } };
   }
 
+  // Call patterns
+  if (cmd.includes('call') || cmd.includes('phone') || cmd.includes('dial') || cmd.includes('reach out')) {
+    const person = findPerson();
+    const goalMatch = command.match(/(?:about|to|and|goal:|goal is|regarding)\s+(.{10,})/i);
+    const goal = goalMatch?.[1]?.trim() || command;
+    if (person) {
+      return { action:'make_call', summary:`Call ${person.first_name} ${person.last_name||''}`,
+        confirmPrompt:`Have Ara (AI) call ${person.first_name} ${person.last_name||''} at ${person.phone||'no phone'}?
+
+Goal: ${goal}`,
+        params:{ personId:person.id, personName:`${person.first_name} ${person.last_name||''}`, phone:person.phone, goal } };
+    }
+    return { action:'unknown', summary:'', params:{ clarification:'Who should I call? Give me their name.' } };
+  }
+
   // Open contact
   if (cmd.includes('open') || cmd.includes('pull up') || cmd.includes('find') || cmd.includes('show me')) {
     const person = findPerson();
@@ -2709,6 +3035,7 @@ Action params:
 - create_contact: { firstName, lastName, phone, email, stage }
 - open_contact: { personId, personName }
 - navigate: { view } (view = "dashboard"|"inbox"|"showings"|"people"|"admin")
+- make_call: { personId, personName, phone, goal } — have Ara AI call the contact and try to achieve the goal
 - add_task: { personId, personName, title, dueDate }
 - unknown: { clarification: "what you need to know" }
 
@@ -3957,12 +4284,391 @@ async function checkDB() {
   }
 }
 
+// =============================================================================
+// JAREIH AI OUTBOUND CALL SYSTEM
+// Stack: Twilio Media Streams → Deepgram STT → Grok 3 → Deepgram Aura TTS (Ara)
+// =============================================================================
+
+const jareihCalls = new Map(); // callId → session
+
+// ─── TTS: Deepgram Aura "Ara" ─────────────────────────────────────────────────
+async function araTTS(text) {
+  const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000&container=none';
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ text })
+  });
+  if (!resp.ok) throw new Error(`Deepgram TTS error: ${resp.status} ${await resp.text()}`);
+  const buf = await resp.arrayBuffer();
+  return Buffer.from(buf);
+}
+
+// ─── Send audio back through Twilio media stream ──────────────────────────────
+async function speakToCall(callId, text) {
+  const session = jareihCalls.get(callId);
+  if (!session || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  try {
+    // Clear any currently playing audio
+    session.ws.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
+    const audio = await araTTS(text);
+    // Send in 160-byte mulaw chunks (20ms each at 8000hz)
+    const CHUNK = 160;
+    for (let i = 0; i < audio.length; i += CHUNK) {
+      if (!session.ws || session.ws.readyState !== WebSocket.OPEN) break;
+      session.ws.send(JSON.stringify({
+        event: 'media',
+        streamSid: session.streamSid,
+        media: { payload: audio.slice(i, i + CHUNK).toString('base64') }
+      }));
+      await new Promise(r => setTimeout(r, 20));
+    }
+    // End of speech mark
+    session.ws.send(JSON.stringify({ event: 'mark', streamSid: session.streamSid, mark: { name: 'ara_done' } }));
+  } catch(e) {
+    console.error('[Ara TTS]', e.message);
+  }
+}
+
+// ─── Grok conversation brain ──────────────────────────────────────────────────
+async function araRespond(callId, contactSpeech) {
+  const session = jareihCalls.get(callId);
+  if (!session) return null;
+  const grok = initGrok();
+  if (!grok) return "Hello, thank you for answering. I'll follow up another time. Have a great day!";
+
+  // Build system prompt on first turn
+  if (!session.grokHistory) {
+    const ctx = session.context;
+    const actSummary = (ctx.recentActivity || []).slice(0, 8)
+      .map(a => `[${a.type}] ${(a.body || '').slice(0, 120)}`)
+      .join('\n');
+    session.grokHistory = [{
+      role: 'system',
+      content: `You are Ara, a professional and friendly AI leasing agent calling on behalf of OKCREAL property management.
+You are calling ${ctx.name} (${ctx.stage || 'Lead'}).
+GOAL: ${session.goal}
+Contact notes: ${ctx.notes || 'none'}
+Recent activity:\n${actSummary || 'none'}
+
+RULES:
+- Keep every response SHORT — 1-3 sentences, natural phone speech
+- Never mention you are an AI unless directly asked
+- If asked, say "I'm Ara, calling on behalf of OKCREAL"
+- When the goal is achieved OR the contact clearly wants to end the call, close warmly and append [END_CALL]
+- If goal achieved, also append [GOAL_ACHIEVED]
+- Never use markdown, lists, or formatting — pure spoken language only
+- Be warm, confident, and direct`
+    }];
+  }
+
+  if (contactSpeech) {
+    session.grokHistory.push({ role: 'user', content: contactSpeech });
+  } else {
+    // Opening line
+    session.grokHistory.push({ role: 'user', content: '[CALL_CONNECTED]' });
+  }
+
+  const r = await grok.chat.completions.create({
+    model: 'grok-3',
+    max_tokens: 120,
+    messages: session.grokHistory
+  });
+  const raw = r.choices[0].message.content.trim();
+  session.grokHistory.push({ role: 'assistant', content: raw });
+
+  // Check signals
+  if (raw.includes('[END_CALL]')) session.shouldEnd = true;
+  if (raw.includes('[GOAL_ACHIEVED]')) session.goalAchieved = true;
+
+  const clean = raw.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
+  session.transcript.push({ role: 'ara', text: clean });
+
+  // Broadcast live transcript to agent
+  broadcastToAll({
+    type: 'jareih_call_update',
+    callId,
+    personId: session.personId,
+    event: 'ara_spoke',
+    text: clean
+  });
+
+  return clean;
+}
+
+// ─── Finalize call → save to timeline ────────────────────────────────────────
+async function finalizeJareihCall(callId, twilioStatus, duration) {
+  const session = jareihCalls.get(callId);
+  if (!session || session.finalized) return;
+  session.finalized = true;
+
+  const transcriptText = session.transcript
+    .map(t => `${t.role === 'ara' ? 'Ara (AI)' : session.context.name}: ${t.text}`)
+    .join('\n');
+
+  let summary = `Call ended with status: ${twilioStatus}.`;
+  if (transcriptText && initGrok()) {
+    try {
+      const grok = initGrok();
+      const s = await grok.chat.completions.create({
+        model: 'grok-3', max_tokens: 200,
+        messages: [{ role: 'user', content:
+          `Summarize this outbound AI call in 2-3 sentences. Goal was: "${session.goal}"\nWas the goal achieved? ${session.goalAchieved ? 'Yes' : 'Unknown'}\n\nTranscript:\n${transcriptText}` }]
+      });
+      summary = s.choices[0].message.content.trim();
+    } catch(e) { /* keep default */ }
+  }
+
+  const body = [
+    `📞 Jareih AI Call — ${session.goalAchieved ? '✅ Goal Achieved' : twilioStatus === 'completed' ? '📋 Completed' : `⚠ ${twilioStatus}`}`,
+    `Goal: ${session.goal}`,
+    '',
+    `Summary: ${summary}`,
+    '',
+    transcriptText ? `Transcript:\n${transcriptText}` : '(No transcript — call did not connect)'
+  ].join('\n');
+
+  try {
+    await pool.query(
+      `INSERT INTO activities (person_id, agent_id, type, body, direction, duration, created_at)
+       VALUES ($1,$2,'call',$3,'outbound',$4,NOW())`,
+      [session.personId, session.agentId, body, duration || 0]
+    );
+  } catch(e) { console.error('[Jareih finalize]', e.message); }
+
+  broadcastToAll({
+    type: 'jareih_call_update',
+    callId,
+    personId: session.personId,
+    event: 'call_ended',
+    summary,
+    goalAchieved: session.goalAchieved,
+    status: twilioStatus
+  });
+
+  jareihCalls.delete(callId);
+}
+
+// ─── WebSocket server: Twilio Media Streams ───────────────────────────────────
+function setupJareihCallWS(server) {
+  const wss = new WebSocket.Server({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    if (req.url && req.url.startsWith('/ws/jareih-call/')) {
+      wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+    }
+  });
+
+  wss.on('connection', async (ws, req) => {
+    const callId = req.url.replace('/ws/jareih-call/', '').split('?')[0];
+    const session = jareihCalls.get(callId);
+    if (!session) { ws.close(); return; }
+
+    session.ws = ws;
+    session.streamSid = null;
+    session.transcript = session.transcript || [];
+    session.utteranceBuffer = '';
+    session.lastSpeech = 0;
+    session.araLock = false; // prevent overlapping Ara responses
+
+    console.log(`[Jareih call] WebSocket connected for callId=${callId}`);
+
+    // ── Deepgram STT WebSocket ───────────────────────────────────────────────
+    const dgWs = new WebSocket(
+      'wss://api.deepgram.com/v1/listen?' + [
+        'encoding=mulaw', 'sample_rate=8000', 'channels=1',
+        'model=nova-2', 'punctuate=true', 'smart_format=true',
+        'interim_results=true', 'endpointing=600', 'utterance_end_ms=1200'
+      ].join('&'),
+      { headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` } }
+    );
+
+    dgWs.on('open', () => console.log('[Jareih call] Deepgram STT connected'));
+
+    dgWs.on('message', async raw => {
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
+
+      if (msg.type === 'Results' && msg.is_final) {
+        const text = msg.channel?.alternatives?.[0]?.transcript?.trim();
+        if (!text || session.araLock) return;
+
+        session.transcript.push({ role: 'contact', text });
+        broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'contact_spoke', text });
+
+        // Get Ara response
+        session.araLock = true;
+        try {
+          const response = await araRespond(callId, text);
+          if (response) await speakToCall(callId, response);
+          if (session.shouldEnd) {
+            setTimeout(async () => {
+              try {
+                const tc = initTwilioFull();
+                if (tc && session.callSid) await tc.calls(session.callSid).update({ status: 'completed' });
+              } catch(e) {}
+            }, 1200);
+          }
+        } catch(e) { console.error('[Jareih respond]', e.message); }
+        finally { session.araLock = false; }
+      }
+    });
+
+    dgWs.on('error', e => console.error('[Jareih DG]', e.message));
+    dgWs.on('close', () => console.log('[Jareih call] Deepgram closed'));
+
+    // ── Twilio Media Stream messages ─────────────────────────────────────────
+    ws.on('message', async raw => {
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
+
+      switch (msg.event) {
+        case 'connected':
+          console.log('[Jareih call] Twilio stream connected');
+          break;
+
+        case 'start':
+          session.streamSid = msg.start?.streamSid || msg.streamSid;
+          console.log(`[Jareih call] Stream started sid=${session.streamSid}`);
+          // Ara greets the contact
+          setTimeout(async () => {
+            try {
+              const greeting = await araRespond(callId, null);
+              if (greeting) await speakToCall(callId, greeting);
+            } catch(e) { console.error('[Ara greeting]', e.message); }
+          }, 800);
+          break;
+
+        case 'media':
+          if (dgWs.readyState === WebSocket.OPEN && msg.media?.payload) {
+            dgWs.send(Buffer.from(msg.media.payload, 'base64'));
+          }
+          break;
+
+        case 'stop':
+          dgWs.close();
+          break;
+      }
+    });
+
+    ws.on('close', () => {
+      dgWs.close();
+      console.log(`[Jareih call] WS closed for ${callId}`);
+    });
+
+    ws.on('error', e => console.error('[Jareih WS]', e.message));
+  });
+}
+
+// ─── API: Initiate a Jareih AI call ──────────────────────────────────────────
+app.post('/api/jareih/call', auth, async (req, res) => {
+  const { personId, goal } = req.body;
+  if (!personId || !goal) return res.status(400).json({ error: 'personId and goal required' });
+
+  const personR = await pool.query('SELECT * FROM people WHERE id=$1', [personId]);
+  const person = personR.rows[0];
+  if (!person) return res.status(404).json({ error: 'Contact not found' });
+  if (!person.phone) return res.status(400).json({ error: 'Contact has no phone number on file' });
+
+  const actsR = await pool.query(
+    `SELECT type, body, direction, created_at FROM activities WHERE person_id=$1 ORDER BY created_at DESC LIMIT 15`,
+    [String(personId)]
+  );
+
+  const callId = `jc-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+  jareihCalls.set(callId, {
+    personId: String(personId),
+    agentId: String(req.agent.id),
+    goal,
+    context: {
+      name: `${person.first_name} ${person.last_name || ''}`.trim(),
+      phone: person.phone,
+      stage: person.stage,
+      notes: person.notes,
+      recentActivity: actsR.rows
+    },
+    transcript: [],
+    callSid: null,
+    shouldEnd: false,
+    goalAchieved: false,
+    finalized: false
+  });
+
+  try {
+    const tc = initTwilioFull();
+    if (!tc) throw new Error('Twilio not configured');
+    const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+    const call = await tc.calls.create({
+      to: person.phone,
+      from: fromNum,
+      url: `${process.env.APP_URL}/api/jareih/call-twiml/${callId}`,
+      statusCallback: `${process.env.APP_URL}/api/jareih/call-status/${callId}`,
+      statusCallbackMethod: 'POST',
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
+    });
+    jareihCalls.get(callId).callSid = call.sid;
+    res.json({ ok: true, callId, callSid: call.sid, contactName: jareihCalls.get(callId).context.name });
+  } catch(e) {
+    jareihCalls.delete(callId);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// TwiML: connect call to WebSocket media stream
+app.all('/api/jareih/call-twiml/:callId', (req, res) => {
+  const { callId } = req.params;
+  const wsBase = (process.env.APP_URL || '').replace('https://', 'wss://').replace('http://', 'ws://');
+  res.type('text/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${wsBase}/ws/jareih-call/${callId}">
+      <Parameter name="callId" value="${callId}"/>
+    </Stream>
+  </Connect>
+</Response>`);
+});
+
+// Twilio status callback
+app.post('/api/jareih/call-status/:callId', async (req, res) => {
+  const { callId } = req.params;
+  const { CallStatus, CallDuration } = req.body;
+  res.sendStatus(200);
+  const session = jareihCalls.get(callId);
+  if (!session) return;
+  if (['completed', 'failed', 'busy', 'no-answer', 'canceled'].includes(CallStatus)) {
+    await finalizeJareihCall(callId, CallStatus, parseInt(CallDuration) || 0);
+  } else {
+    broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'status', status: CallStatus });
+  }
+});
+
+// Hang up a Jareih call manually
+app.post('/api/jareih/call-hangup', auth, async (req, res) => {
+  const { callId } = req.body;
+  const session = jareihCalls.get(callId);
+  if (!session) return res.status(404).json({ error: 'Call not found' });
+  try {
+    const tc = initTwilioFull();
+    if (tc && session.callSid) await tc.calls(session.callSid).update({ status: 'completed' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
 checkDB().then(() => initDB()).then(() => {
   // Showing followup text poller — runs every 2 minutes
   setInterval(pollShowingFollowups, 2 * 60 * 1000);
   setTimeout(pollShowingFollowups, 10000); // first check 10s after boot
 
-  app.listen(PORT, () => {
+  // Attach Jareih call WebSocket server
+  setupJareihCallWS(httpServer);
+
+  httpServer.listen(PORT, () => {
     console.log(`OKCREAL Connect running on port ${PORT}`);
     console.log(`Twilio Account:  ${process.env.TWILIO_ACCOUNT_SID ? '✓' : '✗'}`);
     console.log(`Twilio API Key:  ${process.env.TWILIO_API_KEY_SID ? '✓' : '✗'}`);
@@ -3970,5 +4676,6 @@ checkDB().then(() => initDB()).then(() => {
     console.log(`Twilio RecAuth:  ${twilioBasicAuth() ? '✓ ready' : '✗ NO CREDENTIALS - recordings will fail'}`);
     console.log(`Deepgram: ${process.env.DEEPGRAM_API_KEY ? '✓' : '✗'}`);
     console.log(`Grok:     ${process.env.GROK_API_KEY ? '✓' : '✗'}`);
+    console.log(`Jareih AI Calls: ${process.env.DEEPGRAM_API_KEY && process.env.GROK_API_KEY ? '✓ ready' : '✗ needs DEEPGRAM + GROK keys'}`);
   });
 }); // end checkDB().then(() => initDB()).then
