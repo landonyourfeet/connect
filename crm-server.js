@@ -2973,7 +2973,7 @@ app.get('/api/dashboard/stats', auth, async (req, res) => {
 
     // All agents with online flag
     const agentsR = await pool.query(`
-      SELECT id, name, email, role, avatar_color, availability
+      SELECT id, name, email, role, avatar_color, avatar_b64, availability
       FROM agents WHERE is_active=true ORDER BY name
     `);
     const agents = agentsR.rows.map(a => ({
