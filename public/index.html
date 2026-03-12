@@ -7546,20 +7546,20 @@ function renderWoMeter(data) {
       const curW  = Math.round((cur  / maxCount) * 100);
       const lastW = Math.round((last / maxCount) * 100);
       const avgW  = avg > 0 ? Math.min(99, Math.round((avg / maxCount) * 100)) : 0;
-      return \`<div class="wo-meter-row">
-        <div class="wo-meter-prop" title="\${esc(p.property)}">\${esc(name)}</div>
-        <div class="wo-meter-bars">
-          <div class="wo-meter-track" style="height:7px">
-            <div class="wo-meter-fill \${cls}" style="width:\${curW}%"></div>
-            <div class="wo-meter-avg-line" style="left:\${avgW}%"></div>
-          </div>
-          <div class="wo-meter-track" style="height:4px;margin-top:2px">
-            <div style="width:\${lastW}%;height:100%;background:#1e3a2a;border-radius:2px"></div>
-          </div>
-        </div>
-        <div class="wo-meter-count" style="color:\${col}">\${cur}</div>
-        <div class="wo-meter-trend" style="color:\${trendCol};font-size:11px;font-weight:700">\${trend}</div>
-      </div>\`;
+      return '<div class="wo-meter-row">'
+        + '<div class="wo-meter-prop" title="' + esc(p.property) + '">' + esc(name) + '</div>'
+        + '<div class="wo-meter-bars">'
+          + '<div class="wo-meter-track" style="height:7px">'
+            + '<div class="wo-meter-fill ' + cls + '" style="width:' + curW + '%"></div>'
+            + '<div class="wo-meter-avg-line" style="left:' + avgW + '%"></div>'
+          + '</div>'
+          + '<div class="wo-meter-track" style="height:4px;margin-top:2px">'
+            + '<div style="width:' + lastW + '%;height:100%;background:#1e3a2a;border-radius:2px"></div>'
+          + '</div>'
+        + '</div>'
+        + '<div class="wo-meter-count" style="color:' + col + '">' + cur + '</div>'
+        + '<div class="wo-meter-trend" style="color:' + trendCol + ';font-size:11px;font-weight:700">' + trend + '</div>'
+        + '</div>';
     }).join('')}`;
 }
 
