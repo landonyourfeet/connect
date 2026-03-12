@@ -2619,7 +2619,24 @@ async function launchApp() {
   document.getElementById('app').classList.add('visible');
   updateSidebarUser();
   await Promise.all([loadSmartLists(), loadInboxCount()]);
-  navigate('people', 'all');
+  // Deep-link routing — handle direct URLs like /file/113
+  const _path = window.location.pathname;
+  const _fileMatch = _path.match(/^\/file\/(\d+)$/);
+  const _listMatch = _path.match(/^\/list\/(\d+)$/);
+  if (_fileMatch) {
+    navigate('people', 'all');
+    openContact(_fileMatch[1]);
+  } else if (_listMatch) {
+    navigate('people', _listMatch[1]);
+  } else if (_path === '/inbox') {
+    navigate('inbox');
+  } else if (_path === '/admin') {
+    navigate('admin');
+  } else if (_path === '/security') {
+    navigate('security');
+  } else {
+    navigate('people', 'all');
+  }
   initTwilio();
   JirehOrganic.init();
   // Load my profile + team, then connect agent SSE
@@ -2679,6 +2696,20 @@ function cycleStatus() {
 
 // ── NAVIGATION ──────────────────────────────────────────────────────
 function navigate(view, listId = null) {
+  // Keep browser URL in sync with current view
+  try {
+    if (view === 'people' && (!listId || listId === 'all')) {
+      history.pushState({ view: 'people', listId: 'all' }, '', '/');
+    } else if (view === 'people' && listId) {
+      history.pushState({ view: 'people', listId }, '', '/list/' + listId);
+    } else if (view === 'inbox') {
+      history.pushState({ view: 'inbox' }, '', '/inbox');
+    } else if (view === 'admin') {
+      history.pushState({ view: 'admin' }, '', '/admin');
+    } else if (view === 'security') {
+      history.pushState({ view: 'security' }, '', '/security');
+    }
+  } catch(e) {}
   currentView = view;
   if (listId) currentListId = listId;
   document.querySelectorAll('.nav-item').forEach(el => {
@@ -2936,6 +2967,10 @@ function updateBulkActions() {
 let _presencePersonId = null;
 
 async function openContact(personId, fromNav=false) {
+  // Update URL so this contact file is directly shareable
+  if (!fromNav) {
+    history.pushState({ view: 'contact', personId }, '', '/file/' + personId);
+  }
   // Leave previous presence
   if (_presencePersonId && _presencePersonId !== personId) {
     api(`/api/presence/leave`, 'POST', { personId: _presencePersonId }).catch(()=>{});
@@ -6087,6 +6122,25 @@ function formatTranscript(transcript) {
     smsReceived()  { if (!callGlowActive) setGlow('glow-sms-received', 2000); },
   };
 })();
+</script>
+
+<!-- POPSTATE: browser back/forward -->
+<script>
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+  if (!state) { navigate('people', 'all'); return; }
+  if (state.view === 'contact' && state.personId) {
+    openContact(state.personId, true);
+  } else if (state.view === 'people') {
+    navigate('people', state.listId || 'all');
+  } else if (state.view === 'inbox') {
+    navigate('inbox');
+  } else if (state.view === 'admin') {
+    navigate('admin');
+  } else if (state.view === 'security') {
+    navigate('security');
+  }
+});
 </script>
 
 <!-- INBOUND SMS POLLER -->
