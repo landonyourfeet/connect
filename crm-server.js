@@ -2727,6 +2727,69 @@ app.post('/api/showings/:id/feedback', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Global feedback report — all properties, all time
+app.get('/api/showings/feedback-report', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        s.property,
+        s.guest_name,
+        s.showing_time,
+        s.unit,
+        s.showing_type,
+        f.verdict,
+        f.categories,
+        f.notes,
+        f.agent_name,
+        f.source,
+        f.created_at AS feedback_at
+      FROM showing_feedback f
+      JOIN showings s ON s.id = f.showing_id
+      ORDER BY f.created_at DESC
+    `);
+
+    // Aggregate totals
+    let go = 0, nogo = 0, maybe = 0;
+    const catCounts = {};
+    const byProperty = {};
+
+    for (const r of rows) {
+      if (r.verdict === 'go')    go++;
+      if (r.verdict === 'no-go') nogo++;
+      if (r.verdict === 'maybe') maybe++;
+      for (const c of (r.categories || [])) {
+        catCounts[c] = (catCounts[c] || 0) + 1;
+      }
+      const prop = r.property || 'Unknown';
+      if (!byProperty[prop]) byProperty[prop] = { go:0, nogo:0, maybe:0, total:0, categories:{} };
+      byProperty[prop].total++;
+      byProperty[prop][r.verdict === 'no-go' ? 'nogo' : r.verdict]++;
+      for (const c of (r.categories || [])) {
+        byProperty[prop].categories[c] = (byProperty[prop].categories[c] || 0) + 1;
+      }
+    }
+
+    const topIssues = Object.entries(catCounts)
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 12)
+      .map(([cat, count]) => ({ cat, count }));
+
+    const propertyList = Object.entries(byProperty)
+      .sort((a,b) => b[1].total - a[1].total)
+      .map(([property, stats]) => ({
+        property,
+        ...stats,
+        topIssues: Object.entries(stats.categories).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([cat,count])=>({cat,count}))
+      }));
+
+    res.json({
+      total: rows.length, go, nogo, maybe,
+      topIssues, byProperty: propertyList,
+      recent: rows.slice(0, 50)
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Get trends for a property — aggregate categories + notes
 app.get('/api/showings/trends', auth, async (req, res) => {
   try {
