@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -3292,6 +3293,7 @@ async function secSaveProfile() {
 function renderContactRecord(person, activities, tasks) {
   const viewEl = document.getElementById('view-contact');
   const name = [person.first_name, person.last_name].filter(Boolean).join(' ') || 'Unknown';
+  window._currentContactName = name;
   const initials = name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
   const stage = person.stage || 'Lead';
   const tags = parseTags(person.tags);
@@ -3605,7 +3607,10 @@ window.renderTimelineHTML = function renderTimelineHTML(activities) {
 
 function renderTimelineItem(act, hasConnector) {
   const type = act.type || 'activity';
-  const agent = act.agent_name || act.agent || 'System';
+  const isInbound = act.direction === 'inbound';
+  const agent = isInbound
+    ? (window._currentContactName || 'Contact')
+    : (act.agent_name || act.agent || 'System');
   const time = act.created_at ? timeAgo(act.created_at) : '';
   let iconCls = 'ti-activity', iconChar = '•', typeLabel = 'Activity';
   let bodyHtml = `<div class="ti-content">${esc(act.body||act.content||act.note||'')}</div>`;
@@ -6036,7 +6041,10 @@ function formatTranscript(transcript) {
   if (typeof transcript === 'string') {
     return transcript.split('\n').map(line => {
       const m = line.match(/^(Agent|Tenant|Caller|Speaker \d+):\s*(.+)/i);
-      if (m) return `<div class="transcript-line"><span class="transcript-speaker">${esc(m[1])}:</span> ${esc(m[2])}</div>`;
+      if (m) {
+        const spk = /^(tenant|caller)$/i.test(m[1]) ? (window._currentContactName || m[1]) : m[1];
+        return `<div class="transcript-line"><span class="transcript-speaker">${esc(spk)}:</span> ${esc(m[2])}</div>`;
+      }
       return `<div class="transcript-line">${esc(line)}</div>`;
     }).join('');
   }
