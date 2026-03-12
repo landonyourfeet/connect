@@ -234,14 +234,14 @@ app.get('/api/people', auth, async (req, res) => {
               MAX(a.created_at) FILTER (WHERE a.direction='inbound')          AS last_inbound_at
             FROM people p
             JOIN showings s ON s.connect_person_id = p.id::text
-              AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
-              AND s.status = 'Scheduled'
+              AND s.showing_time BETWEEN NOW() - INTERVAL '2 hours' AND NOW() + INTERVAL '14 days'
+              AND LOWER(s.status) = 'scheduled'
             -- grab property/unit from the soonest showing
             JOIN LATERAL (
               SELECT property, unit, showing_type FROM showings
               WHERE connect_person_id = p.id::text
-                AND showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
-                AND status = 'Scheduled'
+                AND showing_time BETWEEN NOW() - INTERVAL '2 hours' AND NOW() + INTERVAL '14 days'
+                AND LOWER(status) = 'scheduled'
               ORDER BY showing_time ASC LIMIT 1
             ) s2 ON TRUE
             LEFT JOIN activities a ON a.person_id::text = p.id::text
@@ -867,8 +867,8 @@ app.get('/api/smart-lists/counts', auth, async (req, res) => {
             SELECT COUNT(DISTINCT p.id)::int AS cnt
             FROM people p
             JOIN showings s ON s.connect_person_id = p.id::text
-              AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
-              AND s.status = 'Scheduled'
+              AND s.showing_time BETWEEN NOW() - INTERVAL '2 hours' AND NOW() + INTERVAL '14 days'
+              AND LOWER(s.status) = 'scheduled'
           `);
           counts[list.id] = r.rows[0]?.cnt || 0;
         } else if (f.type === 'toured_no_followup') {
@@ -3338,7 +3338,7 @@ app.post('/api/showings/upload', auth, async (req, res) => {
         // ── 1. Find or create the Connect lead ──
         let personId = null;
 
-        // Try match by phone first, then email
+        // Try match by phone, then email, then full name (in case phone/email blank)
         if (phone10) {
           const r = await pool.query(
             `SELECT id FROM people WHERE regexp_replace(phone,'\\D','','g') = $1 LIMIT 1`,
@@ -3350,6 +3350,15 @@ app.post('/api/showings/upload', auth, async (req, res) => {
           const r = await pool.query(
             `SELECT id FROM people WHERE LOWER(email) = $1 LIMIT 1`,
             [emailLow]
+          );
+          if (r.rows[0]) { personId = r.rows[0].id; leadsMatched++; }
+        }
+        // Fallback: match by full name (catches re-uploads with no phone/email)
+        if (!personId && row.guest_name) {
+          const { first_name, last_name } = parseShowingName(row.guest_name);
+          const r = await pool.query(
+            `SELECT id FROM people WHERE LOWER(first_name)=$1 AND LOWER(COALESCE(last_name,''))=$2 LIMIT 1`,
+            [first_name.toLowerCase(), (last_name||'').toLowerCase()]
           );
           if (r.rows[0]) { personId = r.rows[0].id; leadsMatched++; }
         }
@@ -3380,9 +3389,13 @@ app.post('/api/showings/upload', auth, async (req, res) => {
                                 upload_batch,connect_person_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (property,guest_name,showing_time) DO UPDATE SET
-             status=EXCLUDED.status, last_activity_type=EXCLUDED.last_activity_type,
+             status=EXCLUDED.status, email=COALESCE(EXCLUDED.email, showings.email),
+             phone=COALESCE(EXCLUDED.phone, showings.phone),
+             unit=COALESCE(EXCLUDED.unit, showings.unit),
+             showing_type=COALESCE(EXCLUDED.showing_type, showings.showing_type),
+             last_activity_type=EXCLUDED.last_activity_type,
              last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch,
-             connect_person_id=EXCLUDED.connect_person_id`,
+             connect_person_id=COALESCE(EXCLUDED.connect_person_id, showings.connect_person_id)`,
           [ row.property||null, row.unit||null, row.guest_name.trim(),
             row.email||null, row.phone||null, new Date(row.showing_time),
             row.status||null, row.showing_type||null, row.assigned_user||null,
