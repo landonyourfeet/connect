@@ -1028,6 +1028,18 @@
     .nav-item.active .nav-icon { opacity: 1; }
     .nav-badge { margin-left: auto; background: var(--bg-5); color: var(--text-2); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 100px; min-width: 20px; text-align: center; }
     .nav-badge.urgent { background: var(--red-dim); color: var(--red); }
+    /* ── Upcoming Showings list ── */
+    @keyframes sl-row-flash { 0%,100%{background:rgba(232,0,58,0.07)} 50%{background:rgba(232,0,58,0.18)} }
+    tr.needs-contact { animation: sl-row-flash 1.4s ease-in-out infinite; }
+    tr.needs-contact td { border-bottom-color: rgba(232,0,58,0.15) !important; }
+    tr.needs-contact:hover { animation: none; background: rgba(232,0,58,0.12) !important; }
+    .showing-time-badge { display:inline-flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:9px; font-weight:700; letter-spacing:0.08em; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+    .showing-time-badge.soon  { background:rgba(232,0,58,0.15); color:#E8003A; border:1px solid rgba(232,0,58,0.3); }
+    .showing-time-badge.today { background:rgba(255,140,0,0.12); color:#ff8c00; border:1px solid rgba(255,140,0,0.3); }
+    .showing-time-badge.later { background:rgba(99,102,241,0.12); color:#a5b4fc; border:1px solid rgba(99,102,241,0.3); }
+    .contact-status-badge { display:inline-flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:9px; font-weight:700; letter-spacing:0.08em; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+    .contact-status-badge.contacted   { background:rgba(0,232,122,0.1); color:#00e87a; border:1px solid rgba(0,232,122,0.25); }
+    .contact-status-badge.uncontacted { background:rgba(232,0,58,0.12); color:#E8003A; border:1px solid rgba(232,0,58,0.3); }
     .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
     .smart-lists-header { padding: 8px 16px 4px; display: flex; align-items: center; justify-content: space-between; }
     .smart-lists-label { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-3); }
@@ -3055,9 +3067,10 @@ function renderSmartListsNav() {
   const rest = smartLists.slice(MAX);
   const makeItem = list => {
     const isUrgent = (list.name||'').toLowerCase().includes('delinquent') || (list.name||'').toLowerCase().includes('eviction');
+    const isShowings = (list.filters?.type === 'upcoming_showings_72h') || (list.name||'').includes('Upcoming Showings');
     return `<div class="nav-item sl-nav-item" data-view="people" data-list-id="${list.id}" onclick="navigate('people','${list.id}')">
       <span class="nav-icon">▸</span><span class="sl-nav-name">${esc(list.name)}</span>
-      <span class="${isUrgent?'nav-badge urgent':'nav-badge'}" id="badge-${list.id}">—</span>
+      <span class="${isUrgent||isShowings?'nav-badge urgent':'nav-badge'}" id="badge-${list.id}">—</span>
     </div>`;
   };
   let html = visible.map(makeItem).join('');
@@ -3091,6 +3104,8 @@ async function loadPeople(listId = 'all') {
     const total = data.total ?? peopleData.length;
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
     _isDelinqList = listName.toLowerCase().includes('delinquent');
+    const _listMeta = smartLists.find(l=>String(l.id)===String(listId));
+    window._isShowingsList = _listMeta?.filters?.type === 'upcoming_showings_72h';
     ['th-past-due','th-past-due-days'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display=_isDelinqList?'':'none'; });
     if (_isDelinqList && sortField !== 'past_due_days') { sortField='past_due_balance'; sortDir='desc'; }
     else if (!_isDelinqList && sortField==='past_due_balance') { sortField='name'; sortDir='asc'; }
@@ -3142,14 +3157,39 @@ function renderPeopleTable() {
     const stage = p.stage || 'Lead';
     const tags = parseTags(p.tags);
     const lastAct = p.last_activity ? timeAgo(p.last_activity) : '—';
-    return `<tr onclick="openContact('${p.id}')">
+    // ── Upcoming Showings list extras ──
+    let showingTimeBadge = '';
+    let contactBadge = '';
+    if (window._isShowingsList && p.next_showing_time) {
+      const dt   = new Date(p.next_showing_time);
+      const now  = Date.now();
+      const diff = dt - now;
+      const hrs  = diff / 3600000;
+      const timeStr = dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})
+                    + ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+      const cls  = hrs < 24 ? 'soon' : hrs < 48 ? 'today' : 'later';
+      const icon = hrs < 24 ? '🔴' : hrs < 48 ? '🟡' : '🟣';
+      const propShort = (p.showing_property||'').split(' - ')[0].substring(0,28);
+      showingTimeBadge = `<div style="margin-top:3px"><span class="showing-time-badge ${cls}">${icon} ${timeStr}</span></div>
+        <div style="margin-top:2px;font-size:9px;color:var(--text-3);font-family:var(--font-mono)">${propShort}${p.showing_unit?' · Unit '+p.showing_unit:''}</div>`;
+      contactBadge = p.needs_contact
+        ? `<span class="contact-status-badge uncontacted">⚠ NEEDS CONTACT</span>`
+        : `<span class="contact-status-badge contacted">✓ CONTACTED</span>`;
+    }
+    const rowClass = (window._isShowingsList && p.needs_contact) ? 'needs-contact' : '';
+
+    return `<tr class="${rowClass}" onclick="openContact('${p.id}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="row-check" value="${p.id}" onchange="updateBulkActions()"></td>
       <td><div class="person-row-name">
         <div class="person-avatar">${initials}</div>
-        <div><div class="person-full-name">${esc(name)}</div>${p.email?`<div class="person-email">${esc(p.email)}</div>`:''}</div>
+        <div>
+          <div class="person-full-name">${esc(name)}</div>
+          ${p.email?`<div class="person-email">${esc(p.email)}</div>`:''}
+          ${showingTimeBadge}
+        </div>
       </div></td>
       <td><span class="phone-mono">${formatPhone(p.phone)}</span></td>
-      <td><span class="stage-badge ${stageClass(stage)}">${esc(stage)}</span></td>
+      <td>${contactBadge || `<span class="stage-badge ${stageClass(stage)}">${esc(stage)}</span>`}</td>
       <td class="debt-cell" style="${_isDelinqList?'':' display:none'}">${(() => { const cf=p.custom_fields||{}; const bal=p.past_due_balance!=null?p.past_due_balance:cf.past_due_balance; if(bal==null||bal==='') return '<span style="color:var(--text-3)">—</span>'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:var(--red)">$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`; })()}</td>
       <td class="debt-cell" style="${_isDelinqList?'':' display:none'}">${(() => { const cf=p.custom_fields||{}; const days=p.past_due_days!=null?p.past_due_days:cf.past_due_days; if(days==null||days==='') return '<span style="color:var(--text-3)">—</span>'; const d=parseInt(days); const color=d>=30?'#E8003A':d>=15?'#FF8C00':'var(--text-2)'; const bg=d>=30?'rgba(232,0,58,0.1)':d>=15?'rgba(255,140,0,0.1)':'transparent'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:${color};background:${bg};padding:2px 7px;border-radius:4px">${d}d</span>`; })()}</td>
       <td>${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join(' ')}</td>
@@ -7376,9 +7416,22 @@ async function refreshDashboard() {
 // ── PANELS ───────────────────────────────────────────────────
 function renderMcPanels(d, galaxy) {
   const hoursAgo = dt => dt ? (Date.now() - new Date(dt).getTime()) / 3600000 : 9999;
-  const fmtAge = h => h > 9000 ? 'NEVER' : h < 1 ? 'JUST NOW' : h < 24 ? `${Math.floor(h)}H AGO` : `${Math.floor(h/24)}D AGO`;
-  const shAge = hoursAgo(d.uploads.showings?.created_at);
-  const rrAge = hoursAgo(d.uploads.rentRoll?.created_at);
+
+  // Returns { color, flash, note } for an upload timestamp
+  function uploadStatus(dt) {
+    const h = hoursAgo(dt);
+    if (h > 9000) return { color:'red', flash:true,  note:'NEVER UPLOADED' };
+    const ts = new Date(dt);
+    const dateStr = ts.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const timeStr = ts.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+    const stamp   = `${dateStr} ${timeStr}`;
+    if (h > 24)  return { color:'red',   flash:true,  note:stamp };
+    if (h > 6)   return { color:'amber', flash:false, note:stamp };
+                 return { color:'green', flash:false, note:stamp };
+  }
+
+  const shStatus = uploadStatus(d.uploads.showings?.created_at);
+  const rrStatus = uploadStatus(d.uploads.rentRoll?.created_at);
 
   // ── Caution lights ──
   const totalUnits   = (galaxy||[]).reduce((s,p) => s+p.total, 0);
@@ -7387,16 +7440,16 @@ function renderMcPanels(d, galaxy) {
 
   const lights = [
     { label:'DATABASE', sublabel:'POSTGRES',
-      color: 'green', note:'NOMINAL' },
+      color:'green', note:'NOMINAL' },
     { label:'TWILIO', sublabel:'SMS · CALLS',
-      color: 'green', note:'NOMINAL' },
+      color:'green', note:'NOMINAL' },
     { label:`${d.onlineCount} AGENT${d.onlineCount!==1?'S':''}`, sublabel:'ONLINE NOW',
       color: d.onlineCount===0?'red': d.onlineCount<2?'amber':'green',
       flash: d.onlineCount===0, note: d.onlineCount===0?'NO CREW':'STAFFED' },
     { label:'SHOWINGS', sublabel:'DAILY REPORT',
-      color: shAge>24?'amber':'green', flash: shAge>24, note: fmtAge(shAge) },
+      color: shStatus.color, flash: shStatus.flash, note: shStatus.note },
     { label:'RENT ROLL', sublabel:'UNIT DATA',
-      color: rrAge>24?'amber':'green', flash: rrAge>24, note: fmtAge(rrAge) },
+      color: rrStatus.color, flash: rrStatus.flash, note: rrStatus.note },
     { label:`${d.calls.missed||0} MISSED`, sublabel:'CALLS TODAY',
       color: (d.calls.missed||0)>10?'red':(d.calls.missed||0)>3?'amber':'green',
       flash: (d.calls.missed||0)>10, note: (d.calls.missed||0)===0?'CLEAN':'REVIEW' },
@@ -7408,12 +7461,15 @@ function renderMcPanels(d, galaxy) {
       note: 'COLLECTIONS' },
   ];
 
+  // Note color matches bulb state for readability
+  const noteColor = c => c==='green'?'#00804a': c==='amber'?'#7a4400':'#8a0020';
+
   document.getElementById('mc-lights').innerHTML = lights.map(l => `
     <div class="mc-light">
       <div class="mc-bulb ${l.color}${l.flash?' flash':''}"></div>
       <div class="mc-bulb-label">${esc(l.label)}</div>
-      <div class="mc-bulb-label" style="color:#383838">${esc(l.sublabel||'')}</div>
-      <div class="mc-bulb-label" style="color:${l.color==='green'?'#1a5c33':l.color==='amber'?'#5c3a00':'#5c0010'};font-size:7px">${esc(l.note||'')}</div>
+      <div class="mc-bulb-label" style="color:#444">${esc(l.sublabel||'')}</div>
+      <div class="mc-bulb-label" style="color:${noteColor(l.color)};font-size:6.5px;line-height:1.4;word-break:break-word;max-width:72px">${esc(l.note||'')}</div>
     </div>`).join('');
 
   // ── Agent roster ──
@@ -8310,6 +8366,11 @@ function connectAgentSse() {
       } else if (payload.type === 'inbound_sms') {
         // If sender is a prospect currently showing, escalate the banner
         shCheckActivityAlert(payload.personId, 'sms', payload.body);
+      } else if (payload.type === 'new_activity') {
+        // If we're on the Upcoming Showings list, an outbound contact may have cleared a "needs contact" flag
+        if (window._isShowingsList && currentListId && currentListId !== 'all') {
+          loadPeople(currentListId);
+        }
       } else if (payload.type === 'agent_status') {
         // Another agent changed their status — refresh dashboard crew panel if visible
         if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
