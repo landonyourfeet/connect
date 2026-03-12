@@ -1899,6 +1899,8 @@ async function initDB() {
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('emergency_iVR_enabled','true') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS email_subject TEXT`).catch(()=>{});
+  await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS gmail_message_id TEXT`).catch(()=>{});
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS activities_gmail_msg_idx ON activities(gmail_message_id) WHERE gmail_message_id IS NOT NULL`).catch(()=>{});
   await run(`CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), recipient_id TEXT NOT NULL, sender_id TEXT, type TEXT NOT NULL DEFAULT 'mention', person_id TEXT, activity_id TEXT, body TEXT, is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create notifications');
   await pool.query(`CREATE INDEX IF NOT EXISTS notif_recipient_idx ON notifications(recipient_id, is_read, created_at DESC)`).catch(()=>{});
   await run(`CREATE TABLE IF NOT EXISTS custom_fields (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, field_type TEXT DEFAULT 'text', options TEXT[], sort_order INTEGER DEFAULT 0)`, 'create custom_fields');
@@ -2393,6 +2395,145 @@ app.post('/api/gmail/send', auth, async (req, res) => {
     res.json({ ok: true });
   } catch(e) { console.error('[Gmail send]', e.message); res.status(500).json({ error: e.message }); }
 });
+
+// ─── GMAIL HISTORY SYNC ───────────────────────────────────────────────────────
+
+// Helper: decode Gmail message body (handles multipart)
+function extractGmailBody(payload) {
+  if (!payload) return '';
+  const decode = (data) => {
+    if (!data) return '';
+    try { return Buffer.from(data.replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf-8'); }
+    catch(e) { return ''; }
+  };
+  // Multipart — recurse into parts
+  if (payload.parts && payload.parts.length) {
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/plain') return decode(part.body?.data);
+    }
+    // fallback: first part
+    return extractGmailBody(payload.parts[0]);
+  }
+  return decode(payload.body?.data);
+}
+
+// Sync all emails to/from a contact's email address for all connected agents
+async function syncGmailForContact(personId, contactEmail, agentRows) {
+  if (!contactEmail) return 0;
+  let imported = 0;
+
+  for (const agent of agentRows) {
+    if (!agent.gmail_refresh_token) continue;
+    try {
+      const oauth2 = getGmailOAuth(agent);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2 });
+
+      // Search sent + received from this contact
+      const queries = [
+        `to:${contactEmail}`,
+        `from:${contactEmail}`
+      ];
+
+      for (const q of queries) {
+        const listRes = await gmail.users.messages.list({
+          userId: 'me',
+          q,
+          maxResults: 100
+        });
+        const messages = listRes.data.messages || [];
+
+        for (const { id: msgId } of messages) {
+          // Skip if already imported
+          const exists = await pool.query(
+            'SELECT 1 FROM activities WHERE gmail_message_id=$1 LIMIT 1', [msgId]
+          );
+          if (exists.rows.length) continue;
+
+          try {
+            const msg = await gmail.users.messages.get({
+              userId: 'me', id: msgId, format: 'full'
+            });
+            const headers = msg.data.payload?.headers || [];
+            const hdr = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+
+            const subject = hdr('Subject');
+            const from    = hdr('From');
+            const to      = hdr('To');
+            const dateStr = hdr('Date');
+            const sentAt  = dateStr ? new Date(dateStr) : new Date(parseInt(msg.data.internalDate));
+            if (isNaN(sentAt.getTime())) continue;
+
+            const body = extractGmailBody(msg.data.payload);
+            if (!body && !subject) continue;
+
+            // Determine direction: did we send it or receive it?
+            const agentGmail = agent.gmail_email?.toLowerCase() || '';
+            const fromEmail  = from.toLowerCase();
+            const direction  = fromEmail.includes(agentGmail) ? 'outbound' : 'inbound';
+
+            const fullBody = `From: ${from}\nTo: ${to}\nSubject: ${subject}\n\n${body.trim()}`;
+
+            await pool.query(
+              `INSERT INTO activities
+                (person_id, agent_id, type, body, direction, email_subject, gmail_message_id, created_at)
+               VALUES ($1,$2,'email',$3,$4,$5,$6,$7)
+               ON CONFLICT (gmail_message_id) DO NOTHING`,
+              [String(personId), String(agent.id), fullBody, direction, subject, msgId, sentAt]
+            );
+            imported++;
+          } catch(msgErr) {
+            console.warn('[Gmail sync] message error:', msgErr.message);
+          }
+        }
+      }
+    } catch(agentErr) {
+      console.warn('[Gmail sync] agent error:', agentErr.message);
+    }
+  }
+  return imported;
+}
+
+// On-demand sync for a single contact
+app.post('/api/gmail/sync-contact', auth, async (req, res) => {
+  const { personId } = req.body;
+  if (!personId) return res.status(400).json({ error: 'personId required' });
+
+  const personR = await pool.query('SELECT email FROM people WHERE id=$1', [personId]);
+  const contactEmail = personR.rows[0]?.email;
+  if (!contactEmail) return res.json({ imported: 0, note: 'No email on contact' });
+
+  // Sync for all agents who have Gmail connected
+  const agentsR = await pool.query(
+    'SELECT id, gmail_refresh_token, gmail_email, name FROM agents WHERE gmail_refresh_token IS NOT NULL AND is_active=true'
+  );
+  const imported = await syncGmailForContact(personId, contactEmail, agentsR.rows);
+  res.json({ ok: true, imported });
+});
+
+// Background sync — runs on boot and every 15 min
+async function backgroundGmailSync() {
+  try {
+    const agentsR = await pool.query(
+      'SELECT id, gmail_refresh_token, gmail_email, name FROM agents WHERE gmail_refresh_token IS NOT NULL AND is_active=true'
+    );
+    if (!agentsR.rows.length) return;
+
+    // Get all people with emails, most recently updated first, cap at 200
+    const peopleR = await pool.query(
+      `SELECT id, email FROM people WHERE email IS NOT NULL AND email != '' ORDER BY updated_at DESC LIMIT 200`
+    );
+    let total = 0;
+    for (const person of peopleR.rows) {
+      total += await syncGmailForContact(person.id, person.email, agentsR.rows);
+    }
+    if (total > 0) console.log(`[Gmail sync] Background sync imported ${total} emails`);
+  } catch(e) {
+    console.warn('[Gmail sync] Background error:', e.message);
+  }
+}
+// Run on boot (after 10s delay to let DB settle) then every 15 min
+setTimeout(backgroundGmailSync, 10000);
+setInterval(backgroundGmailSync, 15 * 60 * 1000);
 
 // ─── LEAD INBOUND EMAIL WEBHOOK ───────────────────────────────────────────────
 app.post('/api/leads/inbound', async (req, res) => {
