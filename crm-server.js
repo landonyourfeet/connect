@@ -1903,7 +1903,12 @@ async function initDB() {
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS email_subject TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS gmail_message_id TEXT`).catch(()=>{});
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS activities_gmail_msg_idx ON activities(gmail_message_id) WHERE gmail_message_id IS NOT NULL`).catch(()=>{});
+  // Create unique constraint for gmail dedup — critical for ON CONFLICT to work
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS activities_gmail_msg_idx ON activities(gmail_message_id) WHERE gmail_message_id IS NOT NULL`)
+    .catch(e => console.error('[DB] activities_gmail_msg_idx:', e.message));
+  // Also add as a formal constraint so ON CONFLICT (gmail_message_id) resolves correctly
+  await pool.query(`ALTER TABLE activities ADD CONSTRAINT activities_gmail_message_id_uniq UNIQUE USING INDEX activities_gmail_msg_idx`)
+    .catch(() => {}); // no-op if constraint already exists or index name differs
   await run(`CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), recipient_id TEXT NOT NULL, sender_id TEXT, type TEXT NOT NULL DEFAULT 'mention', person_id TEXT, activity_id TEXT, body TEXT, is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create notifications');
   await pool.query(`CREATE INDEX IF NOT EXISTS notif_recipient_idx ON notifications(recipient_id, is_read, created_at DESC)`).catch(()=>{});
   await run(`CREATE TABLE IF NOT EXISTS custom_fields (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, field_type TEXT DEFAULT 'text', options TEXT[], sort_order INTEGER DEFAULT 0)`, 'create custom_fields');
@@ -2476,13 +2481,27 @@ async function syncGmailForContact(personId, contactEmail, agentRows) {
 
             const fullBody = `From: ${from}\nTo: ${to}\nSubject: ${subject}\n\n${body.trim()}`;
 
-            await pool.query(
-              `INSERT INTO activities
-                (person_id, agent_id, type, body, direction, email_subject, gmail_message_id, created_at)
-               VALUES ($1,$2,'email',$3,$4,$5,$6,$7)
-               ON CONFLICT (gmail_message_id) DO NOTHING`,
-              [String(personId), String(agent.id), fullBody, direction, subject, msgId, sentAt]
-            );
+            try {
+              await pool.query(
+                `INSERT INTO activities
+                  (person_id, agent_id, type, body, direction, email_subject, gmail_message_id, created_at)
+                 VALUES ($1,$2,'email',$3,$4,$5,$6,$7)
+                 ON CONFLICT (gmail_message_id) DO NOTHING`,
+                [String(personId), String(agent.id), fullBody, direction, subject, msgId, sentAt]
+              );
+            } catch(insertErr) {
+              // If ON CONFLICT fails (index missing), fall back to check-then-insert
+              if (insertErr.message.includes('unique or exclusion constraint')) {
+                const exists = await pool.query('SELECT 1 FROM activities WHERE gmail_message_id=$1 LIMIT 1', [msgId]);
+                if (!exists.rows.length) {
+                  await pool.query(
+                    `INSERT INTO activities (person_id, agent_id, type, body, direction, email_subject, gmail_message_id, created_at)
+                     VALUES ($1,$2,'email',$3,$4,$5,$6,$7)`,
+                    [String(personId), String(agent.id), fullBody, direction, subject, msgId, sentAt]
+                  );
+                }
+              } else throw insertErr;
+            }
             imported++;
           } catch(msgErr) {
             console.warn('[Gmail sync] message error:', msgErr.message);
