@@ -3691,6 +3691,21 @@ async function openContact(personId, fromNav=false) {
     loadCaseworkerPanel(personId, person.stage);
     loadShowingRoster(person);
     loadRentRollInfo(person);
+    // Silently sync Gmail in background if contact has email
+    if (person.email) {
+      api('/api/gmail/sync-contact', 'POST', { personId: person.id })
+        .then(r => {
+          if (r.imported > 0) {
+            // Refresh timeline silently with new emails
+            api(`/api/activities?personId=${personId}`).then(acts => {
+              const el = document.getElementById('timeline-scroll');
+              if (el) el.innerHTML = renderTimelineHTML(acts || []);
+              const pill = document.querySelector('.filter-pill[data-filter="email"] .pill-count');
+              if (pill) pill.textContent = (acts||[]).filter(a=>a.type==='email').length;
+            }).catch(()=>{});
+          }
+        }).catch(()=>{});
+    }
     // Announce presence
     api(`/api/presence/enter`, 'POST', { personId }).catch(()=>{});
     // Load current viewers
@@ -4200,6 +4215,12 @@ function renderContactRecord(person, activities, tasks) {
           <button class="filter-pill" data-filter="text" onclick="filterTimeline('text',this)">💬 Texts <span class="pill-count">${activities.filter(a=>a.type==='text'||a.type==='sms').length}</span></button>
           <button class="filter-pill" data-filter="note" onclick="filterTimeline('note',this)">📝 Notes <span class="pill-count">${activities.filter(a=>a.type==='note').length}</span></button>
           <button class="filter-pill" data-filter="email" onclick="filterTimeline('email',this)">✉️ Emails <span class="pill-count">${activities.filter(a=>a.type==='email').length}</span></button>
+          ${person.email ? `<button id="gmail-sync-btn" onclick="syncGmailContact(${person.id})" title="Sync Gmail history for this contact"
+            style="font-size:10px;padding:3px 8px;border-radius:12px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-3);cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all .15s"
+            onmouseover="this.style.borderColor='#4285f4';this.style.color='#4285f4'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-3)'">
+            <span>📧</span> Sync Gmail
+          </button>` : ''}
         </div>
       </div>
       <div class="timeline-scroll" id="timeline-scroll">${renderTimelineHTML(activities)}</div>
@@ -5805,6 +5826,28 @@ const Jareih = (() => {
 
   return { submit, execute, close, keydown };
 })();
+
+async function syncGmailContact(personId) {
+  const btn = document.getElementById('gmail-sync-btn');
+  if (btn) { btn.textContent = '⟳ Syncing…'; btn.disabled = true; }
+  try {
+    const r = await api('/api/gmail/sync-contact', 'POST', { personId });
+    const acts = await api(`/api/activities?personId=${personId}`);
+    const el = document.getElementById('timeline-scroll');
+    if (el) el.innerHTML = renderTimelineHTML(acts || []);
+    const pill = document.querySelector('.filter-pill[data-filter="email"] .pill-count');
+    if (pill) pill.textContent = (acts||[]).filter(a=>a.type==='email').length;
+    if (btn) {
+      btn.innerHTML = `<span>✓</span> ${r.imported} imported`;
+      btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)';
+      setTimeout(() => {
+        if (btn) { btn.innerHTML = '<span>📧</span> Sync Gmail'; btn.disabled = false; btn.style.color=''; btn.style.borderColor=''; }
+      }, 3000);
+    }
+  } catch(e) {
+    if (btn) { btn.innerHTML = '⚠ Error'; btn.disabled = false; }
+  }
+}
 
 function jareihSubmit() { Jareih.submit(); }
 function jareihKeydown(e) { Jareih.keydown(e); }
