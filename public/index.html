@@ -459,6 +459,22 @@
       100% { opacity: 1; letter-spacing: normal; filter: blur(0); }
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes jareihSlideUp {
+      from { opacity:0; transform: translateY(18px) scale(0.97); }
+      to   { opacity:1; transform: translateY(0)    scale(1);    }
+    }
+    @keyframes jareihBioGlow {
+      0%   { box-shadow: 0 0 6px 2px rgba(0,255,160,0.55), 0 0 18px 4px rgba(0,255,160,0.25); background: #00e896; }
+      40%  { box-shadow: 0 0 18px 6px rgba(0,255,200,0.85), 0 0 40px 12px rgba(0,220,180,0.4); background: #00ffb8; }
+      70%  { box-shadow: 0 0 10px 3px rgba(0,255,160,0.6),  0 0 24px 6px rgba(0,200,160,0.3); background: #00eaa0; }
+      100% { box-shadow: 0 0 6px 2px rgba(0,255,160,0.55), 0 0 18px 4px rgba(0,255,160,0.25); background: #00e896; }
+    }
+    .jareih-thinking {
+      animation: jareihBioGlow 1.4s ease-in-out infinite !important;
+      color: #003322 !important;
+      border-color: #00cc88 !important;
+      transition: none !important;
+    }
     @keyframes sms-status-spin {
       to { transform: rotate(360deg); }
     }
@@ -2621,7 +2637,7 @@
                 onkeydown="jareihKeydown(event)" />
               <div id="jareih-spinner" style="display:none;position:absolute;right:10px;font-size:13px;animation:spin 1s linear infinite">⟳</div>
             </div>
-            <button onclick="jareihSubmit()" title="Execute command"
+            <button id="jareih-run-btn" onclick="jareihSubmit()" title="Execute command"
               style="height:34px;padding:0 12px;border-radius:0 6px 6px 0;border:1px solid var(--red);border-left:none;
                      background:var(--red);color:#fff;font-size:11px;font-weight:800;letter-spacing:0.08em;
                      font-family:var(--font-mono);cursor:pointer;white-space:nowrap;transition:background 0.15s"
@@ -2629,9 +2645,26 @@
               RUN
             </button>
             <!-- Jareih result/confirm popover -->
-            <div id="jareih-popover" style="display:none;position:absolute;top:42px;right:0;width:380px;
-              background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
-              box-shadow:0 12px 40px rgba(0,0,0,0.55);z-index:9500;overflow:hidden"></div>
+            <!-- Jareih chat window (fixed bottom-right) -->
+            <div id="jareih-popover" style="display:none;position:fixed;bottom:24px;right:24px;width:400px;
+              background:var(--bg-2);border:1px solid rgba(232,0,58,0.35);border-radius:14px;
+              box-shadow:0 20px 60px rgba(0,0,0,0.65),0 0 0 1px rgba(232,0,58,0.1);
+              z-index:9500;overflow:hidden;animation:jareihSlideUp 0.22s cubic-bezier(0.34,1.56,0.64,1)">
+              <!-- Chat header -->
+              <div style="display:flex;align-items:center;justify-content:space-between;
+                padding:11px 14px;background:linear-gradient(135deg,#1a0008 0%,#2a0010 100%);
+                border-bottom:1px solid rgba(232,0,58,0.25)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font-size:15px;color:var(--red)">⬡</span>
+                  <span style="font-size:12px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.1em;color:#fff">JAREIH</span>
+                  <span style="font-size:9px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:0.05em">AI COMMAND</span>
+                </div>
+                <button onclick="Jareih.close()" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;transition:color .15s"
+                  onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">✕</button>
+              </div>
+              <!-- Chat body -->
+              <div id="jareih-chat-body" style="padding:16px 16px 12px"></div>
+            </div>
           </div>
           <!-- Notification Bell -->
           <div style="position:relative;display:inline-flex">
@@ -5684,17 +5717,14 @@ const Jareih = (() => {
 
   function showConfirm(parsed) {
     const pop = document.getElementById('jareih-popover');
-    pop.innerHTML = `
-      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="color:var(--red);font-size:14px;font-family:var(--font-mono);font-weight:900">⬡</span>
-        <span style="font-size:12px;font-weight:700;color:var(--text);font-family:var(--font-mono);letter-spacing:0.05em">JAREIH — CONFIRM ACTION</span>
-      </div>
-      <div style="padding:14px 16px">
-        <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:14px">${esc(parsed.confirmPrompt || parsed.summary)}</div>
-        <div style="display:flex;gap:8px">
-          <button onclick="Jareih.execute()" style="flex:1;height:34px;background:var(--red);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.06em;cursor:pointer">✓ EXECUTE</button>
-          <button onclick="Jareih.close()" style="flex:1;height:34px;background:var(--bg-3);color:var(--text-2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">✕ CANCEL</button>
-        </div>
+    const body = document.getElementById('jareih-chat-body');
+    if (body) body.innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:var(--red);letter-spacing:0.08em;font-family:var(--font-mono);margin-bottom:10px">CONFIRM ACTION</div>
+      <div style="font-size:13px;color:var(--text);line-height:1.6;margin-bottom:16px;white-space:pre-wrap">${esc(parsed.confirmPrompt || parsed.summary)}</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="Jareih.execute()" style="flex:1;height:36px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.06em;cursor:pointer;transition:background .15s"
+          onmouseover="this.style.background='#c0001e'" onmouseout="this.style.background='var(--red)'">✓ EXECUTE</button>
+        <button onclick="Jareih.close()" style="flex:1;height:36px;background:var(--bg-3);color:var(--text-2);border:1px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✕ CANCEL</button>
       </div>`;
     pop.style.display = 'block';
     setTimeout(() => document.addEventListener('click', outsideClick), 50);
@@ -5794,10 +5824,12 @@ const Jareih = (() => {
 
   function showPopover(type, msg) {
     const pop = document.getElementById('jareih-popover');
+    const body = document.getElementById('jareih-chat-body');
     const color = type === 'success' ? 'var(--green)' : type === 'error' ? 'var(--red)' : 'var(--amber)';
-    pop.innerHTML = `<div style="padding:14px 16px;display:flex;align-items:flex-start;gap:10px">
-      <span style="color:${color};font-size:16px;flex-shrink:0">${type==='success'?'✓':type==='error'?'⚠':'?'}</span>
-      <span style="font-size:13px;color:var(--text);line-height:1.4">${esc(msg)}</span>
+    const icon = type==='success'?'✓':type==='error'?'⚠':'?';
+    if (body) body.innerHTML = `<div style="display:flex;align-items:flex-start;gap:12px">
+      <span style="color:${color};font-size:20px;flex-shrink:0;margin-top:1px">${icon}</span>
+      <span style="font-size:13px;color:var(--text);line-height:1.6">${esc(msg)}</span>
     </div>`;
     pop.style.display = 'block';
     setTimeout(() => document.addEventListener('click', outsideClick), 50);
@@ -5806,6 +5838,26 @@ const Jareih = (() => {
   function showSpinner(on) {
     const s = document.getElementById('jareih-spinner');
     if (s) s.style.display = on ? 'block' : 'none';
+    const btn = document.getElementById('jareih-run-btn');
+    if (btn) {
+      if (on) {
+        btn.classList.add('jareih-thinking');
+        btn.textContent = '⟳';
+      } else {
+        btn.classList.remove('jareih-thinking');
+        btn.textContent = 'RUN';
+      }
+    }
+    // Also open chat window when thinking starts
+    if (on) {
+      const pop = document.getElementById('jareih-popover');
+      const body = document.getElementById('jareih-chat-body');
+      if (body) body.innerHTML = `<div style="display:flex;align-items:center;gap:12px;color:var(--text-3);font-size:13px">
+        <span style="font-size:20px;animation:spin 1s linear infinite;display:inline-block">⟳</span>
+        Jareih is thinking…
+      </div>`;
+      if (pop) pop.style.display = 'block';
+    }
   }
 
   function close() {
@@ -5821,11 +5873,72 @@ const Jareih = (() => {
 
   function outsideClick(e) {
     const bar = document.getElementById('jareih-bar');
-    if (bar && !bar.contains(e.target)) closePopover();
+    const pop = document.getElementById('jareih-popover');
+    if (bar && !bar.contains(e.target) && pop && !pop.contains(e.target)) closePopover();
   }
 
   return { submit, execute, close, keydown };
 })();
+
+// ── LEAD SCRAPER ─────────────────────────────────────────────────────────────
+async function loadScraperStatus() {
+  const statusEl = document.getElementById('mc-scraper-status');
+  const logEl    = document.getElementById('mc-scraper-log');
+  if (!statusEl) return;
+  try {
+    const log = await api('/api/lead-scraper/log');
+    const created = log.filter(r => r.result === 'created').length;
+    const updated = log.filter(r => r.result === 'updated').length;
+    const last    = log[0];
+    statusEl.innerHTML = `
+      <span style="color:var(--green);font-weight:700">${created}</span> leads imported &nbsp;·&nbsp;
+      <span style="color:#f59e0b;font-weight:700">${updated}</span> leads updated
+      ${last ? `&nbsp;·&nbsp; last scan <span style="color:var(--text-2)">${timeAgo(last.created_at)}</span>` : ''}`;
+
+    if (!logEl) return;
+    if (!log.length) { logEl.innerHTML = `<div style="font-size:11px;color:var(--text-3);padding:6px 0">No emails scanned yet — scraper runs every 5 min or click RUN NOW.</div>`; return; }
+
+    logEl.innerHTML = log.slice(0, 30).map(r => {
+      const icon = r.result === 'created' ? '🟢' : r.result === 'updated' ? '🟡' : '⚪';
+      const nameStr = r.first_name ? ` → ${r.first_name} ${r.last_name||''}` : '';
+      const subj = r.subject ? r.subject.substring(0, 48) : r.from_addr?.substring(0, 48);
+      return `<div style="display:flex;align-items:baseline;gap:6px;padding:3px 0;border-bottom:1px solid var(--border);font-size:10px;line-height:1.4">
+        <span>${icon}</span>
+        <span style="color:var(--text-2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${esc(r.from_addr||'')} — ${esc(r.subject||'')}">${esc(subj||'')}</span>
+        ${nameStr ? `<span style="color:var(--green);white-space:nowrap">${esc(nameStr)}</span>` : ''}
+        <span style="color:var(--text-3);white-space:nowrap">${timeAgo(r.created_at)}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (statusEl) statusEl.textContent = 'Scraper status unavailable';
+  }
+}
+
+async function runLeadScraper() {
+  const btn = document.getElementById('scraper-run-btn');
+  if (btn) { btn.textContent = '⟳ Running…'; btn.disabled = true; }
+  try {
+    const r = await api('/api/lead-scraper/run', 'POST', {});
+    if (btn) {
+      btn.textContent = `✓ ${r.created||0} new, ${r.updated||0} updated`;
+      btn.style.color = 'var(--green)';
+      setTimeout(() => {
+        if (btn) { btn.textContent = '↺ RUN NOW'; btn.disabled = false; btn.style.color = ''; }
+      }, 4000);
+    }
+    loadScraperStatus();
+    // If new leads were created, refresh the people panel too
+    if ((r.created || 0) > 0) {
+      toast(`🏠 Lead scraper: ${r.created} new lead${r.created>1?'s':''} imported, ${r.scanned} emails scanned`, 'success');
+    } else {
+      toast(`Lead scraper: ${r.scanned} emails scanned — no new leads`, 'info');
+    }
+  } catch(e) {
+    if (btn) { btn.textContent = '⚠ Error'; btn.disabled = false; }
+    toast('Lead scraper error: ' + e.message, 'error');
+  }
+}
 
 async function syncGmailContact(personId) {
   const btn = document.getElementById('gmail-sync-btn');
@@ -8029,6 +8142,20 @@ async function renderDashboard() {
           <div id="mc-calls"></div>
         </div>
 
+        <!-- LEAD SCRAPER STATUS -->
+        <div class="mc-panel" style="--panel-accent:#00e87a">
+          <div class="mc-panel-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>🏠 LEAD SCRAPER — GMAIL INBOX</span>
+            <button id="scraper-run-btn" onclick="runLeadScraper()"
+              style="font-size:9px;padding:3px 8px;border-radius:10px;border:1px solid var(--green);background:transparent;color:var(--green);cursor:pointer;font-family:var(--font-mono);letter-spacing:0.06em;font-weight:700"
+              onmouseover="this.style.background='rgba(0,232,122,0.1)'" onmouseout="this.style.background='transparent'">
+              ↺ RUN NOW
+            </button>
+          </div>
+          <div id="mc-scraper-status" style="font-size:11px;color:var(--text-3);margin-bottom:8px">Loading…</div>
+          <div id="mc-scraper-log" style="max-height:140px;overflow-y:auto"></div>
+        </div>
+
         <!-- RESPONSE TIME -->
         <div class="mc-panel" style="--panel-accent:#ff8c00">
           <div class="mc-panel-title">⚡ LEAD RESPONSE TIME — 30 DAYS</div>
@@ -8183,6 +8310,7 @@ async function refreshDashboard() {
     renderWoMeter(woStats);
     renderVacancyBar(galaxy);
     initGalaxyCanvas(galaxy);
+    loadScraperStatus();
   } catch(e) {
     console.error('[Dashboard]', e);
   }
