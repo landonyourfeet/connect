@@ -2790,6 +2790,55 @@ app.get('/api/showings/feedback-report', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// AI property recommendation — feedback + live nearby listing search via Grok
+app.post('/api/showings/property-recommendation', auth, async (req, res) => {
+  try {
+    const { propertyName, stats } = req.body;
+    if (!propertyName) return res.status(400).json({ error: 'propertyName required' });
+
+    const grok = initGrok();
+    if (!grok) return res.status(503).json({ error: 'Grok API key not configured' });
+
+    const { go=0, nogo=0, maybe=0, total=0, topIssues=[], recentNotes=[] } = stats || {};
+    const issueList = topIssues.map(i => `  - ${i.cat}: mentioned ${i.count} time(s)`).join('\n') || '  - No issues tagged';
+    const notesSample = recentNotes.filter(Boolean).slice(0, 6).map((n,i) => `  ${i+1}. "${n}"`).join('\n') || '  None recorded';
+
+    const prompt = `You are a property management advisor for OKCREAL, a property management company in Oklahoma City, OK.
+
+PROPERTY: "${propertyName}"
+TOUR FEEDBACK SUMMARY:
+- Total tours: ${total} | GO: ${go} | MAYBE: ${maybe} | NO-GO: ${nogo}
+- Top objections from prospective renters:
+${issueList}
+- Sample agent notes from tours:
+${notesSample}
+
+YOUR TASK — write exactly TWO paragraphs separated by a blank line:
+
+PARAGRAPH 1 — FEEDBACK ANALYSIS:
+Based on the tour feedback above, write a direct actionable paragraph explaining what specific changes the property owner should make to convert future tours to a "GO" decision. Focus on what can actually be fixed: pricing, cosmetic updates, appliances, cleaning, curb appeal, finishes, etc.
+
+PARAGRAPH 2 — COMPETITIVE MARKET ANALYSIS:
+Search for current rental listings within 0.25 miles of "${propertyName}" in Oklahoma City, OK. Look on Zillow, Apartments.com, or Realtor.com. Find comparable rentals priced within 10% of this property's likely market rent. Compare their listed amenities, finishes, and features to the objections raised in the feedback. Then write a paragraph stating: which specific amenities or features nearby competitors are offering that this property may be lacking, whether a price adjustment is warranted, and what upgrades would make the biggest competitive difference.
+
+Write ONLY the two paragraphs. No headers, no bullet points, no preamble.`;
+
+    const completion = await grok.chat.completions.create({
+      model: 'grok-3',
+      max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }],
+      search_parameters: { mode: 'on', max_search_results: 5 }
+    });
+
+    const text = completion.choices?.[0]?.message?.content || '';
+    res.json({ recommendation: text.trim() });
+
+  } catch(e) {
+    console.error('property-recommendation error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Get trends for a property — aggregate categories + notes
 app.get('/api/showings/trends', auth, async (req, res) => {
   try {
