@@ -2976,7 +2976,7 @@ Goal: ${goal}`,
 }
 
 app.post('/api/jareih/parse', auth, async (req, res) => {
-  const { command, context } = req.body;
+  const { command, context, conversationHistory } = req.body;
   if (!command) return res.status(400).json({ error: 'No command' });
 
   const peopleR = await pool.query(
@@ -3008,12 +3008,7 @@ app.post('/api/jareih/parse', auth, async (req, res) => {
   const today = new Date().toISOString();
 
   try {
-    const completion = await grok.chat.completions.create({
-      model: 'grok-3',
-      max_tokens: 600,
-      messages: [{
-        role: 'system',
-        content: `You are Jareih, an AI assistant for OKCREAL Connect property management CRM.
+    const systemPrompt = `You are Jareih, an AI assistant for OKCREAL Connect property management CRM.
 Parse the agent's natural language command into a structured action plan.
 Today is ${today}.
 Available people (id|name|phone|stage):\n${peopleList}
@@ -3022,7 +3017,7 @@ ${contextStr}
 
 Respond ONLY with valid JSON (no markdown). Schema:
 {
-  "action": one of: "send_sms" | "schedule_showing" | "add_note" | "create_contact" | "open_contact" | "navigate" | "add_task" | "unknown",
+  "action": one of: "send_sms" | "schedule_showing" | "add_note" | "create_contact" | "open_contact" | "navigate" | "add_task" | "make_call" | "unknown",
   "summary": "One sentence human-readable description of what will happen",
   "confirmPrompt": "Exact question to ask agent before executing, including all key details",
   "params": {}
@@ -3039,11 +3034,22 @@ Action params:
 - add_task: { personId, personName, title, dueDate }
 - unknown: { clarification: "what you need to know" }
 
-Match person names fuzzily. For dates/times, resolve relative references like "tomorrow 2pm" to ISO strings.`
-      }, {
-        role: 'user',
-        content: command
-      }]
+Match person names fuzzily. For dates/times, resolve relative references like "tomorrow 2pm" to ISO strings.
+If the user refers to someone mentioned earlier in the conversation (e.g. "them", "her", "that person"), resolve from conversation history.`;
+
+    // Build messages: system prompt + rolling short-term conversation context + current command
+    const messages = [{ role: 'system', content: systemPrompt }];
+    if (Array.isArray(conversationHistory) && conversationHistory.length) {
+      for (const m of conversationHistory.slice(-8)) {
+        if (m.role && m.content) messages.push({ role: m.role, content: String(m.content) });
+      }
+    }
+    messages.push({ role: 'user', content: command });
+
+    const completion = await grok.chat.completions.create({
+      model: 'grok-3',
+      max_tokens: 600,
+      messages
     });
 
     const raw = completion.choices[0].message.content.trim();
