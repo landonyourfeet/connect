@@ -9163,36 +9163,37 @@ function closeFeedbackReport() {
   document.getElementById('feedback-report-modal').style.display = 'none';
 }
 
-// ── AI recommendation per property ─────────────────────────────
+// ── AI recommendation per property — feedback + live nearby listing search ──
 async function loadPropertyAI(propName, propData, elId) {
   const el = document.getElementById(elId);
   if (!el) return;
-  el.innerHTML = '<span style="color:#333;letter-spacing:0.1em;font-size:9px">⏳ ANALYZING...</span>';
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:10px 0">
+    <div style="width:6px;height:6px;border-radius:50%;background:#6366f1;animation:pulse 1s infinite"></div>
+    <span style="color:#555;letter-spacing:0.1em;font-size:9px">🔍 SEARCHING NEARBY LISTINGS & ANALYZING FEEDBACK...</span>
+  </div>`;
   try {
-    const prompt = `You are a property management advisor for OKCREAL. Analyze this tour feedback data for "${propName}" and write ONE concise paragraph (3-5 sentences) recommending specific changes to convert future tours to a "GO" decision. Be direct and actionable — focus on what the property owner can actually fix.
-
-Feedback summary:
-- Total tours: ${propData.total}
-- GO: ${propData.go} | MAYBE: ${propData.maybe} | NO-GO: ${propData.nogo}
-- Top issues raised: ${(propData.topIssues||[]).map(i => `${i.cat} (${i.count}x)`).join(', ') || 'none recorded'}
-- Sample notes: ${(propData.recentNotes||[]).filter(Boolean).slice(0,5).join(' | ') || 'none'}
-
-Write the recommendation paragraph only. No header, no bullet points.`;
-
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }]
-      })
+    const result = await api('/api/showings/property-recommendation', 'POST', {
+      propertyName: propName,
+      stats: propData
     });
-    const result = await resp.json();
-    const text = result?.content?.[0]?.text || 'Unable to generate recommendation.';
-    el.innerHTML = `<div style="font-size:11px;line-height:1.7;color:#bbb;font-family:system-ui,sans-serif;font-style:italic;padding:12px 14px;background:#0a0a0a;border-left:3px solid #6366f1;border-radius:0 4px 4px 0;margin-top:10px">${esc(text)}</div>`;
+    const text = result.recommendation || 'No recommendation generated.';
+
+    // Split into two paragraphs
+    const parts = text.split(/\n\n+/);
+    const p1 = parts[0] || text;
+    const p2 = parts[1] || '';
+
+    el.innerHTML = `
+      <div style="margin-top:10px">
+        <div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:5px">📋 FEEDBACK-BASED RECOMMENDATIONS</div>
+        <div style="font-size:11px;line-height:1.7;color:#bbb;font-family:system-ui,sans-serif;padding:12px 14px;background:#0a0a0a;border-left:3px solid #6366f1;border-radius:0 4px 4px 0;margin-bottom:10px">${esc(p1)}</div>
+        ${p2 ? `
+        <div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:5px">🏘 COMPETITIVE MARKET ANALYSIS — NEARBY LISTINGS</div>
+        <div style="font-size:11px;line-height:1.7;color:#bbb;font-family:system-ui,sans-serif;padding:12px 14px;background:#0a0a0a;border-left:3px solid #ff8c00;border-radius:0 4px 4px 0">${esc(p2)}</div>
+        ` : ''}
+      </div>`;
   } catch(e) {
-    el.innerHTML = `<span style="color:#333;font-size:9px">AI unavailable</span>`;
+    el.innerHTML = `<span style="color:#e8003a;font-size:9px">⚠ ${e.message}</span>`;
   }
 }
 
@@ -9365,15 +9366,17 @@ async function downloadFeedbackReport() {
     const d = _frData;
     if (!d) return;
 
-    // Collect AI recs that have already been generated
+    // Collect AI recs that have already been generated (both paragraphs)
     const aiRecs = {};
     document.querySelectorAll('[id^="ai-rec-"]').forEach(el => {
-      const div = el.querySelector('div[style*="border-left"]');
-      if (div) {
-        // Find property name from parent card
+      // Grab all rendered paragraph divs inside the ai slot
+      const paras = el.querySelectorAll('div[style*="border-left"]');
+      if (paras.length) {
         const card = el.closest('[style*="border-radius:6px"]');
         const nameEl = card?.querySelector('[style*="font-weight:700"]');
-        if (nameEl) aiRecs[nameEl.textContent.trim()] = div.textContent.trim();
+        if (nameEl) {
+          aiRecs[nameEl.textContent.trim()] = Array.from(paras).map(p => p.textContent.trim());
+        }
       }
     });
 
@@ -9382,8 +9385,13 @@ async function downloadFeedbackReport() {
 
     const propSections = (d.byProperty||[]).map(p => {
       const propName = p.property.split(' - ')[0];
-      const rec = aiRecs[propName] || '';
+      const rec = aiRecs[propName] || [];
       const issues = (p.topIssues||[]).map(i=>`${i.cat} (${i.count}x)`).join(', ') || 'None recorded';
+      const recHtml = rec.length === 0 ? '' :
+        rec.length === 1
+          ? `<div class="ai-rec"><strong>🤖 AI Recommendation:</strong><br>${rec[0]}</div>`
+          : `<div class="ai-rec" style="border-left-color:#6366f1"><strong>📋 Feedback-Based Recommendations:</strong><br>${rec[0]}</div>
+             <div class="ai-rec" style="border-left-color:#b35f00;background:#fffaf0"><strong>🏘 Competitive Market Analysis — Nearby Listings:</strong><br>${rec[1]}</div>`;
       return `
         <div class="prop-block">
           <h3>${propName}</h3>
@@ -9394,7 +9402,7 @@ async function downloadFeedbackReport() {
             <span class="total">${p.total} total tours</span>
           </div>
           <div class="issues"><strong>Top Issues:</strong> ${issues}</div>
-          ${rec ? `<div class="ai-rec"><strong>🤖 AI Recommendation:</strong><br>${rec}</div>` : ''}
+          ${recHtml}
         </div>`;
     }).join('');
 
