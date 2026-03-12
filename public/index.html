@@ -9124,17 +9124,18 @@ window.navigate = function(view, listId) {
     </div>
   </div>
 <!-- FEEDBACK REPORT MODAL -->
-<div id="feedback-report-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.85);backdrop-filter:blur(4px);overflow-y:auto" onclick="if(event.target===this)closeFeedbackReport()">
-  <div style="max-width:860px;margin:40px auto;background:#111;border:1px solid #222;border-radius:8px;overflow:hidden;font-family:var(--font-mono)">
-    <!-- Header -->
-    <div style="padding:18px 24px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between;background:#0d0d0d">
+<div id="feedback-report-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.88);backdrop-filter:blur(4px);overflow-y:auto" onclick="if(event.target===this)closeFeedbackReport()">
+  <div style="max-width:900px;margin:32px auto 60px;background:#111;border:1px solid #222;border-radius:8px;overflow:hidden;font-family:var(--font-mono)">
+    <div style="padding:18px 24px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between;background:#0d0d0d;position:sticky;top:0;z-index:2">
       <div>
         <div style="font-size:14px;letter-spacing:0.15em;color:#eee;font-weight:700">📊 TOUR FEEDBACK REPORT</div>
         <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-top:3px">ALL PROPERTIES · ALL TIME</div>
       </div>
-      <button onclick="closeFeedbackReport()" style="background:none;border:1px solid #333;color:#666;padding:6px 12px;cursor:pointer;border-radius:4px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em">✕ CLOSE</button>
+      <div style="display:flex;gap:8px">
+        <button onclick="downloadFeedbackReport()" id="fr-dl-btn" style="background:transparent;border:1px solid #6366f1;color:#6366f1;padding:6px 14px;cursor:pointer;border-radius:4px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase">⬇ DOWNLOAD PDF</button>
+        <button onclick="closeFeedbackReport()" style="background:none;border:1px solid #333;color:#666;padding:6px 12px;cursor:pointer;border-radius:4px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em">✕ CLOSE</button>
+      </div>
     </div>
-    <!-- Content -->
     <div id="feedback-report-body" style="padding:24px">
       <div style="text-align:center;padding:40px;color:#333;letter-spacing:0.15em;font-size:10px">LOADING REPORT...</div>
     </div>
@@ -9142,6 +9143,8 @@ window.navigate = function(view, listId) {
 </div>
 
 <script>
+let _frData = null; // cached for PDF
+
 async function openFeedbackReport() {
   const modal = document.getElementById('feedback-report-modal');
   const body  = document.getElementById('feedback-report-body');
@@ -9149,6 +9152,7 @@ async function openFeedbackReport() {
   body.innerHTML = '<div style="text-align:center;padding:40px;color:#333;letter-spacing:0.15em;font-size:10px">LOADING REPORT...</div>';
   try {
     const d = await api('/api/showings/feedback-report');
+    _frData = d;
     renderFeedbackReport(d);
   } catch(e) {
     body.innerHTML = `<div style="color:var(--red);padding:24px;text-align:center">${e.message}</div>`;
@@ -9159,6 +9163,39 @@ function closeFeedbackReport() {
   document.getElementById('feedback-report-modal').style.display = 'none';
 }
 
+// ── AI recommendation per property ─────────────────────────────
+async function loadPropertyAI(propName, propData, elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = '<span style="color:#333;letter-spacing:0.1em;font-size:9px">⏳ ANALYZING...</span>';
+  try {
+    const prompt = `You are a property management advisor for OKCREAL. Analyze this tour feedback data for "${propName}" and write ONE concise paragraph (3-5 sentences) recommending specific changes to convert future tours to a "GO" decision. Be direct and actionable — focus on what the property owner can actually fix.
+
+Feedback summary:
+- Total tours: ${propData.total}
+- GO: ${propData.go} | MAYBE: ${propData.maybe} | NO-GO: ${propData.nogo}
+- Top issues raised: ${(propData.topIssues||[]).map(i => `${i.cat} (${i.count}x)`).join(', ') || 'none recorded'}
+- Sample notes: ${(propData.recentNotes||[]).filter(Boolean).slice(0,5).join(' | ') || 'none'}
+
+Write the recommendation paragraph only. No header, no bullet points.`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 300,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const result = await resp.json();
+    const text = result?.content?.[0]?.text || 'Unable to generate recommendation.';
+    el.innerHTML = `<div style="font-size:11px;line-height:1.7;color:#bbb;font-family:system-ui,sans-serif;font-style:italic;padding:12px 14px;background:#0a0a0a;border-left:3px solid #6366f1;border-radius:0 4px 4px 0;margin-top:10px">${esc(text)}</div>`;
+  } catch(e) {
+    el.innerHTML = `<span style="color:#333;font-size:9px">AI unavailable</span>`;
+  }
+}
+
 function renderFeedbackReport(d) {
   const body = document.getElementById('feedback-report-body');
   if (!d || !d.total) {
@@ -9166,7 +9203,7 @@ function renderFeedbackReport(d) {
     return;
   }
 
-  const pct = (n) => d.total > 0 ? Math.round((n / d.total) * 100) : 0;
+  const pct = (n) => d.total > 0 ? Math.round((n/d.total)*100) : 0;
   const goP = pct(d.go), noP = pct(d.nogo), mayP = pct(d.maybe);
 
   const verdictBar = (val, total, col, label) => {
@@ -9174,17 +9211,16 @@ function renderFeedbackReport(d) {
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <div style="width:52px;font-size:8px;letter-spacing:0.1em;color:#666;text-align:right">${label}</div>
       <div style="flex:1;background:#1a1a1a;border-radius:3px;height:14px;overflow:hidden">
-        <div style="width:${w}%;height:100%;background:${col};border-radius:3px;transition:width 0.6s ease"></div>
+        <div style="width:${w}%;height:100%;background:${col};border-radius:3px"></div>
       </div>
       <div style="width:44px;font-size:10px;font-weight:700;color:${col}">${val} <span style="color:#444;font-size:8px">${w}%</span></div>
     </div>`;
   };
 
-  // Category pill
   const catPill = (cat, count, maxCount) => {
     const w = Math.round((count/maxCount)*100);
-    const col = cat.toLowerCase().includes('price') || cat.toLowerCase().includes('size') ? '#ff8c00'
-              : cat.toLowerCase().includes('condition') || cat.toLowerCase().includes('repair') ? '#e8003a'
+    const col = cat.toLowerCase().includes('price')||cat.toLowerCase().includes('rent') ? '#ff8c00'
+              : cat.toLowerCase().includes('condition')||cat.toLowerCase().includes('repair') ? '#e8003a'
               : '#6366f1';
     return `<div style="margin-bottom:5px">
       <div style="display:flex;justify-content:space-between;margin-bottom:2px">
@@ -9197,112 +9233,243 @@ function renderFeedbackReport(d) {
     </div>`;
   };
 
-  // Recent feedback rows
-  const recentRows = (d.recent || []).slice(0, 20).map(r => {
+  // Per-property expanded cards with AI slot
+  const propCards = (d.byProperty||[]).map((p, idx) => {
+    const propName = p.property.split(' - ')[0];
+    const goW  = p.total > 0 ? Math.round((p.go/p.total)*100) : 0;
+    const noW  = p.total > 0 ? Math.round((p.nogo/p.total)*100) : 0;
+    const mayW = p.total > 0 ? Math.round((p.maybe/p.total)*100) : 0;
+    const borderCol = noW > 50 ? '#e8003a' : noW > 25 ? '#ff8c00' : '#1e1e1e';
+    const aiId = `ai-rec-${idx}`;
+
+    // Collect notes for this property from recent feedback
+    const propNotes = (d.recent||[]).filter(r => r.property === p.property && r.notes).map(r => r.notes);
+    // Attach to propData for AI
+    const propData = { ...p, recentNotes: propNotes };
+
+    const issueChips = (p.topIssues||[]).slice(0,6).map(i =>
+      `<span style="background:#1a1a1a;border:1px solid #252525;padding:2px 8px;border-radius:3px;font-size:8px;color:#888;letter-spacing:0.06em">${esc(i.cat)} ×${i.count}</span>`
+    ).join('');
+
+    return `<div style="background:#0d0d0d;border:1px solid ${borderCol};border-radius:6px;margin-bottom:12px;overflow:hidden">
+      <div style="padding:14px 16px;display:flex;align-items:center;gap:14px">
+        <div style="flex:1">
+          <div style="font-size:11px;letter-spacing:0.08em;color:#ccc;font-weight:700;margin-bottom:4px">${esc(propName)}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">${issueChips||'<span style="font-size:8px;color:#333">No issues tagged</span>'}</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-shrink:0">
+          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#00e87a">${p.go}</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">GO</div></div>
+          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#ff8c00">${p.maybe}</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">MAYBE</div></div>
+          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#e8003a">${p.nogo}</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">NO-GO</div></div>
+          <div style="width:80px">
+            <div style="display:flex;height:8px;border-radius:2px;overflow:hidden;gap:1px">
+              ${goW  ? `<div style="flex:${goW};background:#00e87a"></div>` : ''}
+              ${mayW ? `<div style="flex:${mayW};background:#ff8c00"></div>` : ''}
+              ${noW  ? `<div style="flex:${noW};background:#e8003a"></div>` : ''}
+            </div>
+            <div style="font-size:7px;color:#444;margin-top:3px;text-align:center">${p.total} TOURS</div>
+          </div>
+        </div>
+      </div>
+      <!-- AI RECOMMENDATION -->
+      <div style="padding:0 16px 14px">
+        <div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:4px">🤖 AI RECOMMENDATION</div>
+        <div id="${aiId}">
+          <button onclick="loadPropertyAI('${esc(propName).replace(/'/g,"\\'")}', ${JSON.stringify(propData).replace(/</g,'\\u003c')}, '${aiId}')" 
+            style="background:transparent;border:1px solid #252525;color:#555;padding:5px 12px;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;cursor:pointer;border-radius:3px;transition:all 0.15s"
+            onmouseover="this.style.borderColor='#6366f1';this.style.color='#6366f1'" 
+            onmouseout="this.style.borderColor='#252525';this.style.color='#555'">
+            ✦ GENERATE RECOMMENDATION
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Full feedback log
+  const allRows = (d.recent||[]).map(r => {
     const vcol = r.verdict === 'go' ? '#00e87a' : r.verdict === 'no-go' ? '#e8003a' : '#ff8c00';
     const vlbl = r.verdict === 'go' ? '✓ GO' : r.verdict === 'no-go' ? '✗ NO-GO' : '? MAYBE';
     const dt   = r.showing_time ? new Date(r.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-    const prop = (r.property||'').split(' - ')[0].substring(0,30);
+    const prop = (r.property||'').split(' - ')[0].substring(0,28);
     const cats = (r.categories||[]).slice(0,3).map(c=>`<span style="background:#1e1e1e;padding:1px 5px;border-radius:2px;font-size:7px;color:#888">${esc(c)}</span>`).join(' ');
     return `<tr style="border-bottom:1px solid #141414">
-      <td style="padding:7px 8px;font-size:9px;color:#888">${dt}</td>
+      <td style="padding:7px 8px;font-size:9px;color:#888;white-space:nowrap">${dt}</td>
       <td style="padding:7px 8px;font-size:9px;color:#ccc">${esc(r.guest_name||'—')}</td>
       <td style="padding:7px 8px;font-size:9px;color:#666">${esc(prop)}</td>
       <td style="padding:7px 8px"><span style="color:${vcol};font-size:8px;font-weight:700;letter-spacing:0.1em">${vlbl}</span></td>
       <td style="padding:7px 8px">${cats}</td>
-      <td style="padding:7px 8px;font-size:8px;color:#555;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.notes||'')}</td>
-    </tr>`;
-  }).join('');
-
-  // Property breakdown
-  const propRows = (d.byProperty || []).map(p => {
-    const propName = p.property.split(' - ')[0].substring(0, 32);
-    const goW  = p.total > 0 ? Math.round((p.go/p.total)*100) : 0;
-    const noW  = p.total > 0 ? Math.round((p.nogo/p.total)*100) : 0;
-    const mayW = p.total > 0 ? Math.round((p.maybe/p.total)*100) : 0;
-    const topCat = p.topIssues?.[0]?.cat || '—';
-    return `<tr style="border-bottom:1px solid #141414">
-      <td style="padding:7px 8px;font-size:9px;color:#ccc">${esc(propName)}</td>
-      <td style="padding:7px 8px;text-align:center;font-size:9px;font-weight:700;color:#888">${p.total}</td>
-      <td style="padding:7px 8px">
-        <div style="display:flex;height:10px;border-radius:2px;overflow:hidden;gap:1px">
-          ${goW  ? `<div style="flex:${goW};background:#00e87a;border-radius:2px" title="${p.go} GO"></div>` : ''}
-          ${mayW ? `<div style="flex:${mayW};background:#ff8c00;border-radius:2px" title="${p.maybe} MAYBE"></div>` : ''}
-          ${noW  ? `<div style="flex:${noW};background:#e8003a;border-radius:2px" title="${p.nogo} NO-GO"></div>` : ''}
-        </div>
-      </td>
-      <td style="padding:7px 8px;font-size:8px;color:#555">${esc(topCat)}</td>
+      <td style="padding:7px 8px;font-size:8px;color:#555;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.notes||'')}">${esc(r.notes||'')}</td>
     </tr>`;
   }).join('');
 
   const maxIssueCount = d.topIssues?.[0]?.count || 1;
 
   body.innerHTML = `
-    <!-- SUMMARY SCORECARDS -->
+    <!-- SCORECARDS -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
       ${[
-        { label:'TOTAL TOURS', val: d.total, col:'#6366f1' },
-        { label:'GO', val: d.go, sub: goP+'%', col:'#00e87a' },
-        { label:'NO-GO', val: d.nogo, sub: noP+'%', col:'#e8003a' },
-        { label:'MAYBE', val: d.maybe, sub: mayP+'%', col:'#ff8c00' },
-      ].map(s => `<div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:14px 16px">
+        { label:'TOTAL TOURS', val:d.total, col:'#6366f1' },
+        { label:'GO',          val:d.go,    sub:goP+'%',  col:'#00e87a' },
+        { label:'NO-GO',       val:d.nogo,  sub:noP+'%',  col:'#e8003a' },
+        { label:'MAYBE',       val:d.maybe, sub:mayP+'%', col:'#ff8c00' },
+      ].map(s=>`<div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:14px 16px">
         <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:6px">${s.label}</div>
         <div style="font-size:26px;font-weight:800;color:${s.col};line-height:1">${s.val}</div>
-        ${s.sub ? `<div style="font-size:9px;color:#555;margin-top:3px">${s.sub} of total</div>` : ''}
+        ${s.sub?`<div style="font-size:9px;color:#555;margin-top:3px">${s.sub} of total</div>`:''}
       </div>`).join('')}
     </div>
 
-    <!-- VERDICT BARS + TOP ISSUES -->
+    <!-- VERDICT + TOP ISSUES -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
       <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:16px">
         <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:12px">VERDICT BREAKDOWN</div>
-        ${verdictBar(d.go,    d.total, '#00e87a', 'GO')}
-        ${verdictBar(d.maybe, d.total, '#ff8c00', 'MAYBE')}
-        ${verdictBar(d.nogo,  d.total, '#e8003a', 'NO-GO')}
+        ${verdictBar(d.go,    d.total,'#00e87a','GO')}
+        ${verdictBar(d.maybe, d.total,'#ff8c00','MAYBE')}
+        ${verdictBar(d.nogo,  d.total,'#e8003a','NO-GO')}
       </div>
       <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:16px">
-        <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:12px">TOP OBJECTIONS / ISSUES</div>
-        ${d.topIssues && d.topIssues.length
-          ? d.topIssues.slice(0,8).map(i => catPill(i.cat, i.count, maxIssueCount)).join('')
-          : '<div style="color:#333;font-size:9px">No categories recorded</div>'}
+        <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:12px">TOP OBJECTIONS</div>
+        ${d.topIssues&&d.topIssues.length ? d.topIssues.slice(0,8).map(i=>catPill(i.cat,i.count,maxIssueCount)).join('') : '<div style="color:#333;font-size:9px">None recorded</div>'}
       </div>
     </div>
 
-    <!-- BY PROPERTY -->
-    <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;margin-bottom:24px;overflow:hidden">
-      <div style="padding:12px 16px;border-bottom:1px solid #1a1a1a;font-size:8px;letter-spacing:0.15em;color:#444">FEEDBACK BY PROPERTY</div>
-      <table style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="border-bottom:1px solid #1a1a1a">
-            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.12em;color:#333;font-weight:400">PROPERTY</th>
-            <th style="padding:6px 8px;text-align:center;font-size:7px;letter-spacing:0.12em;color:#333;font-weight:400">TOTAL</th>
-            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.12em;color:#333;font-weight:400">GO / MAYBE / NO-GO</th>
-            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.12em;color:#333;font-weight:400">TOP ISSUE</th>
-          </tr>
-        </thead>
-        <tbody>${propRows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:#333;font-size:9px">No property data</td></tr>'}</tbody>
-      </table>
-    </div>
+    <!-- PER-PROPERTY CARDS WITH AI -->
+    <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:10px">PROPERTY BREAKDOWN & AI RECOMMENDATIONS</div>
+    ${propCards}
 
-    <!-- RECENT FEEDBACK LOG -->
-    <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;overflow:hidden">
-      <div style="padding:12px 16px;border-bottom:1px solid #1a1a1a;font-size:8px;letter-spacing:0.15em;color:#444">RECENT FEEDBACK LOG — LAST 20</div>
+    <!-- FULL FEEDBACK LOG -->
+    <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;overflow:hidden;margin-top:8px">
+      <div style="padding:12px 16px;border-bottom:1px solid #1a1a1a;font-size:8px;letter-spacing:0.15em;color:#444">COMPLETE FEEDBACK LOG — ${d.total} ENTRIES</div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse">
-          <thead>
-            <tr style="border-bottom:1px solid #1a1a1a">
-              <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">DATE</th>
-              <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">GUEST</th>
-              <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">PROPERTY</th>
-              <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">VERDICT</th>
-              <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">ISSUES</th>
-              <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">NOTES</th>
-            </tr>
-          </thead>
-          <tbody>${recentRows || '<tr><td colspan="6" style="padding:16px;text-align:center;color:#333;font-size:9px">No feedback yet</td></tr>'}</tbody>
+          <thead><tr style="border-bottom:1px solid #1a1a1a">
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">DATE</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">GUEST</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">PROPERTY</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">VERDICT</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">ISSUES</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">NOTES</th>
+          </tr></thead>
+          <tbody>${allRows||'<tr><td colspan="6" style="padding:16px;text-align:center;color:#333;font-size:9px">No feedback yet</td></tr>'}</tbody>
         </table>
       </div>
     </div>`;
+}
+
+// ── PDF / Print download ──────────────────────────────────────
+async function downloadFeedbackReport() {
+  const btn = document.getElementById('fr-dl-btn');
+  if (btn) { btn.textContent = '⏳ BUILDING...'; btn.disabled = true; }
+  try {
+    const d = _frData;
+    if (!d) return;
+
+    // Collect AI recs that have already been generated
+    const aiRecs = {};
+    document.querySelectorAll('[id^="ai-rec-"]').forEach(el => {
+      const div = el.querySelector('div[style*="border-left"]');
+      if (div) {
+        // Find property name from parent card
+        const card = el.closest('[style*="border-radius:6px"]');
+        const nameEl = card?.querySelector('[style*="font-weight:700"]');
+        if (nameEl) aiRecs[nameEl.textContent.trim()] = div.textContent.trim();
+      }
+    });
+
+    const dateStr = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+    const pct = n => d.total > 0 ? Math.round((n/d.total)*100) : 0;
+
+    const propSections = (d.byProperty||[]).map(p => {
+      const propName = p.property.split(' - ')[0];
+      const rec = aiRecs[propName] || '';
+      const issues = (p.topIssues||[]).map(i=>`${i.cat} (${i.count}x)`).join(', ') || 'None recorded';
+      return `
+        <div class="prop-block">
+          <h3>${propName}</h3>
+          <div class="verdict-row">
+            <span class="go">GO: ${p.go}</span>
+            <span class="maybe">MAYBE: ${p.maybe}</span>
+            <span class="nogo">NO-GO: ${p.nogo}</span>
+            <span class="total">${p.total} total tours</span>
+          </div>
+          <div class="issues"><strong>Top Issues:</strong> ${issues}</div>
+          ${rec ? `<div class="ai-rec"><strong>🤖 AI Recommendation:</strong><br>${rec}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const allFeedback = (d.recent||[]).map(r => {
+      const dt = r.showing_time ? new Date(r.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+      const prop = (r.property||'').split(' - ')[0];
+      const vrd = r.verdict === 'go' ? 'GO' : r.verdict === 'no-go' ? 'NO-GO' : 'MAYBE';
+      const cats = (r.categories||[]).join(', ') || '—';
+      return `<tr>
+        <td>${dt}</td>
+        <td>${r.guest_name||'—'}</td>
+        <td>${prop}</td>
+        <td class="${r.verdict?.replace('-','')}">${vrd}</td>
+        <td>${cats}</td>
+        <td>${r.notes||''}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Tour Feedback Report — OKCREAL ${dateStr}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size:11px; color:#111; padding:32px 40px; max-width:900px; margin:0 auto; }
+  h1 { font-size:22px; font-weight:800; letter-spacing:0.05em; color:#111; margin-bottom:4px; }
+  h2 { font-size:14px; font-weight:700; letter-spacing:0.08em; color:#444; margin:28px 0 10px; border-bottom:2px solid #eee; padding-bottom:6px; }
+  h3 { font-size:12px; font-weight:700; color:#111; margin-bottom:6px; }
+  .meta { font-size:10px; color:#888; margin-bottom:32px; }
+  .scorecards { display:flex; gap:16px; margin-bottom:28px; }
+  .card { flex:1; border:1px solid #ddd; border-radius:6px; padding:14px; text-align:center; }
+  .card .num { font-size:28px; font-weight:800; }
+  .card .lbl { font-size:9px; letter-spacing:0.12em; color:#888; text-transform:uppercase; margin-bottom:4px; }
+  .card .sub { font-size:10px; color:#aaa; margin-top:3px; }
+  .green { color:#00804a; } .red { color:#c0002a; } .amber { color:#b35f00; } .purple { color:#4040c8; }
+  .go { color:#00804a; font-weight:700; } .nogo { color:#c0002a; font-weight:700; } .maybe { color:#b35f00; font-weight:700; }
+  .prop-block { border:1px solid #ddd; border-radius:6px; padding:16px; margin-bottom:14px; }
+  .verdict-row { display:flex; gap:16px; margin:6px 0 8px; font-size:11px; }
+  .total { color:#888; }
+  .issues { font-size:10px; color:#555; margin-bottom:8px; }
+  .ai-rec { background:#f5f5ff; border-left:3px solid #6366f1; padding:10px 14px; border-radius:0 4px 4px 0; font-size:11px; line-height:1.65; color:#333; font-style:italic; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th { text-align:left; font-size:9px; letter-spacing:0.1em; color:#888; text-transform:uppercase; padding:6px 8px; border-bottom:2px solid #eee; font-weight:600; }
+  td { padding:6px 8px; border-bottom:1px solid #f0f0f0; font-size:10px; vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  @media print { body { padding:20px; } }
+</style></head><body>
+<h1>📊 Tour Feedback Report</h1>
+<div class="meta">OKCREAL Property Management · Generated ${dateStr} · All Properties · All Time</div>
+
+<div class="scorecards">
+  <div class="card"><div class="lbl">Total Tours</div><div class="num purple">${d.total}</div></div>
+  <div class="card"><div class="lbl">GO</div><div class="num green">${d.go}</div><div class="sub">${pct(d.go)}% of total</div></div>
+  <div class="card"><div class="lbl">NO-GO</div><div class="num red">${d.nogo}</div><div class="sub">${pct(d.nogo)}% of total</div></div>
+  <div class="card"><div class="lbl">MAYBE</div><div class="num amber">${d.maybe}</div><div class="sub">${pct(d.maybe)}% of total</div></div>
+</div>
+
+<h2>PROPERTY BREAKDOWN & AI RECOMMENDATIONS</h2>
+${propSections}
+
+<h2>COMPLETE FEEDBACK LOG</h2>
+<table>
+  <thead><tr><th>Date</th><th>Guest</th><th>Property</th><th>Verdict</th><th>Issues</th><th>Notes</th></tr></thead>
+  <tbody>${allFeedback}</tbody>
+</table>
+</body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `OKCREAL_TourFeedback_${new Date().toISOString().slice(0,10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } finally {
+    if (btn) { btn.textContent = '⬇ DOWNLOAD PDF'; btn.disabled = false; }
+  }
 }
 </script>
 
