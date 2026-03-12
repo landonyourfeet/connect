@@ -2513,6 +2513,7 @@ let _mentionSelectedIdx = 0;
 let _agentSse = null;
 let sortField = 'last_activity';
 let sortDir = 'desc';
+let _isDelinqList = false; // tracks whether current list is delinquent
 let searchQuery = '';
 let twilioDevice = null;
 let twilioReady = false;
@@ -2837,7 +2838,7 @@ async function loadPeople(listId = 'all') {
     peopleData = Array.isArray(data) ? data : (data.people || []);
     const total = data.total ?? peopleData.length;
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
-    const _isDelinqList = listName.toLowerCase().includes('delinquent');
+    _isDelinqList = listName.toLowerCase().includes('delinquent');
     ['th-past-due','th-past-due-days'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display=_isDelinqList?'':'none'; });
     if (_isDelinqList && sortField !== 'past_due_days') { sortField='past_due_balance'; sortDir='desc'; }
     else if (!_isDelinqList && sortField==='past_due_balance') { sortField='name'; sortDir='asc'; }
@@ -2897,8 +2898,8 @@ function renderPeopleTable() {
       </div></td>
       <td><span class="phone-mono">${formatPhone(p.phone)}</span></td>
       <td><span class="stage-badge ${stageClass(stage)}">${esc(stage)}</span></td>
-      <td class="debt-cell" style="display:none">${(() => { const cf=p.custom_fields||{}; const bal=p.past_due_balance!=null?p.past_due_balance:cf.past_due_balance; if(bal==null||bal==='') return '<span style="color:var(--text-3)">—</span>'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:var(--red)">$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`; })()}</td>
-      <td class="debt-cell" style="display:none">${(() => { const cf=p.custom_fields||{}; const days=p.past_due_days!=null?p.past_due_days:cf.past_due_days; if(days==null||days==='') return '<span style="color:var(--text-3)">—</span>'; const d=parseInt(days); const color=d>=30?'#E8003A':d>=15?'#FF8C00':'var(--text-2)'; const bg=d>=30?'rgba(232,0,58,0.1)':d>=15?'rgba(255,140,0,0.1)':'transparent'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:${color};background:${bg};padding:2px 7px;border-radius:4px">${d}d</span>`; })()}</td>
+      <td class="debt-cell" style="${_isDelinqList?'':' display:none'}">${(() => { const cf=p.custom_fields||{}; const bal=p.past_due_balance!=null?p.past_due_balance:cf.past_due_balance; if(bal==null||bal==='') return '<span style="color:var(--text-3)">—</span>'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:var(--red)">$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`; })()}</td>
+      <td class="debt-cell" style="${_isDelinqList?'':' display:none'}">${(() => { const cf=p.custom_fields||{}; const days=p.past_due_days!=null?p.past_due_days:cf.past_due_days; if(days==null||days==='') return '<span style="color:var(--text-3)">—</span>'; const d=parseInt(days); const color=d>=30?'#E8003A':d>=15?'#FF8C00':'var(--text-2)'; const bg=d>=30?'rgba(232,0,58,0.1)':d>=15?'rgba(255,140,0,0.1)':'transparent'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:${color};background:${bg};padding:2px 7px;border-radius:4px">${d}d</span>`; })()}</td>
       <td>${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join(' ')}</td>
       <td><span class="last-activity">${lastAct}</span></td>
       <td><span class="text-muted" style="font-size:12px">${esc(p.assigned_agent||'—')}</span></td>
