@@ -5640,6 +5640,82 @@ async function initSecBadge() {
 }
 
 // ── JIREH SECURITY — SSE + Alert System ────────────────────────────────
+// ── JIREH ORGANIC — sidebar connection-status canvas bar ────────────────────
+const JirehOrganic = (() => {
+  let _canvas = null;
+  let _ctx = null;
+  let _raf = null;
+  let _mode = 'idle'; // idle | busy | offline
+  let _phase = 0;
+
+  function getColor() {
+    if (_mode === 'busy')    return { r:255, g:180, b:0   }; // amber
+    if (_mode === 'offline') return { r:120, g:120, b:120 }; // grey
+    return { r:0, g:204, b:102 }; // green — connected
+  }
+
+  function draw() {
+    if (!_ctx) return;
+    const w = _canvas.width, h = _canvas.height;
+    _ctx.clearRect(0, 0, w, h);
+    const c = getColor();
+    if (_mode === 'offline') {
+      // flat dim line
+      _ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},0.25)`;
+      _ctx.fillRect(0, 0, w, h);
+      return;
+    }
+    // travelling pulse
+    _phase = (_phase + 0.012) % 1;
+    const grad = _ctx.createLinearGradient(0, 0, w, 0);
+    const p = _phase;
+    const fade = 0.18;
+    grad.addColorStop(Math.max(0, p - fade), `rgba(${c.r},${c.g},${c.b},0)`);
+    grad.addColorStop(p,                     `rgba(${c.r},${c.g},${c.b},0.9)`);
+    grad.addColorStop(Math.min(1, p + fade), `rgba(${c.r},${c.g},${c.b},0)`);
+    _ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},0.12)`;
+    _ctx.fillRect(0, 0, w, h);
+    _ctx.fillStyle = grad;
+    _ctx.fillRect(0, 0, w, h);
+    _raf = requestAnimationFrame(draw);
+  }
+
+  function stopAnim() {
+    if (_raf) { cancelAnimationFrame(_raf); _raf = null; }
+  }
+
+  return {
+    init() {
+      _canvas = document.getElementById('jireh-canvas');
+      if (!_canvas) return;
+      _ctx = _canvas.getContext('2d');
+      // Resize canvas to match CSS size
+      const resize = () => {
+        if (!_canvas) return;
+        _canvas.width  = _canvas.offsetWidth  || 256;
+        _canvas.height = _canvas.offsetHeight || 2;
+      };
+      resize();
+      new ResizeObserver(resize).observe(_canvas);
+      this.setMode('idle');
+    },
+    setMode(mode) {
+      _mode = mode;
+      stopAnim();
+      if (mode === 'offline') {
+        if (_ctx && _canvas) {
+          _ctx.clearRect(0, 0, _canvas.width, _canvas.height);
+          const c = getColor();
+          _ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},0.25)`;
+          _ctx.fillRect(0, 0, _canvas.width, _canvas.height);
+        }
+      } else {
+        _raf = requestAnimationFrame(draw);
+      }
+    }
+  };
+})();
+
 const JirehSecurity = (() => {
   let _sse = null;
   let _dismissTimer = null;
