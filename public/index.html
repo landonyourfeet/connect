@@ -7474,12 +7474,28 @@ async function renderDashboard() {
 
         <!-- GALACTIC MAP -->
         <div class="mc-panel" style="--panel-accent:#00e87a;padding:0;overflow:hidden;min-height:520px;position:relative">
-          <div style="padding:12px 16px 8px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;justify-content:space-between">
-            <div class="mc-panel-title" style="margin-bottom:0">🌌 GALACTIC PROPERTY MAP — LIVE UNIT STATUS</div>
-            <div style="display:flex;gap:10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase">
-              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e87a;box-shadow:0 0 6px #00e87a;vertical-align:middle;margin-right:4px"></span>OCCUPIED</span>
-              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 6px #e8003a;vertical-align:middle;margin-right:4px"></span>DELINQUENT</span>
-              <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff8c00;box-shadow:0 0 6px #ff8c00;vertical-align:middle;margin-right:4px"></span>VACANT</span>
+          <div style="padding:12px 16px 8px;border-bottom:1px solid #1a1a1a;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div class="mc-panel-title" style="margin-bottom:0">🌌 GALACTIC PROPERTY MAP — LIVE UNIT STATUS</div>
+              <div style="display:flex;gap:10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase">
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e87a;box-shadow:0 0 6px #00e87a;vertical-align:middle;margin-right:4px"></span>OCCUPIED</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 6px #e8003a;vertical-align:middle;margin-right:4px"></span>DELINQUENT</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff8c00;box-shadow:0 0 6px #ff8c00;vertical-align:middle;margin-right:4px"></span>VACANT</span>
+              </div>
+            </div>
+            <!-- VACANCY THERMAL STATUS BAR -->
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.15em;color:#444;white-space:nowrap">VACANCY TEMP</span>
+              <div style="flex:1;position:relative;height:10px">
+                <!-- Spectrum track: blue→cyan→green→amber→red -->
+                <div style="position:absolute;inset:0;border-radius:5px;background:linear-gradient(to right,#0066ff,#00ccff,#00e87a,#ff8c00,#e8003a);opacity:0.25"></div>
+                <!-- LED segments -->
+                <div id="galaxy-vac-bar" style="position:absolute;inset:0;border-radius:5px;display:flex;gap:2px;padding:0 1px"></div>
+                <!-- Needle -->
+                <div id="galaxy-vac-needle" style="position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;background:#fff;box-shadow:0 0 6px #fff;transform:translateX(-50%);transition:left 0.8s ease"></div>
+              </div>
+              <span id="galaxy-vac-pct" style="font-family:var(--font-mono);font-size:9px;font-weight:700;width:36px;text-align:right;transition:color 0.6s">—</span>
+              <span id="galaxy-vac-label" style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.12em;width:52px;transition:color 0.6s">—</span>
             </div>
           </div>
           <canvas id="mc-galaxy-canvas" style="width:100%;display:block;cursor:crosshair"></canvas>
@@ -7577,6 +7593,7 @@ async function refreshDashboard() {
     window._mcWoStats = woStats;
     renderMcPanels(stats, galaxy);
     renderWoMeter(woStats);
+    renderVacancyBar(galaxy);
     initGalaxyCanvas(galaxy);
   } catch(e) {
     console.error('[Dashboard]', e);
@@ -7774,11 +7791,79 @@ function renderMcPanels(d, galaxy) {
 }
 
 // ── GALACTIC CANVAS MAP ───────────────────────────────────────
+function renderVacancyBar(galaxy) {
+  const bar    = document.getElementById('galaxy-vac-bar');
+  const needle = document.getElementById('galaxy-vac-needle');
+  const pctEl  = document.getElementById('galaxy-vac-pct');
+  const lblEl  = document.getElementById('galaxy-vac-label');
+  if (!bar || !needle || !pctEl) return;
+
+  const props = (galaxy || []).filter(p => p.property !== 'ACCOUNTING PURPOSES (Service Team Accounting)');
+  const totalUnits  = props.reduce((s, p) => s + (parseInt(p.total)  || 0), 0);
+  const totalVacant = props.reduce((s, p) => s + (parseInt(p.vacant) || 0), 0);
+  if (!totalUnits) return;
+
+  const vacPct = (totalVacant / totalUnits) * 100; // 0–100 but we display on 0–10 scale
+
+  // Clamp display to 0–10% range; beyond 10% pegs at max
+  const displayPct = Math.min(vacPct, 10);
+  const ratio = displayPct / 10; // 0=perfect blue, 1=critical red
+
+  // Interpolate color: 0%→blue, 2.5%→cyan, 5%→green/amber boundary, 7.5%→orange, 10%→red
+  function lerpColor(t) {
+    // stops: [0→#0066ff] [0.25→#00ccff] [0.5→#00e87a] [0.75→#ff8c00] [1→#e8003a]
+    const stops = [
+      [0,   0x00, 0x66, 0xff],
+      [0.25,0x00, 0xcc, 0xff],
+      [0.5, 0x00, 0xe8, 0x7a],
+      [0.75,0xff, 0x8c, 0x00],
+      [1.0, 0xe8, 0x00, 0x3a],
+    ];
+    let lo = stops[0], hi = stops[stops.length-1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (t >= stops[i][0] && t <= stops[i+1][0]) { lo = stops[i]; hi = stops[i+1]; break; }
+    }
+    const f = (t - lo[0]) / (hi[0] - lo[0]);
+    const r = Math.round(lo[1] + (hi[1]-lo[1])*f);
+    const g = Math.round(lo[2] + (hi[2]-lo[2])*f);
+    const b = Math.round(lo[3] + (hi[3]-lo[3])*f);
+    return { hex:`#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`, r, g, b };
+  }
+
+  const col = lerpColor(ratio);
+
+  // 20 LED segments
+  const SEGS = 20;
+  const litSegs = Math.round(ratio * SEGS);
+  bar.innerHTML = Array.from({length: SEGS}, (_, i) => {
+    const segRatio = i / (SEGS - 1);
+    const segCol = lerpColor(segRatio);
+    const lit = i < litSegs;
+    return `<div style="flex:1;border-radius:2px;height:100%;background:${segCol.hex};opacity:${lit ? '0.9' : '0.1'};
+      ${lit ? `box-shadow:0 0 4px ${segCol.hex}` : ''}"></div>`;
+  }).join('');
+
+  // Position needle
+  needle.style.left = (ratio * 100) + '%';
+  needle.style.background = col.hex;
+  needle.style.boxShadow = `0 0 8px ${col.hex}`;
+
+  // Label
+  const label = ratio < 0.3 ? 'COLD ❄' : ratio < 0.55 ? 'NOMINAL' : ratio < 0.75 ? 'WARM ⚠' : 'HOT 🔴';
+  pctEl.textContent = vacPct.toFixed(1) + '%';
+  pctEl.style.color = col.hex;
+  lblEl.textContent = label;
+  lblEl.style.color = col.hex;
+}
+
 function initGalaxyCanvas(galaxy) {
   const loading = document.getElementById('mc-galaxy-loading');
   const canvas  = document.getElementById('mc-galaxy-canvas');
   if (!canvas || !galaxy || !galaxy.length) return;
   if (loading) loading.style.display = 'none';
+
+  // Render the vacancy thermal bar from galaxy data
+  renderVacancyBar(galaxy);
 
   // Size canvas to container
   const parent = canvas.parentElement;
@@ -8314,10 +8399,7 @@ async function woUpload(input) {
     }
 
     if (!rows.length) { toast('❌ No valid work orders found in file', 'error'); return; }
-    const d = await api('/api/work-orders/upload', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ rows, filename: file.name })
-    });
+    const d = await api('/api/work-orders/upload', 'POST', { rows, filename: file.name });
     toast(`✅ Imported ${d.inserted} work orders${d.skipped?' ('+d.skipped+' skipped)':''}`, 'success');
     // Refresh WO meter
     api('/api/work-orders/stats').then(renderWoMeter).catch(()=>{});
