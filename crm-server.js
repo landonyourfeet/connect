@@ -86,29 +86,16 @@ function getGmailOAuth(agent) {
   return oauth2;
 }
 
-function leavePresence(personId, agentId) {
-  const map = presenceMap.get(String(personId));
-  if (map) { map.delete(String(agentId)); if (!map.size) presenceMap.delete(String(personId)); }
-  broadcastPresence(personId);
-}
-
-function broadcastPresence(personId) {
-  const map = presenceMap.get(String(personId));
-  const viewers = map ? Array.from(map.values()) : [];
-  broadcastToAll({ type: 'presence', personId: String(personId), viewers });
-}
-
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.urlencoded({ extended: false }));
 app.use(express.static('public'));
 // Serve Twilio Voice SDK from node_modules
 app.get('/twilio-voice.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'node_modules/@twilio/voice-sdk/dist/twilio.min.js'));
 });
 
-// ── FAVICON — serve PNG + ICO directly (Chrome ignores SVG-only setups) ──
+// ── FAVICON ──
 const _pngBuf = Buffer.from('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', 'base64');
 const _icoBuf = Buffer.from('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', 'base64');
 
@@ -180,7 +167,6 @@ app.get('/api/people', auth, async (req, res) => {
     if (search) {
       const parts = search.trim().split(/\s+/).filter(Boolean);
       if (parts.length >= 2) {
-        // Full name search — match first+last in either order
         params.push(`%${parts[0]}%`); const p1 = params.length;
         params.push(`%${parts.slice(1).join(' ')}%`); const p2 = params.length;
         params.push(`%${parts[parts.length-1]}%`); const p3 = params.length;
@@ -204,11 +190,9 @@ app.get('/api/people', auth, async (req, res) => {
     }
     if (stage) { params.push(stage); where.push(`p.stage=$${params.length}`); }
     if (tags) {
-      // tags=Delinquent,Eviction — must have ALL specified tags
       const tagList = tags.split(',').map(t=>t.trim()).filter(Boolean);
       for (const tag of tagList) { params.push(tag); where.push(`$${params.length}=ANY(p.tags)`); }
     }
-    // Smart list — load filters from DB and apply
     if (smartListId) {
       const listR = await pool.query('SELECT filters FROM smart_lists WHERE id=$1', [smartListId]);
       if (listR.rows[0]?.filters) {
@@ -216,7 +200,6 @@ app.get('/api/people', auth, async (req, res) => {
         if (f.stages?.length > 1) { params.push(f.stages); where.push(`p.stage=ANY($${params.length})`); }
         else if (f.stage)  { params.push(f.stage); where.push(`p.stage=$${params.length}`); }
         if (f.tags?.length) {
-          // ANY tag match — contact must have at least one of the listed tags
           params.push(f.tags);
           where.push(`p.tags && $${params.length}::text[]`);
         }
@@ -234,7 +217,6 @@ app.get('/api/people', auth, async (req, res) => {
       `SELECT p.* FROM people p WHERE ${where.join(' AND ')} ORDER BY p.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
       params
     );
-    // Attach all phone numbers per person so frontend can match inbound calls correctly
     if (r.rows.length) {
       const ids = r.rows.map(p => p.id);
       const phones = await pool.query(
@@ -269,8 +251,6 @@ app.get('/api/people/:id', auth, async (req, res) => {
 app.post('/api/people', auth, async (req, res) => {
   try {
     const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
-
-    // ── Duplicate check ──────────────────────────────────────────────────────
     const normPhone = phone ? (() => { const d = phone.replace(/\D/g,''); return d.length===10?'+1'+d:d.length===11&&d[0]==='1'?'+'+d:null; })() : null;
     const dupeChecks = [];
     if (normPhone) dupeChecks.push(
@@ -291,13 +271,10 @@ app.post('/api/people', auth, async (req, res) => {
         });
       }
     }
-    // ────────────────────────────────────────────────────────────────────────
-
     const r = await pool.query(
       'INSERT INTO people (first_name,last_name,phone,email,stage,source,background,tags,custom_fields,assigned_to,address,city,state,zip) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
       [firstName, lastName, phone||null, email||null, stage||'lead', source||null, background||null, tags||[], JSON.stringify(customFields||{}), assignedTo||null, address||null, city||null, state||null, zip||null]
     );
-    // If phone provided, also seed into person_phones
     if (phone && r.rows[0]) {
       await pool.query(
         'INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING',
@@ -311,7 +288,6 @@ app.post('/api/people', auth, async (req, res) => {
 // ── CASEWORKER NOTIFICATION HELPER ────────────────────────────────────────────
 async function notifyCaseworkers(residentId, triggerType, agentId) {
   try {
-    // Find all caseworkers linked to this resident
     const rels = await pool.query(`
       SELECT
         CASE WHEN pr.person_id_a = $1 THEN pr.person_id_b ELSE pr.person_id_a END AS cw_id
@@ -319,25 +295,19 @@ async function notifyCaseworkers(residentId, triggerType, agentId) {
       WHERE (pr.person_id_a = $1 OR pr.person_id_b = $1)
         AND pr.label = 'caseworker'
     `, [residentId]);
-
     if (!rels.rows.length) return;
-
-    // Get resident info
     const res = await pool.query('SELECT first_name, last_name, stage FROM people WHERE id=$1', [residentId]);
     const resident = res.rows[0];
     if (!resident) return;
     const resName = [resident.first_name, resident.last_name].filter(Boolean).join(' ');
-
     const msgs = {
       delinquent:      `⚠️ OKCREAL Alert: ${resName} has been moved to Delinquent status. Your support may be needed.`,
       lease_violation: `⚠️ OKCREAL Alert: ${resName} has received a lease violation. Your support may be needed.`,
       evicting:        `⚠️ OKCREAL Alert: ${resName} has been moved to Eviction status. Your support may be needed.`,
     };
     const msg = msgs[triggerType] || `⚠️ OKCREAL Alert: Update on ${resName} — ${triggerType}.`;
-
     for (const row of rels.rows) {
       const cwId = row.cw_id;
-      // Get caseworker phone
       const cwRes = await pool.query(`
         SELECT p.id, p.first_name, p.last_name, pp.phone
         FROM people p
@@ -346,24 +316,17 @@ async function notifyCaseworkers(residentId, triggerType, agentId) {
       `, [cwId]);
       const cw = cwRes.rows[0];
       if (!cw) continue;
-
       const cwName = [cw.first_name, cw.last_name].filter(Boolean).join(' ');
-
-      // Log activity on RESIDENT record
       await pool.query(
         `INSERT INTO activities (person_id, agent_id, type, body, direction)
          VALUES ($1, $2, 'note', $3, 'internal')`,
         [residentId, agentId || null, `📋 Caseworker ${cwName} notified: ${triggerType.replace('_',' ')}`]
       );
-
-      // Log activity on CASEWORKER record
       await pool.query(
         `INSERT INTO activities (person_id, agent_id, type, body, direction)
          VALUES ($1, $2, 'note', $3, 'internal')`,
         [cwId, agentId || null, `📋 Notified re: resident ${resName} — ${triggerType.replace('_',' ')}`]
       );
-
-      // Send SMS if caseworker has a phone
       if (cw.phone) {
         try {
           const twilioClient = initTwilioFull();
@@ -404,14 +367,11 @@ app.put('/api/people/:id', auth, async (req, res) => {
        address||null, city||null, state||null, zip||null, req.params.id]
     );
     const updated = r.rows[0];
-
-    // Notify caseworkers on delinquent/evicting stage changes
     if (stage && (stage === 'Delinquent' || stage === 'Evicting')) {
-      const agentId = req.user?.id || null;
+      const agentId = req.agent?.id || null;
       const triggerType = stage === 'Delinquent' ? 'delinquent' : 'evicting';
       notifyCaseworkers(req.params.id, triggerType, agentId).catch(e => console.warn('[CW trigger]', e.message));
     }
-
     res.json(updated);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -426,7 +386,6 @@ app.delete('/api/people/:id', auth, async (req, res) => {
 // ─── PERSON PHONES ────────────────────────────────────────────────────────────
 app.get('/api/people/:id/phones', auth, async (req, res) => {
   try {
-    // Also migrate people.phone into person_phones if not there yet
     const existing = await pool.query('SELECT COUNT(*) FROM person_phones WHERE person_id=$1', [req.params.id]);
     if (parseInt(existing.rows[0].count) === 0) {
       const p = await pool.query('SELECT phone FROM people WHERE id=$1', [req.params.id]);
@@ -473,7 +432,6 @@ app.put('/api/people/:id/phones/:phoneId', auth, async (req, res) => {
 app.delete('/api/people/:id/phones/:phoneId', auth, async (req, res) => {
   try {
     const del = await pool.query('DELETE FROM person_phones WHERE id=$1 AND person_id=$2 RETURNING *', [req.params.phoneId, req.params.id]);
-    // If we deleted the primary, promote the next one
     if (del.rows[0]?.is_primary) {
       const next = await pool.query('SELECT * FROM person_phones WHERE person_id=$1 ORDER BY id ASC LIMIT 1', [req.params.id]);
       if (next.rows[0]) {
@@ -521,23 +479,13 @@ app.delete('/api/people/:id/relationships/:relId', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Household combined timeline — all activities for a person + their household members
 // ── SECURITY PROFILE ─────────────────────────────────────────────────────
-
-// Upload / replace ID photo (accepts base64 JSON)
 app.post('/api/people/:id/id-photo', auth, async (req, res) => {
   try {
     let { photoB64, photoName } = req.body;
     if (!photoB64) return res.status(400).json({ error: 'photoB64 required' });
-
-    // Strip data URL prefix if present — store only the raw base64
-    if (photoB64.startsWith('data:')) {
-      photoB64 = photoB64.split(',')[1];
-    }
-
-    // ~7MB raw base64 max (covers ~5MB image files)
+    if (photoB64.startsWith('data:')) { photoB64 = photoB64.split(',')[1]; }
     if (photoB64.length > 7000000) return res.status(413).json({ error: 'Image too large (max ~5MB)' });
-
     await pool.query(
       'UPDATE people SET id_photo_b64=$1, id_photo_name=$2, updated_at=NOW() WHERE id=$3',
       [photoB64, photoName || 'id-photo', req.params.id]
@@ -546,7 +494,6 @@ app.post('/api/people/:id/id-photo', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Delete ID photo
 app.delete('/api/people/:id/id-photo', auth, async (req, res) => {
   try {
     await pool.query('UPDATE people SET id_photo_b64=NULL, id_photo_name=NULL, updated_at=NOW() WHERE id=$1', [req.params.id]);
@@ -554,7 +501,6 @@ app.delete('/api/people/:id/id-photo', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Save security profile (notes, criminal history, DV)
 app.patch('/api/people/:id/security', auth, async (req, res) => {
   try {
     const { securityNotes, criminalHistory, dvVictim, dvNotes } = req.body;
@@ -578,24 +524,21 @@ app.patch('/api/people/:id/security', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST a lease violation — notifies caseworkers automatically
 app.post('/api/people/:id/lease-violation', auth, async (req, res) => {
   try {
     const { note } = req.body;
-    const agentId = req.user?.id || null;
+    const agentId = req.agent?.id || null;
     const body = note ? `🚨 Lease Violation: ${note}` : '🚨 Lease Violation logged';
     const act = await pool.query(
       `INSERT INTO activities (person_id, agent_id, type, body, direction)
        VALUES ($1, $2, 'note', $3, 'internal') RETURNING *`,
       [req.params.id, agentId, body]
     );
-    // Notify caseworkers
     await notifyCaseworkers(req.params.id, 'lease_violation', agentId);
     res.json(act.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET caseworkers for a resident (or residents for a caseworker)
 app.get('/api/people/:id/caseworkers', auth, async (req, res) => {
   try {
     const r = await pool.query(`
@@ -634,8 +577,7 @@ app.get('/api/people/:id/household-activities', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── ACTIVITIES ───────────────────────────────────────────────────────────────
-// ── INBOX ─────────────────────────────────────────────────────────────────────
+// ─── INBOX ─────────────────────────────────────────────────────────────────────
 app.get('/api/inbox', auth, async (req, res) => {
   try {
     const missedR = await pool.query(`
@@ -653,7 +595,6 @@ app.get('/api/inbox', auth, async (req, res) => {
       ORDER BY c.created_at DESC
       LIMIT 50
     `);
-
     const textsR = await pool.query(`
       SELECT
         a.id, a.body, a.created_at, a.person_id,
@@ -669,15 +610,13 @@ app.get('/api/inbox', auth, async (req, res) => {
       ORDER BY a.created_at DESC
       LIMIT 50
     `);
-
     res.json({ missed_calls: missedR.rows, unread_texts: textsR.rows });
   } catch(e) { console.error('Inbox error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// Clear inbox notifications
 app.post('/api/inbox/clear', auth, async (req, res) => {
   try {
-    const { type } = req.body; // 'missed', 'texts', or 'all'
+    const { type } = req.body;
     if (type === 'missed' || type === 'all') {
       await pool.query(`UPDATE calls SET inbox_cleared=true WHERE direction='inbound' AND status IN ('no-answer','busy','failed','canceled') AND created_at > NOW() - INTERVAL '7 days'`);
     }
@@ -688,7 +627,6 @@ app.post('/api/inbox/clear', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Clear security event notifications
 app.post('/api/security/events/clear', auth, async (req, res) => {
   try {
     await pool.query(`UPDATE security_events SET dismissed=true WHERE dismissed=false`);
@@ -696,6 +634,7 @@ app.post('/api/security/events/clear', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── ACTIVITIES ───────────────────────────────────────────────────────────────
 app.get('/api/activities', auth, async (req, res) => {
   try {
     const { personId, limit = 50, type } = req.query;
@@ -734,12 +673,9 @@ app.post('/api/activities', auth, async (req, res) => {
        direction||'outbound', mentions||[], emailSubject||null]
     );
     const activity = r.rows[0];
-
-    // Parse @mentions and fire notifications
     if (body && (mentions?.length || body.includes('@'))) {
       const agentNames = mentions || [];
       if (agentNames.length) {
-        // Load person name for notification body
         const personR = await pool.query('SELECT first_name, last_name FROM people WHERE id=$1', [personId]);
         const personName = personR.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'a contact';
         for (const mentionedName of agentNames) {
@@ -757,7 +693,6 @@ app.post('/api/activities', auth, async (req, res) => {
         }
       }
     }
-
     res.json(activity);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -860,8 +795,6 @@ const initTwilio = () => {
 };
 
 const initTwilioFull = () => {
-  // Prefer API Key credentials (what's actually set in Railway)
-  // Falls back to AUTH_TOKEN if set
   const sid = process.env.TWILIO_ACCOUNT_SID;
   if (!sid) return null;
   if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
@@ -873,8 +806,6 @@ const initTwilioFull = () => {
   return null;
 };
 
-// Helper: Basic Auth buffer for downloading Twilio recordings
-// Uses API Key SID + Secret (preferred) or Account SID + Auth Token
 const twilioBasicAuth = () => {
   if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
     return Buffer.from(`${process.env.TWILIO_API_KEY_SID}:${process.env.TWILIO_API_KEY_SECRET}`).toString('base64');
@@ -897,7 +828,7 @@ const initGrok = () => {
   return new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
 };
 
-// ─── TWILIO TOKEN (GET + POST) ────────────────────────────────────────────────
+// ─── TWILIO TOKEN ─────────────────────────────────────────────────────────────
 const buildTwilioToken = async (req, res) => {
   try {
     const twilio = initTwilio();
@@ -929,31 +860,29 @@ app.get('/api/twilio/lines', auth, async (req, res) => {
 });
 
 // ─── SMS SEND ─────────────────────────────────────────────────────────────────
+// FIX: type is now 'sms' (was 'text') to match inbox query and inbound webhook
 app.post('/api/twilio/sms', auth, async (req, res) => {
   try {
-    // Use full auth client for messaging (API key doesn't support messages.create in all configs)
     const twilio = initTwilioFull() || initTwilio();
     if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
 
     const { to, body, personId, lineId } = req.body;
     if (!to || !body) return res.status(400).json({ error: 'Missing to or body' });
 
-    // Resolve from number
     let fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
     if (lineId) {
       const lineR = await pool.query('SELECT twilio_number FROM call_lines WHERE id=$1', [lineId]);
       if (lineR.rows[0]) fromNumber = lineR.rows[0].twilio_number;
     }
 
-    // Insert activity first with status 'sending' so we have the ID for status callback
+    // FIX: type changed from 'text' to 'sms' so outbound messages appear in inbox
     const actR = await pool.query(
       `INSERT INTO activities (person_id, agent_id, type, body, direction, sms_status)
-       VALUES ($1, $2, 'text', $3, 'outbound', 'sending') RETURNING *`,
+       VALUES ($1, $2, 'sms', $3, 'outbound', 'sending') RETURNING *`,
       [personId || null, req.agent.id, body]
     );
     const activityId = actR.rows[0].id;
 
-    // Send via Twilio — include statusCallback so we get delivery receipts
     const statusCallbackUrl = process.env.APP_URL
       ? `${process.env.APP_URL}/api/twilio/sms-status?activityId=${activityId}`
       : null;
@@ -961,18 +890,13 @@ app.post('/api/twilio/sms', auth, async (req, res) => {
     try {
       const msgParams = { body, from: fromNumber, to };
       if (statusCallbackUrl) msgParams.statusCallback = statusCallbackUrl;
-
       const message = await twilio.messages.create(msgParams);
-
-      // Update activity with Twilio SID and sent status
       await pool.query(
         `UPDATE activities SET message_sid=$1, sms_status='sent' WHERE id=$2`,
         [message.sid, activityId]
       );
-
       res.json({ ok: true, sid: message.sid, activityId });
     } catch (twilioErr) {
-      // Mark as failed in DB
       await pool.query(
         `UPDATE activities SET sms_status='failed', sms_error=$1 WHERE id=$2`,
         [twilioErr.message, activityId]
@@ -999,8 +923,6 @@ app.post('/api/twilio/sms/retry/:activityId', auth, async (req, res) => {
     if (!to) return res.status(400).json({ error: 'No phone number on contact' });
 
     const fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
-
-    // Reset status to sending
     await pool.query(`UPDATE activities SET sms_status='sending', sms_error=NULL WHERE id=$1`, [act.id]);
 
     const statusCallbackUrl = process.env.APP_URL
@@ -1010,7 +932,6 @@ app.post('/api/twilio/sms/retry/:activityId', auth, async (req, res) => {
     try {
       const msgParams = { body: act.body, from: fromNumber, to };
       if (statusCallbackUrl) msgParams.statusCallback = statusCallbackUrl;
-
       const message = await twilio.messages.create(msgParams);
       await pool.query(
         `UPDATE activities SET message_sid=$1, sms_status='sent' WHERE id=$2`,
@@ -1029,30 +950,83 @@ app.post('/api/twilio/sms/retry/:activityId', auth, async (req, res) => {
 
 // ─── SMS STATUS WEBHOOK (Twilio delivery receipts) ────────────────────────────
 app.post('/api/twilio/sms-status', async (req, res) => {
-  res.sendStatus(200); // Always respond quickly to Twilio
+  res.sendStatus(200);
   try {
     const { activityId } = req.query;
     const { MessageStatus, MessageSid, ErrorCode, ErrorMessage } = req.body;
     if (!activityId) return;
-
-    // Twilio statuses: queued → sent → delivered / undelivered / failed
     const statusMap = {
-      queued: 'sending',
-      accepted: 'sending',
-      sending: 'sending',
-      sent: 'sent',
-      delivered: 'delivered',
-      undelivered: 'failed',
-      failed: 'failed'
+      queued: 'sending', accepted: 'sending', sending: 'sending',
+      sent: 'sent', delivered: 'delivered', undelivered: 'failed', failed: 'failed'
     };
     const mapped = statusMap[MessageStatus] || MessageStatus;
     const errorMsg = ErrorCode ? `Error ${ErrorCode}: ${ErrorMessage || MessageStatus}` : null;
-
     await pool.query(
       `UPDATE activities SET sms_status=$1, sms_error=$2, message_sid=COALESCE($3, message_sid) WHERE id=$4`,
       [mapped, errorMsg, MessageSid || null, activityId]
     );
   } catch (e) { console.error('SMS status webhook error:', e.message); }
+});
+
+// ─── SMS INBOUND WEBHOOK ──────────────────────────────────────────────────────
+// FIX: This route was missing entirely — inbound texts were silently dropped.
+// In Twilio Console → Phone Numbers → +14052562614 → Messaging → set:
+//   "A message comes in" → Webhook → https://connect.okcreal.com/api/twilio/sms-inbound → HTTP POST
+app.post('/api/twilio/sms-inbound', async (req, res) => {
+  res.sendStatus(200); // respond immediately so Twilio doesn't retry
+  try {
+    const { From, Body, To } = req.body;
+    if (!From || !Body) return;
+
+    const normalized = From.replace(/\D/g, '').slice(-10);
+
+    // Look up person — check person_phones first, then people.phone fallback
+    let person = null;
+    const ppR = await pool.query(
+      `SELECT p.* FROM people p
+       JOIN person_phones pp ON pp.person_id = p.id
+       WHERE RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $1
+         AND (pp.is_bad IS NULL OR pp.is_bad = false)
+       LIMIT 1`,
+      [normalized]
+    );
+    if (ppR.rows.length) {
+      person = ppR.rows[0];
+    } else {
+      const pR = await pool.query(
+        `SELECT * FROM people WHERE RIGHT(REGEXP_REPLACE(COALESCE(phone,''), '[^0-9]', '', 'g'), 10) = $1 LIMIT 1`,
+        [normalized]
+      );
+      person = pR.rows[0] || null;
+    }
+
+    // Save as type 'sms' inbound activity
+    const actR = await pool.query(
+      `INSERT INTO activities (person_id, type, body, direction, sms_status, created_at)
+       VALUES ($1, 'sms', $2, 'inbound', 'received', NOW()) RETURNING *`,
+      [person?.id || null, Body]
+    );
+
+    if (!person) {
+      console.log(`[SMS Inbound] Unmatched number ${From}: "${Body.substring(0, 80)}"`);
+    } else {
+      console.log(`[SMS Inbound] From ${person.first_name} ${person.last_name||''} (${From}): "${Body.substring(0, 80)}"`);
+    }
+
+    // Real-time push to all connected agents
+    broadcastToAll({
+      type: 'inbound_sms',
+      activityId: actR.rows[0].id,
+      personId: person?.id || null,
+      personName: person ? `${person.first_name} ${person.last_name || ''}`.trim() : From,
+      from: From,
+      body: Body,
+      createdAt: actR.rows[0].created_at
+    });
+
+  } catch (e) {
+    console.error('[SMS Inbound] Error:', e.message);
+  }
 });
 
 // ─── VOICE TWIML ──────────────────────────────────────────────────────────────
@@ -1070,7 +1044,6 @@ app.post('/api/twilio/voice', async (req, res) => {
       recordingStatusCallbackMethod: 'POST'
     });
     dial.number({ statusCallbackEvent: 'initiated ringing answered completed', statusCallback: `${process.env.APP_URL}/api/twilio/status`, statusCallbackMethod: 'POST' }, To);
-    // Always create call record so recording webhook can find it
     if (callSid) {
       pool.query(
         'INSERT INTO calls (twilio_call_sid,person_id,agent_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (twilio_call_sid) DO NOTHING',
@@ -1088,7 +1061,6 @@ app.post('/api/twilio/inbound', async (req, res) => {
     const { To: toNum, From: fromNum, CallSid: callSid } = req.body;
     const lineR = await pool.query('SELECT * FROM call_lines WHERE twilio_number=$1', [toNum]);
     const line = lineR.rows[0];
-    // Look up person by any phone number (primary or in person_phones)
     const normalizedFrom = fromNum.replace(/\D/g,'');
     let person = null;
     const ppR = await pool.query(
@@ -1102,7 +1074,6 @@ app.post('/api/twilio/inbound', async (req, res) => {
     if (ppR.rows.length) {
       person = ppR.rows[0];
     } else {
-      // Fallback: people.phone column
       const pR = await pool.query(`SELECT * FROM people WHERE regexp_replace(phone,'\\D','','g')=$1 LIMIT 1`, [normalizedFrom]);
       person = pR.rows[0] || null;
     }
@@ -1127,7 +1098,6 @@ app.post('/api/twilio/inbound', async (req, res) => {
         record: 'record-from-ringing-dual',
         recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
         recordingStatusCallbackMethod: 'POST',
-        // action fires when the dial ends — this creates the activity row
         action: `${process.env.APP_URL}/api/twilio/inbound-complete?callSid=${callSid}`,
         method: 'POST',
         timeout: 30
@@ -1158,9 +1128,8 @@ app.post('/api/twilio/status', async (req, res) => {
   } catch (e) { console.error(e); res.sendStatus(200); }
 });
 
-// Fires when inbound <Dial> ends (action URL) — creates the activity for inbound calls
 app.post('/api/twilio/inbound-complete', async (req, res) => {
-  res.type('xml').send('<Response></Response>'); // must return TwiML
+  res.type('xml').send('<Response></Response>');
   try {
     const { callSid } = req.query;
     const { DialCallDuration, DialCallStatus } = req.body;
@@ -1185,7 +1154,6 @@ app.post('/api/twilio/recording', async (req, res) => {
   try {
     const { CallSid, ParentCallSid, RecordingUrl, RecordingSid } = req.body;
     console.log('Recording webhook:', { CallSid, ParentCallSid, RecordingUrl: RecordingUrl?.substring(0,60), RecordingSid });
-    // Try matching by CallSid, then ParentCallSid (Dial recordings may send child SID)
     let callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [CallSid]);
     if (!callR.rows.length && ParentCallSid) {
       callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [ParentCallSid]);
@@ -1197,8 +1165,6 @@ app.post('/api/twilio/recording', async (req, res) => {
     }
     const recUrl = `${RecordingUrl}.mp3`;
     await pool.query('UPDATE calls SET recording_url=$1 WHERE id=$2', [recUrl, call.id]);
-
-    // Ensure activity row exists — recording webhook can arrive before status webhook
     const existingAct = await pool.query('SELECT id FROM activities WHERE call_id=$1 LIMIT 1', [call.id]);
     if (existingAct.rows.length === 0) {
       await pool.query(
@@ -1206,16 +1172,13 @@ app.post('/api/twilio/recording', async (req, res) => {
         [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', call.duration_seconds||0, call.direction||'outbound']
       ).catch(()=>{});
     }
-
     let transcript = '', summary = '';
     const dg = initDeepgram();
     if (dg) {
       try {
-        const rawUrl = `${recUrl}`;
-        // Download recording as buffer with Twilio Basic Auth using https module
         const audioBuffer = await new Promise((resolve, reject) => {
           const https = require('https');
-          const url   = new URL(rawUrl);
+          const url   = new URL(recUrl);
           const opts  = {
             hostname: url.hostname,
             path:     url.pathname + url.search,
@@ -1269,21 +1232,17 @@ app.post('/api/twilio/recording', async (req, res) => {
       } catch (e) { console.error('Grok error:', e.message); }
     }
     await pool.query('UPDATE calls SET transcript=$1,summary=$2 WHERE id=$3', [transcript, summary, call.id]);
-    // Always update the activity — even if blank, clear "Transcript processing..." placeholder
     const activityBody = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. No transcript available.');
-    // Also save recording_url directly on activity so JOIN isn't required to show it
     await pool.query('UPDATE activities SET body=$1, recording_url=$2 WHERE call_id=$3', [activityBody, recUrl, call.id]).catch((e) => { console.error('Activity update error:', e.message); });
   } catch (e) { console.error('Recording webhook error:', e.message); }
 });
 
-// Retry transcription for stuck "Transcript processing..." activities
 app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
   try {
     const callR = await pool.query('SELECT * FROM calls WHERE id=$1', [req.params.callId]);
     const call = callR.rows[0];
     if (!call?.recording_url) return res.status(404).json({ error: 'No recording found' });
     res.json({ ok: true, message: 'Retrying transcription...' });
-    // Run async
     (async () => {
       let transcript = '', summary = '';
       const dg = initDeepgram();
@@ -1348,11 +1307,8 @@ app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── RECORDING PROXY — serves Twilio recordings with embedded auth so browser audio player works ──
-// Uses query param token (?token=JWT) because HTML <audio> elements can't send Authorization headers
 app.get('/api/calls/:callId/recording', async (req, res) => {
   try {
-    // Accept token from Authorization header OR ?token= query param (needed for <audio src>)
     const headerToken = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null;
     const queryToken  = req.query.token || null;
     const token = headerToken || queryToken;
@@ -1361,9 +1317,6 @@ app.get('/api/calls/:callId/recording', async (req, res) => {
     try { agentId = jwt.verify(token, JWT_SECRET).id; } catch(e) { return res.status(401).json({ error: 'Unauthorized' }); }
     const agentR = await pool.query('SELECT id FROM agents WHERE id=$1 AND is_active=true', [agentId]);
     if (!agentR.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
-
-    // Look up recording_url — check calls table first, then activities table
-    // (some recordings land only on activities.recording_url)
     const callR = await pool.query(
       `SELECT COALESCE(c.recording_url, a.recording_url) AS recording_url
        FROM calls c
@@ -1373,8 +1326,6 @@ app.get('/api/calls/:callId/recording', async (req, res) => {
       [req.params.callId]
     );
     let recUrl = callR.rows[0]?.recording_url;
-
-    // Fallback: callId might be an activity id — look up via activities directly
     if (!recUrl) {
       const actR = await pool.query(
         `SELECT COALESCE(a.recording_url, c.recording_url) AS recording_url
@@ -1386,7 +1337,6 @@ app.get('/api/calls/:callId/recording', async (req, res) => {
       );
       recUrl = actR.rows[0]?.recording_url;
     }
-
     if (!recUrl) return res.status(404).json({ error: 'No recording found for this call' });
     const auth = twilioBasicAuth();
     if (!auth) return res.status(500).json({ error: 'Twilio credentials not configured' });
@@ -1432,7 +1382,6 @@ app.post('/api/twilio/voicemail', async (req, res) => {
 });
 
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
-// ─── CONFIG / CLIENT KEYS ─────────────────────────────────────────────────────
 app.get('/api/config/maps-key', auth, (req, res) => {
   res.json({ key: process.env.GOOGLE_MAPS_API_KEY || null });
 });
@@ -1444,22 +1393,18 @@ app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Also expose without /admin prefix for frontend compatibility
 // ── FUB IMPORT ────────────────────────────────────────────────────────────────
 const uploadMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function fubParseCSV(raw) {
-  // Strip UTF-8 BOM, normalize line endings
   const cleaned = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-  // RFC-4180 compliant parser — handles quoted fields with embedded newlines/commas
   const rows2D = [[]];
   let cur = '', inQ = false;
   for (let i = 0; i < cleaned.length; i++) {
     const ch = cleaned[i];
     if (ch === '"') {
       if (!inQ) { inQ = true; continue; }
-      if (cleaned[i+1] === '"') { cur += '"'; i++; continue; } // escaped quote
+      if (cleaned[i+1] === '"') { cur += '"'; i++; continue; }
       inQ = false; continue;
     }
     if (!inQ && ch === ',')  { rows2D[rows2D.length-1].push(cur); cur = ''; continue; }
@@ -1467,7 +1412,6 @@ function fubParseCSV(raw) {
     cur += ch;
   }
   rows2D[rows2D.length-1].push(cur);
-
   const headers = rows2D[0].map(h => h.trim());
   const result = [];
   for (let r = 1; r < rows2D.length; r++) {
@@ -1519,10 +1463,7 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
     const commit = req.body.commit === '1';
     const raw = req.file.buffer.toString('utf8');
     const csvRows = fubParseCSV(raw);
-
-    // Helper: truncate to safe length (TEXT cols are unlimited after migration, but be safe)
     const trunc = (s, n=1000) => s ? String(s).substring(0, n) : s;
-
     const contacts = csvRows.map(row => ({
       first_name:  trunc(row['First Name'] || (row['Name']||'').split(' ')[0] || '', 200),
       last_name:   trunc(row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '', 200),
@@ -1542,8 +1483,6 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
       state:       trunc(row['Property State'] || row['State'] || null, 50),
       zip:         trunc(row['Property Postal Code'] || row['Zip'] || null, 20),
     })).filter(c => c.first_name);
-
-    // Load existing for dedup
     const existingByFubId = new Map();
     const existingByEmail = new Map();
     const existingByPhone = new Map();
@@ -1563,7 +1502,6 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
     for (const p of existing) {
       if (p.fub_id) existingByFubId.set(String(p.fub_id).trim(), p.id);
       if (p.email)  existingByEmail.set(p.email.toLowerCase().trim(), p.id);
-      // Index both the main phone column and all person_phones entries
       const allPhones = [...(p.phones || [])];
       if (p.main_phone) allPhones.push(p.main_phone);
       for (const ph of allPhones) {
@@ -1571,20 +1509,16 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
         if (norm) existingByPhone.set(norm, p.id);
       }
     }
-
     let inserted = 0, updated = 0, skipped = 0, blocked = 0;
     const preview = [];
-
     for (const c of contacts) {
       if (!c.first_name) { skipped++; continue; }
       let existingId = null;
       if (c.fub_id && existingByFubId.has(c.fub_id))        existingId = existingByFubId.get(c.fub_id);
       else if (c.email && existingByEmail.has(c.email))      existingId = existingByEmail.get(c.email);
       else if (c.phone && existingByPhone.has(c.phone))      existingId = existingByPhone.get(c.phone);
-
       const name = `${c.first_name} ${c.last_name||''}`.trim();
       if (c.is_blocked) blocked++;
-
       if (existingId) {
         updated++;
         preview.push({ action:'update', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
@@ -1612,7 +1546,6 @@ app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) =
         }
       }
     }
-
     res.json({ inserted, updated, skipped, blocked, commit, total: contacts.length, preview: preview.slice(0, 200) });
   } catch(e) { console.error('FUB import error:', e.message); res.status(500).json({ error: e.message }); }
 });
@@ -1705,40 +1638,8 @@ async function initDB() {
   };
 
   await run(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`, 'uuid-ossp');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      name          TEXT NOT NULL,
-      email         TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role          TEXT DEFAULT 'agent',
-      phone         TEXT,
-      avatar_color  TEXT DEFAULT '#6366f1',
-      is_active     BOOLEAN DEFAULT true,
-      created_at    TIMESTAMPTZ DEFAULT NOW(),
-      updated_at    TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create agents');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS people (
-      id            SERIAL PRIMARY KEY,
-      first_name    TEXT NOT NULL,
-      last_name     TEXT,
-      phone         TEXT,
-      email         TEXT,
-      stage         TEXT DEFAULT 'lead',
-      source        TEXT,
-      background    TEXT,
-      tags          TEXT[] DEFAULT '{}',
-      custom_fields JSONB DEFAULT '{}',
-      assigned_to   TEXT,
-      created_at    TIMESTAMPTZ DEFAULT NOW(),
-      updated_at    TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create people');
-
+  await run(`CREATE TABLE IF NOT EXISTS agents (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT DEFAULT 'agent', phone TEXT, avatar_color TEXT DEFAULT '#6366f1', is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, 'create agents');
+  await run(`CREATE TABLE IF NOT EXISTS people (id SERIAL PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT, phone TEXT, email TEXT, stage TEXT DEFAULT 'lead', source TEXT, background TEXT, tags TEXT[] DEFAULT '{}', custom_fields JSONB DEFAULT '{}', assigned_to TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, 'create people');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS background TEXT`, 'people.background');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`, 'people.tags');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`, 'people.custom_fields');
@@ -1753,56 +1654,16 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS criminal_history TEXT`, 'people.criminal_history');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dv_victim BOOLEAN DEFAULT FALSE`, 'people.dv_victim');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dv_notes TEXT`, 'people.dv_notes');
-
-  // ── Security events table ──
-  await run(`
-    CREATE TABLE IF NOT EXISTS security_events (
-      id            SERIAL PRIMARY KEY,
-      event_id      TEXT UNIQUE,
-      unifi_person_id TEXT,
-      camera_mac    TEXT,
-      camera_name   TEXT,
-      site          TEXT,
-      event_link    TEXT,
-      thumbnail_b64 TEXT,
-      triggered_at  TIMESTAMPTZ DEFAULT NOW(),
-      alarm_name    TEXT,
-      raw_payload   TEXT,
-      dismissed     BOOLEAN DEFAULT FALSE
-    )
-  `, 'create security_events');
-
-  // ── Camera name mapping table ──
-  await run(`
-    CREATE TABLE IF NOT EXISTS protect_cameras (
-      id    SERIAL PRIMARY KEY,
-      mac   TEXT UNIQUE NOT NULL,
-      name  TEXT NOT NULL,
-      site  TEXT DEFAULT 'Main'
-    )
-  `, 'create protect_cameras');
-  // Seed known camera names (MAC → friendly name from UniFi Protect device list)
-  // Add entries here as you identify each camera MAC from the Protect devices page
-  const knownCams = [
-    ['847848B2C827', 'Marlin Rear Overwatch', 'Marlin'],
-  ];
+  await run(`CREATE TABLE IF NOT EXISTS security_events (id SERIAL PRIMARY KEY, event_id TEXT UNIQUE, unifi_person_id TEXT, camera_mac TEXT, camera_name TEXT, site TEXT, event_link TEXT, thumbnail_b64 TEXT, triggered_at TIMESTAMPTZ DEFAULT NOW(), alarm_name TEXT, raw_payload TEXT, dismissed BOOLEAN DEFAULT FALSE)`, 'create security_events');
+  await run(`CREATE TABLE IF NOT EXISTS protect_cameras (id SERIAL PRIMARY KEY, mac TEXT UNIQUE NOT NULL, name TEXT NOT NULL, site TEXT DEFAULT 'Main')`, 'create protect_cameras');
+  const knownCams = [['847848B2C827', 'Marlin Rear Overwatch', 'Marlin']];
   for (const [mac, name, site] of knownCams) {
-    await pool.query(
-      `INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING`,
-      [mac, name, site]
-    ).catch(()=>{});
+    await pool.query(`INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING`, [mac, name, site]).catch(()=>{});
   }
-  // Migrate old stage names
-  await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate stage Active Tenant->Resident').catch(()=>{});
-  await run(`UPDATE people SET stage='Contractor' WHERE stage='Vendor'`, 'migrate stage Vendor->Contractor').catch(()=>{});
-  // Fix any security_events where event_link doesn't contain the event_id (was stored as list URL)
+  await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate Active Tenant->Resident');
+  await run(`UPDATE people SET stage='Contractor' WHERE stage='Vendor'`, 'migrate Vendor->Contractor');
   if (process.env.PROTECT_CLOUD_BASE_URL) {
-    await pool.query(`
-      UPDATE security_events
-      SET event_link = $1 || '/protect/events/event/' || event_id
-      WHERE event_id IS NOT NULL
-        AND (event_link IS NULL OR event_link NOT LIKE '%/event/%')
-    `, [process.env.PROTECT_CLOUD_BASE_URL]).catch(e => console.warn('Fix event_links:', e.message));
+    await pool.query(`UPDATE security_events SET event_link = $1 || '/protect/events/event/' || event_id WHERE event_id IS NOT NULL AND (event_link IS NULL OR event_link NOT LIKE '%/event/%')`, [process.env.PROTECT_CLOUD_BASE_URL]).catch(e => console.warn('Fix event_links:', e.message));
   }
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS city TEXT`, 'people.city');
@@ -1812,7 +1673,6 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dob DATE`, 'people.dob');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE`, 'people.is_blocked');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS notes TEXT`, 'people.notes');
-  // Widen any VARCHAR columns to TEXT so long FUB values don't error
   await run(`ALTER TABLE people ALTER COLUMN first_name TYPE TEXT`, 'people.first_name->TEXT');
   await run(`ALTER TABLE people ALTER COLUMN last_name TYPE TEXT`, 'people.last_name->TEXT');
   await run(`ALTER TABLE people ALTER COLUMN phone TYPE TEXT`, 'people.phone->TEXT');
@@ -1824,191 +1684,52 @@ async function initDB() {
   await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'calls.inbox_cleared');
   await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`, 'calls.created_at');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'activities.inbox_cleared');
-
-  // Multi-phone support
-  await run(`
-    CREATE TABLE IF NOT EXISTS person_phones (
-      id          SERIAL PRIMARY KEY,
-      person_id   INTEGER REFERENCES people(id) ON DELETE CASCADE,
-      phone       TEXT NOT NULL,
-      label       TEXT DEFAULT 'mobile',
-      is_primary  BOOLEAN DEFAULT FALSE,
-      is_bad      BOOLEAN DEFAULT FALSE,
-      created_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create person_phones');
+  await run(`CREATE TABLE IF NOT EXISTS person_phones (id SERIAL PRIMARY KEY, person_id INTEGER REFERENCES people(id) ON DELETE CASCADE, phone TEXT NOT NULL, label TEXT DEFAULT 'mobile', is_primary BOOLEAN DEFAULT FALSE, is_bad BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create person_phones');
   await run(`CREATE INDEX IF NOT EXISTS idx_person_phones_person ON person_phones(person_id)`, 'idx_person_phones');
-
-  // Household / relationship support
-  await run(`
-    CREATE TABLE IF NOT EXISTS person_relationships (
-      id              SERIAL PRIMARY KEY,
-      person_id_a     INTEGER REFERENCES people(id) ON DELETE CASCADE,
-      person_id_b     INTEGER REFERENCES people(id) ON DELETE CASCADE,
-      label           TEXT DEFAULT 'household',
-      created_at      TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(person_id_a, person_id_b)
-    )
-  `, 'create person_relationships');
+  await run(`CREATE TABLE IF NOT EXISTS person_relationships (id SERIAL PRIMARY KEY, person_id_a INTEGER REFERENCES people(id) ON DELETE CASCADE, person_id_b INTEGER REFERENCES people(id) ON DELETE CASCADE, label TEXT DEFAULT 'household', created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(person_id_a, person_id_b))`, 'create person_relationships');
   await run(`CREATE INDEX IF NOT EXISTS idx_rels_a ON person_relationships(person_id_a)`, 'idx_rels_a');
   await run(`CREATE INDEX IF NOT EXISTS idx_rels_b ON person_relationships(person_id_b)`, 'idx_rels_b');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS call_lines (
-      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      name          TEXT NOT NULL,
-      twilio_number TEXT NOT NULL,
-      description   TEXT,
-      is_active     BOOLEAN DEFAULT true,
-      created_at    TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create call_lines');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS line_agents (
-      line_id  TEXT NOT NULL,
-      agent_id TEXT NOT NULL,
-      PRIMARY KEY (line_id, agent_id)
-    )
-  `, 'create line_agents');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS smart_lists (
-      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      name       TEXT NOT NULL UNIQUE,
-      filters    JSONB DEFAULT '{}',
-      sort_order INTEGER DEFAULT 0
-    )
-  `, 'create smart_lists');
+  await run(`CREATE TABLE IF NOT EXISTS call_lines (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, twilio_number TEXT NOT NULL, description TEXT, is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create call_lines');
+  await run(`CREATE TABLE IF NOT EXISTS line_agents (line_id TEXT NOT NULL, agent_id TEXT NOT NULL, PRIMARY KEY (line_id, agent_id))`, 'create line_agents');
+  await run(`CREATE TABLE IF NOT EXISTS smart_lists (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL UNIQUE, filters JSONB DEFAULT '{}', sort_order INTEGER DEFAULT 0)`, 'create smart_lists');
   await pool.query(`ALTER TABLE smart_lists ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0`).catch(()=>{});
-  // Deduplicate smart_lists by name — keep the lowest id for each name
   await pool.query(`DELETE FROM smart_lists WHERE id NOT IN (SELECT MIN(id) FROM smart_lists GROUP BY name)`).catch(()=>{});
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS smart_lists_name_idx ON smart_lists(name)`, 'smart_lists name index');
-  await run(`
-    CREATE TABLE IF NOT EXISTS app_settings (
-      key   TEXT PRIMARY KEY,
-      value TEXT
-    )
-  `, 'create app_settings');
-
-  // Agent profile extensions
+  await run(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)`, 'create app_settings');
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_b64 TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_email TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT 'online' CHECK (availability IN ('online','offline','oncall'))`).catch(()=>{});
   await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS phone_personal TEXT`).catch(()=>{});
-  // on-call settings
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('oncall_agent_id','') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_start','18:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_end','08:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('emergency_iVR_enabled','true') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
-
-  // Activity mentions
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS email_subject TEXT`).catch(()=>{});
-
-  // Notifications table
-  await run(`
-    CREATE TABLE IF NOT EXISTS notifications (
-      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      recipient_id  TEXT NOT NULL,
-      sender_id     TEXT,
-      type          TEXT NOT NULL DEFAULT 'mention',
-      person_id     TEXT,
-      activity_id   TEXT,
-      body          TEXT,
-      is_read       BOOLEAN DEFAULT false,
-      created_at    TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create notifications');
+  await run(`CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), recipient_id TEXT NOT NULL, sender_id TEXT, type TEXT NOT NULL DEFAULT 'mention', person_id TEXT, activity_id TEXT, body TEXT, is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create notifications');
   await pool.query(`CREATE INDEX IF NOT EXISTS notif_recipient_idx ON notifications(recipient_id, is_read, created_at DESC)`).catch(()=>{});
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS custom_fields (
-      id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      key        TEXT UNIQUE NOT NULL,
-      label      TEXT NOT NULL,
-      field_type TEXT DEFAULT 'text',
-      options    TEXT[],
-      sort_order INTEGER DEFAULT 0
-    )
-  `, 'create custom_fields');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS calls (
-      id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      twilio_call_sid  TEXT UNIQUE,
-      person_id        TEXT,
-      agent_id         TEXT,
-      line_id          TEXT,
-      direction        TEXT,
-      status           TEXT,
-      duration_seconds INTEGER,
-      from_number      TEXT,
-      to_number        TEXT,
-      recording_url    TEXT,
-      recording_sid    TEXT,
-      transcript       TEXT,
-      summary          TEXT,
-      started_at       TIMESTAMPTZ DEFAULT NOW(),
-      ended_at         TIMESTAMPTZ
-    )
-  `, 'create calls');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS activities (
-      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      person_id     TEXT,
-      agent_id      TEXT,
-      call_id       TEXT,
-      type          TEXT NOT NULL DEFAULT 'note',
-      body          TEXT,
-      duration      INTEGER,
-      recording_url TEXT,
-      direction     TEXT DEFAULT 'outbound',
-      sms_status    TEXT DEFAULT NULL,
-      sms_error     TEXT DEFAULT NULL,
-      message_sid   TEXT DEFAULT NULL,
-      created_at    TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create activities');
-
-  // Add new columns to existing activities table if they don't exist
+  await run(`CREATE TABLE IF NOT EXISTS custom_fields (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, field_type TEXT DEFAULT 'text', options TEXT[], sort_order INTEGER DEFAULT 0)`, 'create custom_fields');
+  await run(`CREATE TABLE IF NOT EXISTS calls (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), twilio_call_sid TEXT UNIQUE, person_id TEXT, agent_id TEXT, line_id TEXT, direction TEXT, status TEXT, duration_seconds INTEGER, from_number TEXT, to_number TEXT, recording_url TEXT, recording_sid TEXT, transcript TEXT, summary TEXT, started_at TIMESTAMPTZ DEFAULT NOW(), ended_at TIMESTAMPTZ)`, 'create calls');
+  await run(`CREATE TABLE IF NOT EXISTS activities (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, call_id TEXT, type TEXT NOT NULL DEFAULT 'note', body TEXT, duration INTEGER, recording_url TEXT, direction TEXT DEFAULT 'outbound', sms_status TEXT DEFAULT NULL, sms_error TEXT DEFAULT NULL, message_sid TEXT DEFAULT NULL, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create activities');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS direction TEXT DEFAULT 'outbound'`, 'activities.direction');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT NULL`, 'activities.sms_status');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_error TEXT DEFAULT NULL`, 'activities.sms_error');
   await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS message_sid TEXT DEFAULT NULL`, 'activities.message_sid');
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      person_id    TEXT,
-      agent_id     TEXT,
-      title        TEXT NOT NULL,
-      note         TEXT,
-      due_date     DATE,
-      completed    BOOLEAN DEFAULT false,
-      completed_at TIMESTAMPTZ,
-      created_at   TIMESTAMPTZ DEFAULT NOW()
-    )
-  `, 'create tasks');
+  await run(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
 
   // Seed admin
   try {
     const exists = await pool.query(`SELECT 1 FROM agents WHERE email='admin@okcreal.com'`);
     if (exists.rows.length === 0) {
       const hash = await bcrypt.hash('password', 10);
-      await pool.query(
-        `INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com',$1,'admin')`,
-        [hash]
-      );
+      await pool.query(`INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com',$1,'admin')`, [hash]);
       console.log('[DB] Admin seeded');
     }
   } catch (e) { console.error('[DB] seed admin:', e.message); }
 
   // Seed smart lists
   try {
-    // Upsert smart lists with real filters
     const smartListDefs = [
       { name: 'Delinquent Residents', filters: { stage: 'Delinquent' }, sort_order: 0 },
       { name: 'Delinquent Leads',     filters: { stage: 'Lead', tags: ['Delinquent'] }, sort_order: 1 },
@@ -2018,52 +1739,25 @@ async function initDB() {
       { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
     ];
     for (const sl of smartListDefs) {
-      await pool.query(
-        `INSERT INTO smart_lists (name,filters,sort_order)
-         VALUES($1,$2::jsonb,$3)
-         ON CONFLICT (name) DO UPDATE SET filters=EXCLUDED.filters`,
-        [sl.name, JSON.stringify(sl.filters), sl.sort_order]
-      ).catch(()=>{});
+      await pool.query(`INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) ON CONFLICT (name) DO UPDATE SET filters=EXCLUDED.filters`,
+        [sl.name, JSON.stringify(sl.filters), sl.sort_order]).catch(()=>{});
     }
   } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
 
   // Seed custom fields
   try {
-    await pool.query(`
-      INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES
-        ('past_due_balance','Past Due Balance','number',0),
-        ('payment_commitment_date','Payment Commitment Date','date',1),
-        ('unit_number','Unit Number','text',2),
-        ('lease_end_date','Lease End Date','date',3)
-      ON CONFLICT (key) DO NOTHING
-    `);
+    await pool.query(`INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES ('past_due_balance','Past Due Balance','number',0), ('payment_commitment_date','Payment Commitment Date','date',1), ('unit_number','Unit Number','text',2), ('lease_end_date','Lease End Date','date',3) ON CONFLICT (key) DO NOTHING`);
   } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
 
-  // Seed call line + link admin agent to it
+  // Seed call line
   try {
-    // Remove duplicate lines, keep only the oldest
-    // Dedup: keep the row with the smallest id (text sort) per twilio_number
-    await pool.query(`
-      DELETE FROM call_lines
-      WHERE id::text NOT IN (
-        SELECT MIN(id::text) FROM call_lines GROUP BY twilio_number
-      )
-    `).catch(e => console.warn('[DB] dedup call_lines:', e.message));
-    // Insert line if not exists
-    await pool.query(`
-      INSERT INTO call_lines (name,twilio_number,description)
-      VALUES ('OKCREAL Connect Line','+14052562614','Main OKCREAL line')
-      ON CONFLICT DO NOTHING
-    `);
-    // Link ALL active agents to the line automatically
+    await pool.query(`DELETE FROM call_lines WHERE id::text NOT IN (SELECT MIN(id::text) FROM call_lines GROUP BY twilio_number)`).catch(e => console.warn('[DB] dedup call_lines:', e.message));
+    await pool.query(`INSERT INTO call_lines (name,twilio_number,description) VALUES ('OKCREAL Connect Line','+14052562614','Main OKCREAL line') ON CONFLICT DO NOTHING`);
     const lineR = await pool.query(`SELECT id FROM call_lines WHERE twilio_number='+14052562614' LIMIT 1`);
     const agentsR = await pool.query(`SELECT id FROM agents WHERE is_active=true`);
     if (lineR.rows[0]) {
       for (const agent of agentsR.rows) {
-        await pool.query(
-          `INSERT INTO line_agents (line_id,agent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-          [lineR.rows[0].id, agent.id]
-        ).catch(() => {});
+        await pool.query(`INSERT INTO line_agents (line_id,agent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [lineR.rows[0].id, agent.id]).catch(() => {});
       }
       console.log(`[DB] Linked ${agentsR.rows.length} agent(s) to call line`);
     }
@@ -2075,48 +1769,32 @@ async function initDB() {
 // ══════════════════════════════════════════════════════════════════════════
 // JIREH SECURITY — UniFi Protect Webhook + SSE
 // ══════════════════════════════════════════════════════════════════════════
-
-// SSE stream — browsers connect here for real-time security events
 app.get('/api/security/stream', auth, (req, res) => {
   res.setHeader('Content-Type',  'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection',    'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-  res.write(':ok\n\n'); // initial ping
-
+  res.write(':ok\n\n');
   const client = { res, agentId: req.agent?.id };
   sseClients.add(client);
-
-  // Keepalive ping every 25s
   const ping = setInterval(() => {
     try { res.write(':ping\n\n'); } catch(e) { clearInterval(ping); sseClients.delete(client); }
   }, 25000);
-
   req.on('close', () => { clearInterval(ping); sseClients.delete(client); });
 });
 
-// Recent security events (last 50)
-// DEBUG — expose raw webhook payloads to diagnose event_link URL structure
 app.get('/api/security/events/raw', auth, adminOnly, async (req, res) => {
   try {
     const r = await pool.query('SELECT id, event_id, event_link, camera_mac, site, raw_payload FROM security_events ORDER BY triggered_at DESC LIMIT 5');
-    res.json(r.rows.map(row => ({
-      id: row.id,
-      event_id: row.event_id,
-      event_link: row.event_link,
-      camera_mac: row.camera_mac,
-      site: row.site,
-      payload: row.raw_payload ? JSON.parse(row.raw_payload) : null
-    })));
+    res.json(r.rows.map(row => ({ id: row.id, event_id: row.event_id, event_link: row.event_link, camera_mac: row.camera_mac, site: row.site, payload: row.raw_payload ? JSON.parse(row.raw_payload) : null })));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/security/events', auth, async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT se.*,
-             p.first_name, p.last_name, p.id as person_id, p.stage,
+      SELECT se.*, p.first_name, p.last_name, p.id as person_id, p.stage,
              COALESCE(pc.name, se.camera_name) AS camera_name,
              COALESCE(pc.site, se.site)         AS site
       FROM security_events se
@@ -2128,32 +1806,21 @@ app.get('/api/security/events', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Camera name mapping (admin)
 app.get('/api/admin/cameras', auth, adminOnly, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT * FROM protect_cameras ORDER BY site, name');
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  try { const r = await pool.query('SELECT * FROM protect_cameras ORDER BY site, name'); res.json(r.rows); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/admin/cameras', auth, adminOnly, async (req, res) => {
   const { mac, name, site } = req.body;
   try {
-    const r = await pool.query(
-      `INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3)
-       ON CONFLICT (mac) DO UPDATE SET name=$2, site=$3 RETURNING *`,
-      [mac.toUpperCase(), name, site || 'Main']
-    );
+    const r = await pool.query(`INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO UPDATE SET name=$2, site=$3 RETURNING *`, [mac.toUpperCase(), name, site || 'Main']);
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.put('/api/admin/cameras/:mac', auth, adminOnly, async (req, res) => {
   const { name, site } = req.body;
   try {
-    const r = await pool.query(
-      `INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3)
-       ON CONFLICT (mac) DO UPDATE SET name=$2, site=COALESCE($3, protect_cameras.site) RETURNING *`,
-      [req.params.mac.toUpperCase(), name, site || null]
-    );
+    const r = await pool.query(`INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO UPDATE SET name=$2, site=COALESCE($3, protect_cameras.site) RETURNING *`, [req.params.mac.toUpperCase(), name, site || null]);
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2161,57 +1828,36 @@ app.delete('/api/admin/cameras/:id', auth, adminOnly, async (req, res) => {
   await pool.query('DELETE FROM protect_cameras WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 });
-// Bulk upsert cameras from UniFi Protect (sent from browser)
 app.post('/api/admin/cameras/bulk', auth, adminOnly, async (req, res) => {
-  const { cameras } = req.body; // [{mac, name, site}]
+  const { cameras } = req.body;
   if (!Array.isArray(cameras)) return res.status(400).json({ error: 'cameras array required' });
   let saved = 0;
   for (const cam of cameras) {
     if (!cam.mac) continue;
     const mac = cam.mac.replace(/:/g, '').toUpperCase();
-    await pool.query(
-      `INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3)
-       ON CONFLICT (mac) DO UPDATE SET name=EXCLUDED.name, site=COALESCE(EXCLUDED.site, protect_cameras.site)`,
-      [mac, cam.name || mac, cam.site || 'Marlin']
-    ).catch(() => {});
+    await pool.query(`INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3) ON CONFLICT (mac) DO UPDATE SET name=EXCLUDED.name, site=COALESCE(EXCLUDED.site, protect_cameras.site)`, [mac, cam.name || mac, cam.site || 'Marlin']).catch(() => {});
     saved++;
   }
   res.json({ saved });
 });
-
-// Seed protect_cameras from all known MACs in security_events
 app.post('/api/admin/cameras/discover', auth, adminOnly, async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT DISTINCT camera_mac AS mac, site FROM security_events
-      WHERE camera_mac IS NOT NULL AND camera_mac != ''
-    `);
+    const { rows } = await pool.query(`SELECT DISTINCT camera_mac AS mac, site FROM security_events WHERE camera_mac IS NOT NULL AND camera_mac != ''`);
     let added = 0;
     for (const row of rows) {
-      const r = await pool.query(
-        `INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING RETURNING id`,
-        [row.mac.toUpperCase(), row.mac.toUpperCase(), row.site || 'Main']
-      );
+      const r = await pool.query(`INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING RETURNING id`, [row.mac.toUpperCase(), row.mac.toUpperCase(), row.site || 'Main']);
       if (r.rowCount) added++;
     }
     res.json({ discovered: rows.length, added });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── UniFi Protect Webhook receiver ───────────────────────────────────────
-// Set Delivery URL in UniFi Protect to:
-//   https://connect.okcreal.com/api/protect/webhook?token=YOUR_SECRET
 app.post('/api/protect/webhook', async (req, res) => {
-  // Token verification
   const secret = process.env.PROTECT_WEBHOOK_SECRET;
   if (secret) {
     const provided = req.query.token || req.headers['x-webhook-token'];
-    if (provided !== secret) {
-      console.warn('[Jireh] Webhook rejected — bad token');
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (provided !== secret) { console.warn('[Jireh] Webhook rejected — bad token'); return res.status(401).json({ error: 'Unauthorized' }); }
   }
-
   try {
     const body = req.body;
     const alarm  = body?.alarm || {};
@@ -2221,105 +1867,43 @@ app.post('/api/protect/webhook', async (req, res) => {
     const ts        = trigger.timestamp || body.timestamp || Date.now();
     const eventPath = alarm.eventPath || null;
     const localLink = alarm.eventLocalLink || null;
-
-    // Build cloud link — construct deep link from eventId first, fall back to eventPath/localLink
     const cloudBase = process.env.PROTECT_CLOUD_BASE_URL || '';
-    const cloudLink = cloudBase && eventId
-      ? `${cloudBase}/protect/events/event/${eventId}`
-      : (cloudBase && eventPath ? `${cloudBase}${eventPath}` : localLink);
-
-    // Look up camera name
-    const camRow = deviceMac
-      ? await pool.query('SELECT name, site FROM protect_cameras WHERE mac=$1', [deviceMac]).then(r=>r.rows[0])
-      : null;
+    const cloudLink = cloudBase && eventId ? `${cloudBase}/protect/events/event/${eventId}` : (cloudBase && eventPath ? `${cloudBase}${eventPath}` : localLink);
+    const camRow = deviceMac ? await pool.query('SELECT name, site FROM protect_cameras WHERE mac=$1', [deviceMac]).then(r=>r.rows[0]) : null;
     const cameraName = camRow?.name || deviceMac || 'Unknown Camera';
     const site       = camRow?.site || alarm.name || '';
-
-    // Detect unifi_person_id from trigger metadata
-    const personId = trigger.personId || trigger.metadata?.personId
-      || trigger.metadata?.face?.personId || null;
-
-    // Thumbnail (Base64 string if "Use Thumbnails" enabled in Protect)
+    const personId = trigger.personId || trigger.metadata?.personId || trigger.metadata?.face?.personId || null;
     const thumbnail = body.thumbnail || alarm.thumbnail || null;
-
-    // Match to a contact
     let matchedPerson = null;
     if (personId) {
-      const pRow = await pool.query(
-        'SELECT id, first_name, last_name, stage FROM people WHERE unifi_person_id=$1 LIMIT 1',
-        [personId]
-      );
+      const pRow = await pool.query('SELECT id, first_name, last_name, stage FROM people WHERE unifi_person_id=$1 LIMIT 1', [personId]);
       matchedPerson = pRow.rows[0] || null;
     }
-
-    // Store event
-    await pool.query(`
-      INSERT INTO security_events
-        (event_id, unifi_person_id, camera_mac, camera_name, site,
-         event_link, thumbnail_b64, triggered_at, alarm_name, raw_payload)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-      ON CONFLICT (event_id) DO NOTHING
-    `, [
-      eventId, personId, deviceMac, cameraName, site,
-      cloudLink || localLink,
-      thumbnail ? thumbnail.substring(0, 500000) : null, // cap at ~375KB
-      new Date(typeof ts === 'number' && ts > 1e12 ? ts : ts * 1000),
-      alarm.name || 'Watchlist',
-      JSON.stringify(body).substring(0, 10000)
-    ]).catch(e => console.warn('[Jireh] Insert event:', e.message));
-
-    // Broadcast to all connected agents
-    const alertPayload = {
-      type:         'poi_detected',
-      eventId,
-      cameraName,
-      site,
-      triggeredAt:  ts,
-      eventLink:    cloudLink || localLink,
-      thumbnail:    thumbnail || null,
-      alarmName:    alarm.name || 'Watchlist',
-      person: matchedPerson ? {
-        id:        matchedPerson.id,
-        name:      `${matchedPerson.first_name||''} ${matchedPerson.last_name||''}`.trim(),
-        stage:     matchedPerson.stage
-      } : null
-    };
-    broadcastSecurityEvent(alertPayload);
-
+    await pool.query(`INSERT INTO security_events (event_id, unifi_person_id, camera_mac, camera_name, site, event_link, thumbnail_b64, triggered_at, alarm_name, raw_payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (event_id) DO NOTHING`,
+      [eventId, personId, deviceMac, cameraName, site, cloudLink || localLink, thumbnail ? thumbnail.substring(0, 500000) : null, new Date(typeof ts === 'number' && ts > 1e12 ? ts : ts * 1000), alarm.name || 'Watchlist', JSON.stringify(body).substring(0, 10000)]
+    ).catch(e => console.warn('[Jireh] Insert event:', e.message));
+    broadcastSecurityEvent({ type: 'poi_detected', eventId, cameraName, site, triggeredAt: ts, eventLink: cloudLink || localLink, thumbnail: thumbnail || null, alarmName: alarm.name || 'Watchlist', person: matchedPerson ? { id: matchedPerson.id, name: `${matchedPerson.first_name||''} ${matchedPerson.last_name||''}`.trim(), stage: matchedPerson.stage } : null });
     res.json({ ok: true, matched: !!matchedPerson });
-  } catch(e) {
-    console.error('[Jireh] Webhook error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { console.error('[Jireh] Webhook error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-
-
-// ────────────────────────────────────────────────────────────────────────────
-// AGENT SSE STREAM — presence + notifications over one connection
-// ────────────────────────────────────────────────────────────────────────────
+// ─── AGENT SSE STREAM ─────────────────────────────────────────────────────────
 app.get('/api/events/stream', auth, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-
   const agentId = String(req.agent.id);
   agentConnections.set(agentId, res);
   console.log(`[SSE] Agent ${req.agent.name} connected (${agentConnections.size} total)`);
-
-  // Send initial ping
   res.write(':ok\n\n');
-
   const ping = setInterval(() => {
     try { res.write(':ping\n\n'); }
     catch(e) { clearInterval(ping); agentConnections.delete(agentId); }
   }, 25000);
-
   req.on('close', () => {
     clearInterval(ping);
     agentConnections.delete(agentId);
-    // Clear this agent from all presence maps
     for (const [personId, map] of presenceMap) {
       if (map.has(agentId)) {
         map.delete(agentId);
@@ -2331,15 +1915,10 @@ app.get('/api/events/stream', auth, (req, res) => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// MY PROFILE — get + update current agent
-// ────────────────────────────────────────────────────────────────────────────
+// ─── MY PROFILE ───────────────────────────────────────────────────────────────
 app.get('/api/me', auth, async (req, res) => {
   try {
-    const r = await pool.query(
-      'SELECT id,name,email,role,phone,avatar_color,avatar_b64,gmail_email,is_active FROM agents WHERE id=$1',
-      [req.agent.id]
-    );
+    const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,avatar_b64,gmail_email,is_active FROM agents WHERE id=$1', [req.agent.id]);
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2348,21 +1927,13 @@ app.put('/api/me', auth, async (req, res) => {
   try {
     const { name, phone, avatar_color, avatar_b64 } = req.body;
     const r = await pool.query(
-      `UPDATE agents SET
-        name = COALESCE($1, name),
-        phone = COALESCE($2, phone),
-        avatar_color = COALESCE($3, avatar_color),
-        avatar_b64 = COALESCE($4, avatar_b64),
-        updated_at = NOW()
-       WHERE id=$5
-       RETURNING id,name,email,role,phone,avatar_color,avatar_b64,gmail_email`,
+      `UPDATE agents SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_color = COALESCE($3, avatar_color), avatar_b64 = COALESCE($4, avatar_b64), updated_at = NOW() WHERE id=$5 RETURNING id,name,email,role,phone,avatar_color,avatar_b64,gmail_email`,
       [name||null, phone||null, avatar_color||null, avatar_b64||null, req.agent.id]
     );
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Change password
 app.put('/api/me/password', auth, async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
@@ -2375,13 +1946,10 @@ app.put('/api/me/password', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// PRESENCE — who is viewing a contact right now
-// ────────────────────────────────────────────────────────────────────────────
+// ─── PRESENCE ─────────────────────────────────────────────────────────────────
 app.post('/api/presence/enter', auth, async (req, res) => {
   const { personId } = req.body;
   if (!personId) return res.status(400).json({ error: 'personId required' });
-  // Get fresh agent data with avatar
   const ar = await pool.query('SELECT id,name,avatar_b64,avatar_color FROM agents WHERE id=$1', [req.agent.id]);
   setPresence(personId, ar.rows[0]);
   res.json({ ok: true });
@@ -2400,14 +1968,11 @@ app.get('/api/presence/:personId', auth, (req, res) => {
   res.json({ viewers });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// NOTIFICATIONS
-// ────────────────────────────────────────────────────────────────────────────
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
 app.get('/api/notifications', auth, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT n.*, a.name as sender_name, a.avatar_b64 as sender_avatar, a.avatar_color as sender_color,
-              p.first_name, p.last_name
+      `SELECT n.*, a.name as sender_name, a.avatar_b64 as sender_avatar, a.avatar_color as sender_color, p.first_name, p.last_name
        FROM notifications n
        LEFT JOIN agents a ON a.id::text = n.sender_id
        LEFT JOIN people p ON p.id::text = n.person_id
@@ -2422,8 +1987,7 @@ app.get('/api/notifications', auth, async (req, res) => {
 
 app.put('/api/notifications/:id/read', auth, async (req, res) => {
   try {
-    await pool.query('UPDATE notifications SET is_read=true WHERE id=$1 AND recipient_id=$2',
-      [req.params.id, String(req.agent.id)]);
+    await pool.query('UPDATE notifications SET is_read=true WHERE id=$1 AND recipient_id=$2', [req.params.id, String(req.agent.id)]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2435,26 +1999,19 @@ app.post('/api/notifications/read-all', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Internal helper — create notification + push to agent via SSE
 async function createNotification({ recipientId, senderId, type, personId, activityId, body }) {
   try {
     const r = await pool.query(
-      `INSERT INTO notifications (recipient_id, sender_id, type, person_id, activity_id, body)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [String(recipientId), senderId ? String(senderId) : null, type,
-       personId ? String(personId) : null, activityId ? String(activityId) : null, body]
+      `INSERT INTO notifications (recipient_id, sender_id, type, person_id, activity_id, body) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [String(recipientId), senderId ? String(senderId) : null, type, personId ? String(personId) : null, activityId ? String(activityId) : null, body]
     );
-    // Live push to recipient if online
     sendToAgent(recipientId, { type: 'notification', notification: r.rows[0] });
     return r.rows[0];
   } catch(e) { console.error('[notification]', e.message); }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// GMAIL PER-AGENT OAUTH
-// ────────────────────────────────────────────────────────────────────────────
+// ─── GMAIL ────────────────────────────────────────────────────────────────────
 app.get('/api/gmail/connect', async (req, res) => {
-  // Accept token as query param since this is opened as a browser popup (no Auth header possible)
   const token = req.query.token || (req.headers.authorization?.slice(7));
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   let agent;
@@ -2466,17 +2023,7 @@ app.get('/api/gmail/connect', async (req, res) => {
   } catch(e) { return res.status(401).json({ error: 'Unauthorized' }); }
   if (!process.env.GMAIL_CLIENT_ID) return res.status(400).json({ error: 'GMAIL_CLIENT_ID not set' });
   const oauth2 = getGmailOAuth(agent);
-  const url = oauth2.generateAuthUrl({
-    access_type: 'offline',
-    prompt: 'consent',
-    scope: [
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/gmail.settings.basic',
-      'https://www.googleapis.com/auth/userinfo.email'
-    ],
-    state: String(agent.id)
-  });
+  const url = oauth2.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.settings.basic', 'https://www.googleapis.com/auth/userinfo.email'], state: String(agent.id) });
   res.redirect(url);
 });
 
@@ -2484,26 +2031,15 @@ app.get('/api/gmail/callback', async (req, res) => {
   const { code, state: agentId } = req.query;
   if (!code || !agentId) return res.send('Missing params.');
   try {
-    const oauth2 = new google.auth.OAuth2(
-      process.env.GMAIL_CLIENT_ID,
-      process.env.GMAIL_CLIENT_SECRET,
-      process.env.APP_URL + '/api/gmail/callback'
-    );
+    const oauth2 = new google.auth.OAuth2(process.env.GMAIL_CLIENT_ID, process.env.GMAIL_CLIENT_SECRET, process.env.APP_URL + '/api/gmail/callback');
     const { tokens } = await oauth2.getToken(code);
-    // Get Gmail address
     oauth2.setCredentials(tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2 });
     const profile = await gmail.users.getProfile({ userId: 'me' });
     const gmailEmail = profile.data.emailAddress;
-
-    await pool.query(
-      `UPDATE agents SET gmail_refresh_token=$1, gmail_email=$2 WHERE id=$3`,
-      [tokens.refresh_token || null, gmailEmail, agentId]
-    );
+    await pool.query(`UPDATE agents SET gmail_refresh_token=$1, gmail_email=$2 WHERE id=$3`, [tokens.refresh_token || null, gmailEmail, agentId]);
     res.send(`<script>window.close();</script><p>Gmail connected (${gmailEmail}). You can close this tab.</p>`);
-  } catch(e) {
-    res.send('Error: ' + e.message);
-  }
+  } catch(e) { res.send('Error: ' + e.message); }
 });
 
 app.post('/api/gmail/disconnect', auth, async (req, res) => {
@@ -2513,150 +2049,66 @@ app.post('/api/gmail/disconnect', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Send email via agent's connected Gmail
 app.post('/api/gmail/send', auth, async (req, res) => {
   try {
     const { to, subject, body, personId } = req.body;
-    const agentR = await pool.query(
-      'SELECT gmail_refresh_token, gmail_email, name FROM agents WHERE id=$1', [req.agent.id]
-    );
+    const agentR = await pool.query('SELECT gmail_refresh_token, gmail_email, name FROM agents WHERE id=$1', [req.agent.id]);
     const agent = agentR.rows[0];
     if (!agent.gmail_refresh_token) return res.status(400).json({ error: 'Gmail not connected' });
-
     const oauth2 = getGmailOAuth(agent);
     const gmail = google.gmail({ version: 'v1', auth: oauth2 });
-
-    // Fetch agent's Gmail signature
     let signature = '';
     try {
-      const sendAsRes = await gmail.users.settings.sendAs.get({
-        userId: 'me',
-        sendAsEmail: agent.gmail_email
-      });
+      const sendAsRes = await gmail.users.settings.sendAs.get({ userId: 'me', sendAsEmail: agent.gmail_email });
       if (sendAsRes.data.signature) {
-        signature = '\r\n\r\n--\r\n' + sendAsRes.data.signature
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<[^>]+>/g, '')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .trim();
+        signature = '\r\n\r\n--\r\n' + sendAsRes.data.signature.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
       }
-    } catch(sigErr) {
-      console.log('[Gmail] Could not fetch signature:', sigErr.message);
-    }
-
-    // Build RFC 2822 message with signature appended
+    } catch(sigErr) { console.log('[Gmail] Could not fetch signature:', sigErr.message); }
     const fullBody = body + signature;
-    const msgLines = [
-      `From: ${agent.name} <${agent.gmail_email}>`,
-      `To: ${to}`,
-      `Subject: ${subject}`,
-      `Content-Type: text/plain; charset=utf-8`,
-      ``,
-      fullBody
-    ];
-    const raw = Buffer.from(msgLines.join('\r\n'))
-      .toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-
+    const msgLines = [`From: ${agent.name} <${agent.gmail_email}>`, `To: ${to}`, `Subject: ${subject}`, `Content-Type: text/plain; charset=utf-8`, ``, fullBody];
+    const raw = Buffer.from(msgLines.join('\r\n')).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
     await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-
-    // Log to activities
     if (personId) {
-      await pool.query(
-        `INSERT INTO activities (person_id,agent_id,type,body,direction)
-         VALUES ($1,$2,'email',$3,'outbound')`,
-        [String(personId), String(req.agent.id), `To: ${to}\nSubject: ${subject}\n\n${fullBody}`]
-      );
+      await pool.query(`INSERT INTO activities (person_id,agent_id,type,body,direction) VALUES ($1,$2,'email',$3,'outbound')`, [String(personId), String(req.agent.id), `To: ${to}\nSubject: ${subject}\n\n${fullBody}`]);
     }
-
     res.json({ ok: true });
-  } catch(e) {
-    console.error('[Gmail send]', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { console.error('[Gmail send]', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// LEAD INBOUND EMAIL WEBHOOK (from Google Apps Script / leads@okcreal.com)
-// ────────────────────────────────────────────────────────────────────────────
+// ─── LEAD INBOUND EMAIL WEBHOOK ───────────────────────────────────────────────
 app.post('/api/leads/inbound', async (req, res) => {
   const secret = process.env.LEADS_WEBHOOK_SECRET;
   if (secret && req.query.token !== secret) return res.status(401).json({ error: 'unauthorized' });
-
   try {
     const { subject = '', body = '', from = '' } = req.body;
     if (!subject && !body) return res.json({ skipped: true, reason: 'empty' });
-
-    // Use Grok to parse the email
     const OpenAI = require('openai');
     const grok = new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
-
-    const r = await grok.chat.completions.create({
-      model: 'grok-3', max_tokens: 300,
-      messages: [{ role: 'user', content:
-        `Extract contact info from this lead email. Return ONLY JSON, no markdown.
-From: ${from}
-Subject: ${subject}
-Body: ${body.substring(0,2000)}
-
-JSON format: {"first_name":"","last_name":"","email":"","phone":"10 digits only","source":"platform name","property":"","message":"","is_lead":true}
-Set is_lead false for spam/receipts/non-leads.` }]
-    });
-
+    const r = await grok.chat.completions.create({ model: 'grok-3', max_tokens: 300, messages: [{ role: 'user', content: `Extract contact info from this lead email. Return ONLY JSON, no markdown.\nFrom: ${from}\nSubject: ${subject}\nBody: ${body.substring(0,2000)}\n\nJSON format: {"first_name":"","last_name":"","email":"","phone":"10 digits only","source":"platform name","property":"","message":"","is_lead":true}\nSet is_lead false for spam/receipts/non-leads.` }] });
     let fields;
     try { fields = JSON.parse(r.choices[0].message.content.replace(/```json?|```/g,'')); }
     catch(e) { return res.json({ skipped: true, reason: 'AI parse fail' }); }
-
     if (!fields.is_lead) return res.json({ skipped: true, reason: 'not a lead' });
     if (!fields.first_name && !fields.email && !fields.phone) return res.json({ skipped: true, reason: 'no contact info' });
-
-    // Dedup
     if (fields.email) {
       const d = await pool.query('SELECT id FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1', [fields.email]);
       if (d.rows[0]) return res.json({ skipped: true, reason: 'dup email', id: d.rows[0].id });
     }
     if (fields.phone) {
-      const d = await pool.query(
-        `SELECT id FROM people WHERE regexp_replace(COALESCE(phone,''),'\\D','','g')=$1 LIMIT 1`,
-        [fields.phone.replace(/\D/g,'')]
-      );
+      const d = await pool.query(`SELECT id FROM people WHERE regexp_replace(COALESCE(phone,''),'\\D','','g')=$1 LIMIT 1`, [fields.phone.replace(/\D/g,'')]);
       if (d.rows[0]) return res.json({ skipped: true, reason: 'dup phone', id: d.rows[0].id });
     }
-
-    const nameParts = (fields.first_name || 'Unknown').split(' ');
     const phone = fields.phone ? '+1' + fields.phone.replace(/\D/g,'').slice(-10) : null;
-    const notes = [
-      fields.property && `Interested in: ${fields.property}`,
-      fields.source && `Source: ${fields.source}`,
-      fields.message && `Message: ${fields.message}`
-    ].filter(Boolean).join('\n');
-
-    const ins = await pool.query(
-      `INSERT INTO people (first_name,last_name,email,phone,stage,source,notes,updated_at)
-       VALUES ($1,$2,$3,$4,'Lead',$5,$6,NOW()) RETURNING id`,
-      [fields.first_name||'Unknown', fields.last_name||'', fields.email||null, phone, fields.source||'Email Lead', notes||null]
-    );
-
-    // Notify all online agents
+    const notes = [fields.property && `Interested in: ${fields.property}`, fields.source && `Source: ${fields.source}`, fields.message && `Message: ${fields.message}`].filter(Boolean).join('\n');
+    const ins = await pool.query(`INSERT INTO people (first_name,last_name,email,phone,stage,source,notes,updated_at) VALUES ($1,$2,$3,$4,'Lead',$5,$6,NOW()) RETURNING id`, [fields.first_name||'Unknown', fields.last_name||'', fields.email||null, phone, fields.source||'Email Lead', notes||null]);
     broadcastToAll({ type: 'new_lead', personId: ins.rows[0].id, name: `${fields.first_name} ${fields.last_name}`, source: fields.source });
-
     res.json({ created: true, id: ins.rows[0].id });
-  } catch(e) {
-    console.error('[leads/inbound]', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { console.error('[leads/inbound]', e.message); res.status(500).json({ error: e.message }); }
 });
 
-
-
-
 // =============================================================================
-// GROKFUB SERVICE API — Protected endpoints for the debt collection robot
-// Requires env var: GROKFUB_SERVICE_TOKEN=grokfub-okcreal-2026-bridge-token
+// GROKFUB SERVICE API
 // =============================================================================
-
 const GROKFUB_TOKEN = process.env.GROKFUB_SERVICE_TOKEN || 'grokfub-okcreal-2026-bridge-token';
 
 function requireGrokfubToken(req, res, next) {
@@ -2665,17 +2117,13 @@ function requireGrokfubToken(req, res, next) {
   next();
 }
 
-// GET /api/grokfub/people?phone=XXXXXXXXXX  OR  ?tag=Initiate+debt+collection+robot
 app.get('/api/grokfub/people', requireGrokfubToken, async (req, res) => {
   try {
     const { phone, tag } = req.query;
     let rows = [];
     if (phone) {
       const digits = phone.replace(/\D/g, '').slice(-10);
-      const result = await pool.query(
-        `SELECT p.*, pp.phone as matched_phone FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE pp.phone LIKE $1 OR p.phone LIKE $1 LIMIT 5`,
-        [`%${digits}`]
-      );
+      const result = await pool.query(`SELECT p.*, pp.phone as matched_phone FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE pp.phone LIKE $1 OR p.phone LIKE $1 LIMIT 5`, [`%${digits}`]);
       rows = result.rows;
     } else if (tag) {
       const result = await pool.query(`SELECT * FROM people WHERE $1 = ANY(tags) ORDER BY updated_at DESC LIMIT 100`, [tag]);
@@ -2685,18 +2133,15 @@ app.get('/api/grokfub/people', requireGrokfubToken, async (req, res) => {
   } catch (e) { console.error('[GROKFUB API] GET /people error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/grokfub/activity
 app.post('/api/grokfub/activity', requireGrokfubToken, async (req, res) => {
   try {
     const { person_id, type = 'note', body, subject, direction = 'outbound' } = req.body;
     if (!person_id || !body) return res.status(400).json({ error: 'person_id and body required' });
-    await pool.query(`INSERT INTO activities (person_id, type, body, direction, created_at) VALUES ($1, $2, $3, $4, NOW())`,
-      [person_id, type, `[GROKFUB] ${subject ? subject + '\n\n' : ''}${body}`, direction]);
+    await pool.query(`INSERT INTO activities (person_id, type, body, direction, created_at) VALUES ($1, $2, $3, $4, NOW())`, [person_id, type, `[GROKFUB] ${subject ? subject + '\n\n' : ''}${body}`, direction]);
     res.json({ ok: true });
   } catch (e) { console.error('[GROKFUB API] POST /activity error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/grokfub/people/:id/tags
 app.post('/api/grokfub/people/:id/tags', requireGrokfubToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2710,7 +2155,6 @@ app.post('/api/grokfub/people/:id/tags', requireGrokfubToken, async (req, res) =
   } catch (e) { console.error('[GROKFUB API] POST /tags error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/grokfub/people/:id/stage
 app.post('/api/grokfub/people/:id/stage', requireGrokfubToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2721,7 +2165,6 @@ app.post('/api/grokfub/people/:id/stage', requireGrokfubToken, async (req, res) 
   } catch (e) { console.error('[GROKFUB API] POST /stage error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/grokfub/people/:id/acknowledge-trigger
 app.post('/api/grokfub/people/:id/acknowledge-trigger', requireGrokfubToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2734,8 +2177,6 @@ app.post('/api/grokfub/people/:id/acknowledge-trigger', requireGrokfubToken, asy
   } catch (e) { console.error('[GROKFUB API] acknowledge-trigger error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/grokfub/bulk-stage-sync
-// Body: { tenants: [{ phone, stage }], clearOthers: bool }
 app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) => {
   try {
     const { tenants = [], clearOthers = false } = req.body;
@@ -2747,16 +2188,11 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
       if (digits) phoneMap.set(digits, t.stage || 'Delinquent');
     }
     for (const [digits, stage] of phoneMap.entries()) {
-      const result = await pool.query(
-        `UPDATE people SET stage = $1, updated_at = NOW() WHERE id IN (SELECT DISTINCT p.id FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', '', 'g'), 10) = $2 OR RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $2) RETURNING id`,
-        [stage, digits]
-      );
+      const result = await pool.query(`UPDATE people SET stage = $1, updated_at = NOW() WHERE id IN (SELECT DISTINCT p.id FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', '', 'g'), 10) = $2 OR RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $2) RETURNING id`, [stage, digits]);
       if (result.rowCount > 0) synced += result.rowCount; else notFound++;
     }
     if (clearOthers && phoneMap.size > 0) {
-      const delinquents = await pool.query(
-        `SELECT p.id, p.phone, array_agg(pp.phone) as alt_phones FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE p.stage = 'Delinquent' GROUP BY p.id`
-      );
+      const delinquents = await pool.query(`SELECT p.id, p.phone, array_agg(pp.phone) as alt_phones FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE p.stage = 'Delinquent' GROUP BY p.id`);
       for (const person of delinquents.rows) {
         const allPhones = [person.phone, ...(person.alt_phones || [])].filter(Boolean).map(ph => ph.replace(/\D/g, '').slice(-10));
         if (!allPhones.some(d => phoneMap.has(d))) {
@@ -2771,9 +2207,8 @@ app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) =
 });
 
 // =============================================================================
-// END GROKFUB SERVICE API
+// START
 // =============================================================================
-
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`OKCREAL Connect running on port ${PORT}`);
