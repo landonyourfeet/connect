@@ -7138,6 +7138,21 @@ function shOpenFeedback(showingId) {
       </div>
       <div class="sh-cat-label">Notes for Owner</div>
       <textarea class="sh-notes-input" id="sh-notes" placeholder="Specific comments to share with the property owner...">${esc(s.notes||'')}</textarea>
+
+      <!-- AI RECOMMENDATION PANEL -->
+      <div id="sh-ai-rec-panel" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.15em;color:var(--text-3)">🤖 AI PROPERTY RECOMMENDATION</div>
+          <button id="sh-ai-rec-refresh" onclick="shLoadAIRec('${esc((s.property||'').replace(/'/g,"\\'"))}')" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:3px 8px;font-family:var(--font-mono);font-size:7px;letter-spacing:0.1em;cursor:pointer;border-radius:3px">↺ REFRESH</button>
+        </div>
+        <div id="sh-ai-rec-body" style="font-size:10px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em;padding:8px 0">
+          <div style="display:flex;align-items:center;gap:8px;opacity:0.5">
+            <div style="width:5px;height:5px;border-radius:50%;background:#6366f1;animation:pulse 1s infinite"></div>
+            SEARCHING NEARBY LISTINGS...
+          </div>
+        </div>
+      </div>
+
       <div class="sh-modal-footer">
         <button class="sh-cancel-btn" onclick="document.getElementById('sh-modal').remove()">Cancel</button>
         <button class="sh-save-btn" onclick="shSave()">Save Feedback</button>
@@ -7145,6 +7160,34 @@ function shOpenFeedback(showingId) {
     </div>
   </div>`;
   document.body.appendChild(m);
+  // Auto-load AI rec for this property
+  if (s.property) shLoadAIRec(s.property);
+}
+
+async function shLoadAIRec(property) {
+  const body = document.getElementById('sh-ai-rec-body');
+  if (!body) return;
+  body.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;color:var(--text-3);opacity:0.5">
+    <div style="width:5px;height:5px;border-radius:50%;background:#6366f1;animation:pulse 1s infinite"></div>
+    SEARCHING NEARBY LISTINGS & ANALYZING FEEDBACK...
+  </div>`;
+  try {
+    const d = await api('/api/showings/property-ai-rec?property=' + encodeURIComponent(property));
+    if (!d.recommendation) {
+      body.innerHTML = `<div style="font-family:var(--font-mono);font-size:8px;color:var(--text-3);opacity:0.4;letter-spacing:0.08em">No feedback recorded for this property yet — recommendation will appear after tours are rated.</div>`;
+      return;
+    }
+    const parts = d.recommendation.split(/\n\n+/);
+    const p1 = parts[0] || d.recommendation;
+    const p2 = parts[1] || '';
+    const statsLine = `<div style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.1em;color:var(--text-3);opacity:0.5;margin-bottom:8px">${d.total} TOURS · ${d.go} GO · ${d.maybe} MAYBE · ${d.nogo} NO-GO</div>`;
+    body.innerHTML = statsLine +
+      `<div style="font-size:11px;line-height:1.7;color:var(--text-2);font-family:system-ui,sans-serif;padding:10px 12px;background:rgba(99,102,241,0.06);border-left:3px solid #6366f1;border-radius:0 4px 4px 0;margin-bottom:8px">${esc(p1)}</div>` +
+      (p2 ? `<div style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.12em;color:#ff8c00;opacity:0.7;margin-bottom:5px;margin-top:10px">🏘 COMPETITIVE MARKET ANALYSIS</div>
+      <div style="font-size:11px;line-height:1.7;color:var(--text-2);font-family:system-ui,sans-serif;padding:10px 12px;background:rgba(255,140,0,0.05);border-left:3px solid #ff8c00;border-radius:0 4px 4px 0">${esc(p2)}</div>` : '');
+  } catch(e) {
+    body.innerHTML = `<div style="font-family:var(--font-mono);font-size:8px;color:var(--red);opacity:0.7">⚠ ${esc(e.message)}</div>`;
+  }
 }
 
 function shSetVerdict(v) {
