@@ -252,6 +252,48 @@ app.get('/api/people', auth, async (req, res) => {
           }));
           return res.json({ people, total: people.length });
         }
+        // ── SPECIAL: Toured — No Follow-Up ──────────────────────────────────
+        if (f.type === 'toured_no_followup') {
+          const days = parseInt(f.days_ago || 90); // default: tours in past 90 days
+          const shR = await pool.query(`
+            SELECT
+              p.*,
+              MAX(s.showing_time)                                               AS last_tour_at,
+              s2.property                                                       AS showing_property,
+              s2.unit                                                           AS showing_unit,
+              s2.showing_type                                                   AS showing_type,
+              MAX(a.created_at) FILTER (WHERE a.direction='outbound'
+                AND a.created_at > s2.last_tour)                               AS followup_at,
+              MAX(a.created_at) FILTER (WHERE a.direction='inbound')           AS last_inbound_at,
+              COUNT(s.id)::int                                                  AS tour_count
+            FROM people p
+            JOIN showings s ON s.connect_person_id = p.id::text
+              AND s.showing_time < NOW()
+              AND s.showing_time > NOW() - INTERVAL '1 day' * $1
+              AND s.status = 'Completed'
+            -- grab details of the most recent completed tour
+            JOIN LATERAL (
+              SELECT property, unit, showing_type, showing_time AS last_tour
+              FROM showings
+              WHERE connect_person_id = p.id::text
+                AND status = 'Completed'
+                AND showing_time < NOW()
+              ORDER BY showing_time DESC LIMIT 1
+            ) s2 ON TRUE
+            LEFT JOIN activities a ON a.person_id::text = p.id::text
+            GROUP BY p.id, s2.property, s2.unit, s2.showing_type, s2.last_tour
+            -- only people with NO outbound activity after their last tour
+            HAVING MAX(a.created_at) FILTER (
+              WHERE a.direction='outbound' AND a.created_at > s2.last_tour
+            ) IS NULL
+            ORDER BY MAX(s.showing_time) DESC
+          `, [days]);
+          const people = shR.rows.map(p => ({
+            ...p, ...(p.custom_fields || {}),
+            needs_contact: true
+          }));
+          return res.json({ people, total: people.length });
+        }
         // ─────────────────────────────────────────────────────────────────────
 
         if (f.stages?.length > 1) { params.push(f.stages); where.push(`p.stage=ANY($${params.length})`); }
@@ -899,22 +941,34 @@ const initGrok = () => {
 // ─── TWILIO TOKEN ─────────────────────────────────────────────────────────────
 const buildTwilioToken = async (req, res) => {
   try {
-    const twilio = initTwilio();
-    if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
+    const missing = [];
+    if (!process.env.TWILIO_ACCOUNT_SID)    missing.push('TWILIO_ACCOUNT_SID');
+    if (!process.env.TWILIO_API_KEY_SID)    missing.push('TWILIO_API_KEY_SID');
+    if (!process.env.TWILIO_API_KEY_SECRET) missing.push('TWILIO_API_KEY_SECRET');
+    if (!process.env.TWILIO_TWIML_APP_SID)  missing.push('TWILIO_TWIML_APP_SID');
+    if (missing.length) {
+      console.error('[Twilio Token] Missing env vars:', missing.join(', '));
+      return res.status(503).json({ error: `Twilio not fully configured — missing: ${missing.join(', ')}` });
+    }
     const { AccessToken } = require('twilio').jwt;
     const { VoiceGrant } = AccessToken;
     const token = new AccessToken(
       process.env.TWILIO_ACCOUNT_SID,
       process.env.TWILIO_API_KEY_SID,
       process.env.TWILIO_API_KEY_SECRET,
-      { identity: req.agent.id, ttl: 3600 }
+      { identity: String(req.agent.id), ttl: 3600 }
     );
     token.addGrant(new VoiceGrant({
       outgoingApplicationSid: process.env.TWILIO_TWIML_APP_SID,
       incomingAllow: true
     }));
-    res.json({ token: token.toJwt(), identity: req.agent.id });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const jwt = token.toJwt();
+    console.log(`[Twilio Token] Issued to agent ${req.agent.id} (${req.agent.name})`);
+    res.json({ token: jwt, identity: String(req.agent.id) });
+  } catch (e) {
+    console.error('[Twilio Token] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 };
 
 app.get('/api/twilio/token', auth, buildTwilioToken);
@@ -1918,6 +1972,7 @@ async function initDB() {
       { name: 'Evicting',             filters: { stage: 'Evicting' }, sort_order: 4 },
       { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
       { name: '🏠 Upcoming Showings',  filters: { type: 'upcoming_showings_72h' }, sort_order: 1 },
+      { name: '👻 Tours — No Follow-Up', filters: { type: 'toured_no_followup', days_ago: 90 }, sort_order: 2 },
     ];
     // Get list of user-deleted default lists so we don't recreate them
     const deletedR = await pool.query('SELECT name FROM deleted_smart_lists');
