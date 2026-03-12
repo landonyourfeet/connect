@@ -1875,6 +1875,8 @@ async function initDB() {
   await run(`ALTER TABLE people ALTER COLUMN stage TYPE TEXT`, 'people.stage->TEXT');
   await run(`ALTER TABLE people ALTER COLUMN source TYPE TEXT`, 'people.source->TEXT');
   await run(`ALTER TABLE people ALTER COLUMN background TYPE TEXT`, 'people.background->TEXT');
+  // Drop stale FK on assigned_to before altering type (was referencing agents, now plain TEXT)
+  await pool.query(`ALTER TABLE people DROP CONSTRAINT IF EXISTS people_assigned_to_fkey`).catch(()=>{});
   await run(`ALTER TABLE people ALTER COLUMN assigned_to TYPE TEXT`, 'people.assigned_to->TEXT');
   await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'calls.inbox_cleared');
   await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`, 'calls.created_at');
@@ -2054,10 +2056,12 @@ async function initDB() {
     `UPDATE smart_lists SET filters = filters || '{"days_ago":7}'::jsonb WHERE name = '👻 Tours — No Follow-Up' AND (filters->>'days_ago')::int != 7`
   ).catch(() => {});
 
-  // Seed custom fields
+  // Seed custom fields — add key column if live DB is on older schema
+  await pool.query(`ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS key TEXT`).catch(()=>{});
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS custom_fields_key_idx ON custom_fields(key) WHERE key IS NOT NULL`).catch(()=>{});
   try {
     await pool.query(`INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES ('past_due_balance','Past Due Balance','number',0), ('past_due_days','Days Past Due','number',1), ('payment_commitment_date','Payment Commitment Date','date',2), ('unit_number','Unit Number','text',3), ('lease_end_date','Lease End Date','date',4) ON CONFLICT (key) DO NOTHING`);
-  } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
+  } catch (e) { /* silent — custom_fields seeded or schema mismatch, non-fatal */ }
 
   // Seed call line
   try {
