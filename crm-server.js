@@ -1,3628 +1,9628 @@
-require('dotenv').config();
-const express = require('express');
-const multer  = require('multer');
-const crypto  = require('crypto');
-const { google } = require('googleapis');
-const path = require('path');
-const cors = require('cors');
-const { Pool } = require('pg');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
-// ── DATABASE_URL guard — crash loudly rather than silently lose data ──
-if (!process.env.DATABASE_URL) {
-  console.error('❌ FATAL: DATABASE_URL is not set. Refusing to start without a database.');
-  console.error('   Set DATABASE_URL in Railway environment variables to your Postgres connection string.');
-  process.exit(1);
-}
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  // Keep connections alive across Railway's load balancer
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000,
-  connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 30000,
-  max: 10,
-});
-
-// Log pool errors — prevents silent crashes from dropped DB connections
-pool.on('error', (err) => {
-  console.error('[DB Pool] Unexpected error on idle client:', err.message);
-});
-
-// ── JIREH SECURITY — SSE client registry ─────────────────────────────────
-const sseClients = new Set();
-function broadcastSecurityEvent(payload) {
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
-  let dead = [];
-  for (const client of sseClients) {
-    try { client.res.write(data); }
-    catch(e) { dead.push(client); }
-  }
-  dead.forEach(c => sseClients.delete(c));
-  console.log(`[Jireh] Broadcast to ${sseClients.size} client(s):`, payload.eventId || payload.type);
-}
-
-// ── Per-agent SSE (presence + notifications) ─────────────────────────────
-const agentConnections = new Map(); // agentId -> res
-
-function sendToAgent(agentId, payload) {
-  const res = agentConnections.get(String(agentId));
-  if (!res) return false;
-  try { res.write(`data: ${JSON.stringify(payload)}\n\n`); return true; }
-  catch(e) { agentConnections.delete(String(agentId)); return false; }
-}
-
-function broadcastToAll(payload, excludeAgentId = null) {
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const [agentId, res] of agentConnections) {
-    if (excludeAgentId && String(agentId) === String(excludeAgentId)) continue;
-    try { res.write(data); } catch(e) { agentConnections.delete(agentId); }
-  }
-}
-
-// ── Presence tracking ─────────────────────────────────────────────────────
-const presenceMap = new Map(); // personId -> Map(agentId -> agentInfo)
-
-function setPresence(personId, agent) {
-  if (!presenceMap.has(String(personId))) presenceMap.set(String(personId), new Map());
-  presenceMap.get(String(personId)).set(String(agent.id), {
-    id: agent.id, name: agent.name,
-    avatar_b64: agent.avatar_b64 || null,
-    avatar_color: agent.avatar_color || '#6366f1'
-  });
-  broadcastPresence(personId);
-}
-
-function clearPresence(personId, agentId) {
-  const map = presenceMap.get(String(personId));
-  if (map) { map.delete(String(agentId)); if (!map.size) presenceMap.delete(String(personId)); }
-  broadcastPresence(personId);
-}
-
-function broadcastPresence(personId) {
-  const map = presenceMap.get(String(personId));
-  const viewers = map ? Array.from(map.values()) : [];
-  broadcastToAll({ type: 'presence', personId: String(personId), viewers });
-}
-
-// Gmail OAuth helper
-function getGmailOAuth(agent) {
-  const oauth2 = new google.auth.OAuth2(
-    process.env.GMAIL_CLIENT_ID,
-    process.env.GMAIL_CLIENT_SECRET,
-    process.env.APP_URL + '/api/gmail/callback'
-  );
-  if (agent.gmail_refresh_token) {
-    oauth2.setCredentials({ refresh_token: agent.gmail_refresh_token });
-  }
-  return oauth2;
-}
-
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static('public'));
-// Serve Twilio Voice SDK from node_modules
-app.get('/twilio-voice.js', (req, res) => {
-  res.sendFile(path.join(__dirname, 'node_modules/@twilio/voice-sdk/dist/twilio.min.js'));
-});
-
-// ── FAVICON ──
-const _pngBuf = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAGTElEQVR42u2be0xTVxzHv7elQOmDosizlCFugIOY8SrTqcNsZGoiL5Mlw01jMEyNbiqQaXDiQBBFrIAIMoQWblhkky3TLEtkKrg5UAvqMJkuaHQ1A3m0BIu82v3hiI97Wm7R/UPv78/f755z7vdz7u/87jm3pWDFXFxczZgBZjQaKEsxaiYLZwOCZy/iLWnj2Yt4Sxp59iSepJVnb+JfhMCDnRtlj7NvtQpwADgAHAAOAAeAA8AB4ABwADgAHAC7MAe2F0okEsTFvQelMhqhoW/Czc0NMpkrRkZGoNfrodM9QGvrZTQ3t6Cj4xqrPpXKaNC0muHftWs3Tp78ltjG29sLNK2GQqFgxNTqWuTk5LEWHyWSTA1AKHTGpk2fYs2ajyCRSBhxgUAAsVgMuVwOpTIaW7duxtWrWhQWHsbly1de6Wz5+vqAptWQy+WMWHW1Bvv25bPqZ7lsFjZ7+iLY2cV6CigUCjQ0fIONG9OI4i1ZREQ46upqkJaW+srEy+W+oGkNUXxVVTUr8UIeD4WKQJT4v45gZxfrKeDuPhs0rYa3t9e0bpjP5yMjYwcoiofy8uMvJd7Pzw80rYaPjzcjVllZhYKCwin7EFAUvg4IglIsZbcIlpSoiOKNRiOKio4gLm4F5s9fgMjIGKSmpqG1tY3Yz/btn2Hhwphpi/f3V6C+XkMUX15eyUo8AHwlD2CItwhg2bJYREVFMvwDAwNITv4QZWXl6Oq6g9HRUej1Bpw/34yUlLWg6XrmADweMjJ2TEt8QMBrqK+vhZcXcyLKyspRWFjEqp9QoQirZ81hXwY3bFhPvHjv3lzcvv2XxYFycvKI8bCwUMTEKG0SHxg4FzStgYeHByNWWnoMRUVHWPe1xcuX+AWI7u1mAhCJRAgPf4txsU73AGfO/GR1oPHxcZw4UUOMLV78DusbnjcvEHV1anh4MGetuPgoVKpi1n05UTwsErsyU9k0gUP/3GcughER4eDz+YwGzc0tMJunPj+9cKGZ6I+OjmR90+vXryP6VapilJYes+lJCheJ4cxjPujnBvUYnJhgPgGenh7Ejm7dus1qwJ6eh9DrDQw/KY9tsUOHVDaLBwAfRyei/5rxEXkNcHOTERsMDg6yHtRgYAKw1C8bu3HjD1RUVE6r7SwHcqXvGx8jA6Ao8pdkNo//0z5I7ac/+2FhocjLywGPZ/vWhbJ1M9TfP0C8UCqVsh5UKmUuOnq9/qVSYPXqpGlB6BsfJ/pnOwjIALq7e4gNgoLeYDXgnDnukMmYALq7u1nfdHt7h0UI+fm5NkF4MDpC9C9wEZEBaLXtmJiYYDRYsmSxxfR41t59dynR39bGfmPU0PCdxXf75ORE7N+/jzUE7aMhPDaZGP5YqQxSPp8JYGhoCFptB3Entnz5B1O+/69b9wkx1tJy0aZHt7pag9xcMoSkpATWEEbMJvw6xFyUXXh8bPPyI78JVlVVEzvLzs5CYOBci4NlZe0kpkpn501cuvS7zXlfU6OxuL9PSkpAQUEeKwil3Tqi/2N3T/AFAufsFwN37tzFokVvMzYgQqEQiYnxACj09vbCaByGWCyCUhmN3Ny9WLlyBbF6ZGbuxL1794lb3OTkRIa/qekcOjtvPqnX165Drzdg6dIljOtCQoIhl8vR1PSL1SrVMzYGH0cnzBeK2J0Imc1mbNnyORobG+Dp6flcTCwWIz19G9LTt7GaRZWqBBcv/vZSFUCjqYPZbMaePVmMWGJiPCiKQmbmTpgIuT5pX/59F/5OzogSSdhth3t6HiIlZa3VzY81M5lMOHy4GEePHsOrsNpaGtnZOcRYQsIqHDiQbzUdRs0mpHb9iR/1fc+vW6QUeFq7DTh16nvw+XyEhATB0dGRdRnLyPgCjY0/THnKM1UKPGvXr99AX18/YmOZlSY4OAgKhR/OnrWcDmNmM3429KNr5DHmOgsx20Ew9Zng8PAwDh48hIqK44iLex8xMcr/DkVlcHWdPBQ1QKfToa3tCpqbW6DVtv9vp7iTZw7Z2bsZZTk+fhWAJ+lAKuWTdlrfh9P6PijFUu4nMtyHEQ4AB4ADwAHgAHAAOAAcAA4AB4ADwAGwSwDW/lQ4081oNFDcEzBJwh5n/7k1wJ4gPKuVZylgD+KJVWAmQyBpsyrWHv4+/y+rixtpEyjeTQAAAABJRU5ErkJggg==', 'base64');
-const _icoBuf = Buffer.from('AAABAAIAEBAAAAAAIAC6AgAAJgAAACAgAAAAACAAOAYAAOACAACJUE5HDQoaCgAAAA1JSERSAAAAEAAAABAIBgAAAB/z/2EAAAKBSURBVHiclZPJa1RrEMV/9d0b0/eapDsaSFDbAaeIuhBbUHECBREnnBa6EUJciRvBf0F8byEaEQeCoAtBBIkLQ+JCSHCjKPbCAfQfCKRxuG23Se5wXHQM77lwqN1XdU5VUd85FgRz55nFd8G2AwKMX8c0RiNS0wkLw/wI2DZQBrjfkH9EBuZAoxaGeTUSOLPGcEkzSDObef9UzwDnAJmZc84RxwlJkuB53gwxjmMk4ZwjTVMmJycbzcB5mJyZWRzHfP0a0d6ep7W1lWr1M2ma4nke7e1zCIKAWq1GLtdMsbgAMyOWqKaJuSRJKBTy3Llzm+HhRzx5MkxfXx9mGYVCgefPn7J+/Tq6u1dQLr/g4IH9THyrUfCbuLJ4OYDp6tVrGhsb0+rVa7Vp01bV63WdPXtOHR2dGh8f1/nz/+jt23e6cOFfgRO5Fl1euU7Rlj2iublF5XJZFy9e0vQXaWDgoQYHBzV/flHv33+QJPX33xKgtrYOzQrzelXaoZurSnJJMkUURSxbtnTm8osWLaRS+Ugcx/i+x9DQMLt27eTw4aNEUYVM8ClJ6A4CMPN16NBRRdEX9fff0r1791WpjKtU2qiurqIk6ciRYzp9+owk6VRPrzy/WQfmLVFl827Z7NkF1et1NmwosW/fXuJ4igcPBnjz5jWdnV309vYwNPSYly+fcfJkD8VikRvXb1CJqqxpacXCMC/nHLVaDWkKAM/LEQQBSZIwMVGlqSkkl8tRrX4CRBC04ZnjW5ZiYZjPAHPO4VxDyVmWkWUZAL7vk6YpkvA8D4A0TaGhe/1Pyn/og//4oSHl0YYxyP6ObA4YdZJ/HLKR6Q30GyLTGAfZiOQf/w5e7zNy2z/8sAAAAABJRU5ErkJggolQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAABf9JREFUeJzFl12MVPUZxn////mYjzNnZoelCRZUbLFtYM26QGNtZdWmRiCSmvSiifeaeoc0TRS90FIosdgmjbGmN4WVIGlqtE1EEpKyWCzYRJIadoE0LAtls0kjO+x8ndmZOefpxcyObCl+JHy8l+f8z/s+5znv+zzvMYAHtLLZcAPYrcD9gAEs1zcSQMAxSHbU65X3AM8AZLP59WD+DMYHqQvgRoTAGFAT9MN6vXzQBEHhIYlDgNNF6dyg4vMR02E3NoZHTCaT/8hau1pSfBOK90AYY5wkSU6YbLYgOt/mRtF+rRBgLB3ab3ZxujUTy/Xv9i8T1r3WHWOuJEWd2ficc/qfQ591bz6uAmBth5A4jkmSBADHcXAchyRJFiSSRBzHSGCt6T1rjEESrVard87zvIXgAGvMQgDWWqIoIo7b5PMFfN9DgiiKqFQu4/tZfN9bACyXy2GtodVqE0URjuPQarUwxlAs9pEkIpXyKZUu98BbY5hLElpxDNlsQdlsQblcUeBpYOBe7dr1ax0+PKrTp0/r5Mkxvfvue3r22a1asmSZHCetfL5fjpPWwMCQTp48qenpab322u/k+4HS6VC5XFG7d+/R5OSkpqamtGXLz+R5GQVBn3LZgkjntLywWM9/bZWYL26Mpw0bNmliYkKNRqRardpL0GhEiqJIR48e1YoV35LvB3LdjAYH1+rChQuKorpGRvbKGE9hWNTevftUqVRUqVT04os/l7UpZbMFhUGfnHSo+/q/qn+ufVj1dRtFLtcnzwu0fPkKjY+Pq1QqaWJiQk899bRuu+0O3XXXN/Tyy7s0PT2tarWqt956W+l0KMdJa3BwjSYmJlStVvX6679XNhtq//4/qlKpaGZmRlu3viBwOgwHfUpl8loS9uujtQ9p9nvr9e/7HxH5fL8Abd68ReVyWaXSjLZv/6UAZTJ5WZuS62Z04MABXbp0SdPT0xoe/r4ADQ2t1eTkpMrlst58c7/27NmrKKrr8uWSnnvueYGrIOhTEPQpDPpEKtDTd3xT1Qc26D/ffVS7V66VTZIEx0mxcuVKjIFGY47R0fex1sfzPMIwpN1ucOTI30ilfNLpFAMDq7rdbrHWUqvVGB5ex2OPrWdmpsRLL/2CnTt/RRDkelMgdZpvMJtDQEviTzOfYCXhOB65XIAEzWaTSqWCZHtjZwyUyxXa7RjP88nlgiuG6dMJmptrUq/XOXTor0htXNftdb4QrrGETsdu5pRQittYYwxx3KJarWEM+L5PGIZYm2Ct7YlJPh/iup0Rq1Zr80pA5wUss7OzAPT3L2LfvhEGB4eYnS3hum4XqqGthEocA5AylqLjYq21xPEc4+OnkCCdTvHgg8PEcZNWq0WlUsXaFMPD65iba9JoNBgbG+9Sm5AkCUGQY3T0fXbs2Im1DsuWLeWNN/7A4OC9lMuXcV0XYyCR+LheBcAzhh8tWoxNkhjPy/LOO39hamoKMDzxxI888SegUCjw2muvsWPHLkZGvuSLL77i9u2v+fjjL3n66cdZvXoVw8PDDA0NcezYMXbt2sXY2BgHDx5k9+7dfPLJJ+zcuZOXXtpPFEWUSqUsLi5y+fIc8/ML3LlzkYmJLyiVXnL//iWKogjnFz0IzFoCH4dAbxHk9bK3F96EuXPXMW3bNnPt2jXq9TpTU1McMPuQwq2bAwMDrNq4kaWlpTk7e/Yss3PnjHLuXbRmq1q6c4P9Z29iF0N7OXm1DcAAAAAAElFTkSuQmCC', 'base64');
-
-app.get('/favicon.png', (req, res) => {
-  res.setHeader('Content-Type', 'image/png');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.send(_pngBuf);
-});
-app.get('/favicon.ico', (req, res) => {
-  res.setHeader('Content-Type', 'image/x-icon');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.send(_icoBuf);
-});
-app.get('/favicon.svg', (req, res) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <rect width="64" height="64" rx="10" fill="#0a0a0f"/>
-    <text x="32" y="44" font-family="Arial Black,sans-serif" font-size="38" font-weight="900"
-      text-anchor="middle" fill="#e6e6e6">OK<tspan fill="#e63946">C</tspan></text>
-  </svg>`;
-  res.setHeader('Content-Type', 'image/svg+xml');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.send(svg);
-});
-
-const auth = async (req, res, next) => {
-  const h = req.headers.authorization;
-  if (!h?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const decoded = jwt.verify(h.slice(7), JWT_SECRET);
-    const r = await pool.query('SELECT * FROM agents WHERE id=$1 AND is_active=true', [decoded.id]);
-    if (!r.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
-    req.agent = r.rows[0];
-    next();
-  } catch (e) { res.status(401).json({ error: 'Unauthorized' }); }
-};
-
-const adminOnly = (req, res, next) => {
-  if (req.agent?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  next();
-};
-
-// ─── HEALTH ───────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
-
-// ─── AUTH ─────────────────────────────────────────────────────────────────────
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const r = await pool.query('SELECT * FROM agents WHERE email=$1 AND is_active=true', [email]);
-    if (!r.rows[0]) return res.status(401).json({ error: 'Invalid credentials' });
-    const ok = await bcrypt.compare(password, r.rows[0].password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign({ id: r.rows[0].id }, JWT_SECRET, { expiresIn: '7d' });
-    const { password_hash, ...agent } = r.rows[0];
-    res.json({ token, agent });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/auth/me', auth, (req, res) => {
-  const { password_hash, ...agent } = req.agent;
-  res.json(agent);
-});
-
-// ─── PEOPLE ───────────────────────────────────────────────────────────────────
-app.get('/api/people', auth, async (req, res) => {
-  try {
-    const { search, stage, tags, smartListId, limit = 50, offset = 0 } = req.query;
-    let where = ['1=1']; let params = [];
-    if (search) {
-      const parts = search.trim().split(/\s+/).filter(Boolean);
-      if (parts.length >= 2) {
-        params.push(`%${parts[0]}%`); const p1 = params.length;
-        params.push(`%${parts.slice(1).join(' ')}%`); const p2 = params.length;
-        params.push(`%${parts[parts.length-1]}%`); const p3 = params.length;
-        params.push(`%${parts.slice(0,-1).join(' ')}%`); const p4 = params.length;
-        params.push(`%${search}%`); const pFull = params.length;
-        where.push(`(
-          (p.first_name ILIKE $${p1} AND p.last_name ILIKE $${p2}) OR
-          (p.first_name ILIKE $${p3} AND p.last_name ILIKE $${p4}) OR
-          p.phone ILIKE $${pFull} OR p.email ILIKE $${pFull} OR
-          EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pFull})
-        )`);
-      } else {
-        params.push(`%${search}%`);
-        const pi = params.length;
-        where.push(`(
-          p.first_name ILIKE $${pi} OR p.last_name ILIKE $${pi} OR
-          p.phone ILIKE $${pi} OR p.email ILIKE $${pi} OR
-          EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pi})
-        )`);
-      }
-    }
-    if (stage) { params.push(stage); where.push(`p.stage=$${params.length}`); }
-    if (tags) {
-      const tagList = tags.split(',').map(t=>t.trim()).filter(Boolean);
-      for (const tag of tagList) { params.push(tag); where.push(`$${params.length}=ANY(p.tags)`); }
-    }
-    if (smartListId) {
-      const listR = await pool.query('SELECT filters FROM smart_lists WHERE id=$1', [smartListId]);
-      if (listR.rows[0]?.filters) {
-        const f = listR.rows[0].filters;
-
-        // ── SPECIAL: Upcoming Showings 72h ───────────────────────────────────
-        if (f.type === 'upcoming_showings_72h') {
-          // Join showings → people, annotate with next showing time + last outbound contact
-          const shR = await pool.query(`
-            SELECT
-              p.*,
-              MIN(s.showing_time)                                              AS next_showing_time,
-              s2.property                                                      AS showing_property,
-              s2.unit                                                          AS showing_unit,
-              s2.showing_type                                                  AS showing_type,
-              MAX(a.created_at) FILTER (WHERE a.direction='outbound')         AS last_outbound_at,
-              MAX(a.created_at) FILTER (WHERE a.direction='inbound')          AS last_inbound_at
-            FROM people p
-            JOIN showings s ON s.connect_person_id = p.id::text
-              AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
-              AND s.status = 'Scheduled'
-            -- grab property/unit from the soonest showing
-            JOIN LATERAL (
-              SELECT property, unit, showing_type FROM showings
-              WHERE connect_person_id = p.id::text
-                AND showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
-                AND status = 'Scheduled'
-              ORDER BY showing_time ASC LIMIT 1
-            ) s2 ON TRUE
-            LEFT JOIN activities a ON a.person_id::text = p.id::text
-              AND a.created_at > NOW() - INTERVAL '14 days'
-            GROUP BY p.id, s2.property, s2.unit, s2.showing_type
-            ORDER BY MIN(s.showing_time) ASC
-          `);
-          const people = shR.rows.map(p => ({
-            ...p, ...(p.custom_fields || {}),
-            needs_contact: !p.last_outbound_at  // never been contacted outbound
-          }));
-          return res.json({ people, total: people.length });
-        }
-        // ── SPECIAL: Toured — No Follow-Up ──────────────────────────────────
-        if (f.type === 'toured_no_followup') {
-          const days = parseInt(f.days_ago || 90); // default: tours in past 90 days
-          const shR = await pool.query(`
-            SELECT
-              p.*,
-              MAX(s.showing_time)                                               AS last_tour_at,
-              s2.property                                                       AS showing_property,
-              s2.unit                                                           AS showing_unit,
-              s2.showing_type                                                   AS showing_type,
-              MAX(a.created_at) FILTER (WHERE a.direction='outbound'
-                AND a.created_at > s2.last_tour)                               AS followup_at,
-              MAX(a.created_at) FILTER (WHERE a.direction='inbound')           AS last_inbound_at,
-              COUNT(s.id)::int                                                  AS tour_count
-            FROM people p
-            JOIN showings s ON s.connect_person_id = p.id::text
-              AND s.showing_time < NOW()
-              AND s.showing_time > NOW() - INTERVAL '1 day' * $1
-              AND s.status = 'Completed'
-            -- grab details of the most recent completed tour
-            JOIN LATERAL (
-              SELECT property, unit, showing_type, showing_time AS last_tour
-              FROM showings
-              WHERE connect_person_id = p.id::text
-                AND status = 'Completed'
-                AND showing_time < NOW()
-              ORDER BY showing_time DESC LIMIT 1
-            ) s2 ON TRUE
-            LEFT JOIN activities a ON a.person_id::text = p.id::text
-            GROUP BY p.id, s2.property, s2.unit, s2.showing_type, s2.last_tour
-            -- only people with NO outbound activity after their last tour
-            HAVING MAX(a.created_at) FILTER (
-              WHERE a.direction='outbound' AND a.created_at > s2.last_tour
-            ) IS NULL
-            ORDER BY MAX(s.showing_time) DESC
-          `, [days]);
-          const people = shR.rows.map(p => ({
-            ...p, ...(p.custom_fields || {}),
-            needs_contact: true
-          }));
-          return res.json({ people, total: people.length });
-        }
-        // ─────────────────────────────────────────────────────────────────────
-
-        if (f.stages?.length > 1) { params.push(f.stages); where.push(`p.stage=ANY($${params.length})`); }
-        else if (f.stage)  { params.push(f.stage); where.push(`p.stage=$${params.length}`); }
-        if (f.tags?.length) {
-          params.push(f.tags);
-          where.push(`p.tags && $${params.length}::text[]`);
-        }
-        if (f.source) { params.push(f.source); where.push(`p.source=$${params.length}`); }
-        if (f.has_phone) where.push(`p.phone IS NOT NULL AND p.phone!=''`);
-        if (f.no_activity_days) {
-          params.push(parseInt(f.no_activity_days));
-          where.push(`(SELECT MAX(created_at) FROM activities WHERE person_id=p.id) < NOW()-INTERVAL '1 day'*$${params.length} OR NOT EXISTS (SELECT 1 FROM activities WHERE person_id=p.id)`);
-        }
-      }
-    }
-    const countR = await pool.query(`SELECT COUNT(*) FROM people p WHERE ${where.join(' AND ')}`, params);
-    params.push(limit, offset);
-    const r = await pool.query(
-      `SELECT p.* FROM people p WHERE ${where.join(' AND ')} ORDER BY p.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
-      params
-    );
-    if (r.rows.length) {
-      const ids = r.rows.map(p => p.id);
-      const phones = await pool.query(
-        `SELECT person_id, phone FROM person_phones WHERE person_id = ANY($1) AND (is_bad IS NULL OR is_bad=false)`,
-        [ids]
-      );
-      const phoneMap = {};
-      phones.rows.forEach(row => {
-        if (!phoneMap[row.person_id]) phoneMap[row.person_id] = [];
-        phoneMap[row.person_id].push(row.phone);
-      });
-      r.rows.forEach(p => { p.all_phones = phoneMap[p.id] || (p.phone ? [p.phone] : []); });
-    }
-    // Spread custom_fields into each person row so frontend gets flat access (past_due_balance etc.)
-    const people = r.rows.map(p => ({ ...p, ...(p.custom_fields || {}) }));
-    res.json({ people, total: parseInt(countR.rows[0].count) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/people/:id', auth, async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT id, first_name, last_name, phone, email, stage, source, background, tags,
-             custom_fields, address, city, state, zip, assigned_to, unifi_person_id,
-             id_photo_b64, id_photo_name, security_notes, criminal_history,
-             dv_victim, dv_notes, created_at, updated_at
-      FROM people WHERE id=$1
-    `, [req.params.id]);
-    if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
-    const row = r.rows[0];
-    res.json({ ...row, ...(row.custom_fields || {}) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/people', auth, async (req, res) => {
-  try {
-    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
-    const normPhone = phone ? (() => { const d = phone.replace(/\D/g,''); return d.length===10?'+1'+d:d.length===11&&d[0]==='1'?'+'+d:null; })() : null;
-    const dupeChecks = [];
-    if (normPhone) dupeChecks.push(
-      pool.query(`SELECT p.id,p.first_name,p.last_name,p.phone,p.email,p.stage FROM people p
-        LEFT JOIN person_phones pp ON pp.person_id=p.id
-        WHERE p.phone=$1 OR pp.phone=$1 LIMIT 1`, [normPhone])
-    );
-    if (email) dupeChecks.push(
-      pool.query(`SELECT id,first_name,last_name,phone,email,stage FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1`, [email])
-    );
-    for (const chk of await Promise.all(dupeChecks)) {
-      if (chk.rows[0]) {
-        const ex = chk.rows[0];
-        return res.status(409).json({
-          error: 'duplicate',
-          message: `A contact already exists with this ${normPhone && chk.rows[0] ? 'phone number' : 'email'}.`,
-          existing: { id: ex.id, name: [ex.first_name, ex.last_name].filter(Boolean).join(' '), phone: ex.phone, email: ex.email, stage: ex.stage }
-        });
-      }
-    }
-    const r = await pool.query(
-      'INSERT INTO people (first_name,last_name,phone,email,stage,source,background,tags,custom_fields,assigned_to,address,city,state,zip) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
-      [firstName, lastName, phone||null, email||null, stage||'lead', source||null, background||null, tags||[], JSON.stringify(customFields||{}), assignedTo||null, address||null, city||null, state||null, zip||null]
-    );
-    if (phone && r.rows[0]) {
-      await pool.query(
-        'INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING',
-        [r.rows[0].id, phone.replace(/[^0-9+]/g,''), 'mobile']
-      ).catch(()=>{});
-    }
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── CASEWORKER NOTIFICATION HELPER ────────────────────────────────────────────
-async function notifyCaseworkers(residentId, triggerType, agentId) {
-  try {
-    const rels = await pool.query(`
-      SELECT
-        CASE WHEN pr.person_id_a = $1 THEN pr.person_id_b ELSE pr.person_id_a END AS cw_id
-      FROM person_relationships pr
-      WHERE (pr.person_id_a = $1 OR pr.person_id_b = $1)
-        AND pr.label = 'caseworker'
-    `, [residentId]);
-    if (!rels.rows.length) return;
-    const res = await pool.query('SELECT first_name, last_name, stage FROM people WHERE id=$1', [residentId]);
-    const resident = res.rows[0];
-    if (!resident) return;
-    const resName = [resident.first_name, resident.last_name].filter(Boolean).join(' ');
-    const msgs = {
-      delinquent:      `⚠️ OKCREAL Alert: ${resName} has been moved to Delinquent status. Your support may be needed.`,
-      lease_violation: `⚠️ OKCREAL Alert: ${resName} has received a lease violation. Your support may be needed.`,
-      evicting:        `⚠️ OKCREAL Alert: ${resName} has been moved to Eviction status. Your support may be needed.`,
-    };
-    const msg = msgs[triggerType] || `⚠️ OKCREAL Alert: Update on ${resName} — ${triggerType}.`;
-    for (const row of rels.rows) {
-      const cwId = row.cw_id;
-      const cwRes = await pool.query(`
-        SELECT p.id, p.first_name, p.last_name, pp.phone
-        FROM people p
-        LEFT JOIN person_phones pp ON pp.person_id = p.id AND pp.is_primary = true
-        WHERE p.id = $1
-      `, [cwId]);
-      const cw = cwRes.rows[0];
-      if (!cw) continue;
-      const cwName = [cw.first_name, cw.last_name].filter(Boolean).join(' ');
-      await pool.query(
-        `INSERT INTO activities (person_id, agent_id, type, body, direction)
-         VALUES ($1, $2, 'note', $3, 'internal')`,
-        [residentId, agentId || null, `📋 Caseworker ${cwName} notified: ${triggerType.replace('_',' ')}`]
-      );
-      await pool.query(
-        `INSERT INTO activities (person_id, agent_id, type, body, direction)
-         VALUES ($1, $2, 'note', $3, 'internal')`,
-        [cwId, agentId || null, `📋 Notified re: resident ${resName} — ${triggerType.replace('_',' ')}`]
-      );
-      if (cw.phone) {
-        try {
-          const twilioClient = initTwilioFull();
-          const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
-          const sent = await twilioClient.messages.create({
-            body: msg,
-            from: fromNum,
-            to: cw.phone.replace(/\D/g,'').replace(/^(\d{10})$/, '+1$1')
-          });
-          console.log(`[Caseworker] SMS sent to ${cwName} (${cw.phone}): ${sent.sid}`);
-        } catch(smsErr) {
-          console.warn(`[Caseworker] SMS failed for ${cwName}:`, smsErr.message);
-        }
-      }
-    }
-  } catch(e) {
-    console.error('[notifyCaseworkers] Error:', e.message);
-  }
-}
-
-app.put('/api/people/:id', auth, async (req, res) => {
-  try {
-    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
-    const r = await pool.query(
-      `UPDATE people SET
-        first_name=COALESCE($1,first_name), last_name=COALESCE($2,last_name),
-        phone=COALESCE($3,phone), email=COALESCE($4,email),
-        stage=COALESCE($5,stage), source=COALESCE($6,source),
-        background=COALESCE($7,background), tags=COALESCE($8,tags),
-        custom_fields=custom_fields||COALESCE($9::jsonb,'{}'),
-        address=COALESCE($10,address), city=COALESCE($11,city),
-        state=COALESCE($12,state), zip=COALESCE($13,zip),
-        updated_at=NOW()
-       WHERE id=$14 RETURNING *`,
-      [firstName||null, lastName||null, phone||null, email||null, stage||null,
-       source||null, background||null, tags||null,
-       customFields ? JSON.stringify(customFields) : null,
-       address||null, city||null, state||null, zip||null, req.params.id]
-    );
-    const updated = r.rows[0];
-    if (stage && (stage === 'Delinquent' || stage === 'Evicting')) {
-      const agentId = req.agent?.id || null;
-      const triggerType = stage === 'Delinquent' ? 'delinquent' : 'evicting';
-      notifyCaseworkers(req.params.id, triggerType, agentId).catch(e => console.warn('[CW trigger]', e.message));
-    }
-    res.json(updated);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/api/people/:id', auth, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM people WHERE id=$1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── PERSON PHONES ────────────────────────────────────────────────────────────
-app.get('/api/people/:id/phones', auth, async (req, res) => {
-  try {
-    const existing = await pool.query('SELECT COUNT(*) FROM person_phones WHERE person_id=$1', [req.params.id]);
-    if (parseInt(existing.rows[0].count) === 0) {
-      const p = await pool.query('SELECT phone FROM people WHERE id=$1', [req.params.id]);
-      if (p.rows[0]?.phone) {
-        await pool.query('INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING',
-          [req.params.id, p.rows[0].phone, 'mobile']).catch(()=>{});
-      }
-    }
-    const r = await pool.query('SELECT * FROM person_phones WHERE person_id=$1 ORDER BY is_primary DESC, id ASC', [req.params.id]);
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/people/:id/phones', auth, async (req, res) => {
-  try {
-    const { phone, label, isPrimary } = req.body;
-    if (!phone) return res.status(400).json({ error: 'Phone required' });
-    const clean = phone.replace(/[^0-9+]/g,'');
-    if (isPrimary) await pool.query('UPDATE person_phones SET is_primary=FALSE WHERE person_id=$1', [req.params.id]);
-    const r = await pool.query(
-      'INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES($1,$2,$3,$4) RETURNING *',
-      [req.params.id, clean, label||'mobile', !!isPrimary]
-    );
-    if (isPrimary) await pool.query('UPDATE people SET phone=$1 WHERE id=$2', [clean, req.params.id]);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/people/:id/phones/:phoneId', auth, async (req, res) => {
-  try {
-    const { label, isPrimary, isBad } = req.body;
-    if (isPrimary) await pool.query('UPDATE person_phones SET is_primary=FALSE WHERE person_id=$1', [req.params.id]);
-    const r = await pool.query(
-      `UPDATE person_phones SET
-         label=COALESCE($1,label), is_primary=COALESCE($2,is_primary), is_bad=COALESCE($3,is_bad)
-       WHERE id=$4 AND person_id=$5 RETURNING *`,
-      [label||null, isPrimary!=null?isPrimary:null, isBad!=null?isBad:null, req.params.phoneId, req.params.id]
-    );
-    if (isPrimary && r.rows[0]) await pool.query('UPDATE people SET phone=$1 WHERE id=$2', [r.rows[0].phone, req.params.id]);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/api/people/:id/phones/:phoneId', auth, async (req, res) => {
-  try {
-    const del = await pool.query('DELETE FROM person_phones WHERE id=$1 AND person_id=$2 RETURNING *', [req.params.phoneId, req.params.id]);
-    if (del.rows[0]?.is_primary) {
-      const next = await pool.query('SELECT * FROM person_phones WHERE person_id=$1 ORDER BY id ASC LIMIT 1', [req.params.id]);
-      if (next.rows[0]) {
-        await pool.query('UPDATE person_phones SET is_primary=TRUE WHERE id=$1', [next.rows[0].id]);
-        await pool.query('UPDATE people SET phone=$1 WHERE id=$2', [next.rows[0].phone, req.params.id]);
-      }
-    }
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── HOUSEHOLD / RELATIONSHIPS ────────────────────────────────────────────────
-app.get('/api/people/:id/relationships', auth, async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT pr.id, pr.label,
-        CASE WHEN pr.person_id_a=$1 THEN pr.person_id_b ELSE pr.person_id_a END AS related_id,
-        p.first_name, p.last_name, p.phone, p.stage, p.email
-      FROM person_relationships pr
-      JOIN people p ON p.id = CASE WHEN pr.person_id_a=$1 THEN pr.person_id_b ELSE pr.person_id_a END
-      WHERE pr.person_id_a=$1 OR pr.person_id_b=$1
-    `, [req.params.id]);
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/people/:id/relationships', auth, async (req, res) => {
-  try {
-    const { relatedPersonId, label } = req.body;
-    if (!relatedPersonId) return res.status(400).json({ error: 'relatedPersonId required' });
-    const a = Math.min(parseInt(req.params.id), parseInt(relatedPersonId));
-    const b = Math.max(parseInt(req.params.id), parseInt(relatedPersonId));
-    const r = await pool.query(
-      'INSERT INTO person_relationships (person_id_a,person_id_b,label) VALUES($1,$2,$3) ON CONFLICT(person_id_a,person_id_b) DO UPDATE SET label=$3 RETURNING *',
-      [a, b, label||'household']
-    );
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/api/people/:id/relationships/:relId', auth, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM person_relationships WHERE id=$1', [req.params.relId]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── SECURITY PROFILE ─────────────────────────────────────────────────────
-app.post('/api/people/:id/id-photo', auth, async (req, res) => {
-  try {
-    let { photoB64, photoName } = req.body;
-    if (!photoB64) return res.status(400).json({ error: 'photoB64 required' });
-    if (photoB64.startsWith('data:')) { photoB64 = photoB64.split(',')[1]; }
-    if (photoB64.length > 7000000) return res.status(413).json({ error: 'Image too large (max ~5MB)' });
-    await pool.query(
-      'UPDATE people SET id_photo_b64=$1, id_photo_name=$2, updated_at=NOW() WHERE id=$3',
-      [photoB64, photoName || 'id-photo', req.params.id]
-    );
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/api/people/:id/id-photo', auth, async (req, res) => {
-  try {
-    await pool.query('UPDATE people SET id_photo_b64=NULL, id_photo_name=NULL, updated_at=NOW() WHERE id=$1', [req.params.id]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/api/people/:id/security', auth, async (req, res) => {
-  try {
-    const { securityNotes, criminalHistory, dvVictim, dvNotes } = req.body;
-    await pool.query(
-      `UPDATE people SET
-        security_notes = COALESCE($1, security_notes),
-        criminal_history = COALESCE($2, criminal_history),
-        dv_victim = COALESCE($3, dv_victim),
-        dv_notes = COALESCE($4, dv_notes),
-        updated_at = NOW()
-       WHERE id=$5`,
-      [
-        securityNotes !== undefined ? securityNotes : null,
-        criminalHistory !== undefined ? criminalHistory : null,
-        dvVictim !== undefined ? dvVictim : null,
-        dvNotes !== undefined ? dvNotes : null,
-        req.params.id
-      ]
-    );
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/people/:id/lease-violation', auth, async (req, res) => {
-  try {
-    const { note } = req.body;
-    const agentId = req.agent?.id || null;
-    const body = note ? `🚨 Lease Violation: ${note}` : '🚨 Lease Violation logged';
-    const act = await pool.query(
-      `INSERT INTO activities (person_id, agent_id, type, body, direction)
-       VALUES ($1, $2, 'note', $3, 'internal') RETURNING *`,
-      [req.params.id, agentId, body]
-    );
-    await notifyCaseworkers(req.params.id, 'lease_violation', agentId);
-    res.json(act.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/people/:id/caseworkers', auth, async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT
-        p.id, p.first_name, p.last_name, p.email, p.stage,
-        pp.phone,
-        CASE WHEN pr.person_id_a = $1 THEN 'b' ELSE 'a' END AS role_side,
-        pr.id AS rel_id
-      FROM person_relationships pr
-      JOIN people p ON p.id = CASE WHEN pr.person_id_a = $1 THEN pr.person_id_b ELSE pr.person_id_a END
-      LEFT JOIN person_phones pp ON pp.person_id = p.id AND pp.is_primary = true
-      WHERE (pr.person_id_a = $1 OR pr.person_id_b = $1)
-        AND pr.label = 'caseworker'
-    `, [req.params.id]);
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/people/:id/household-activities', auth, async (req, res) => {
-  try {
-    const memberIds = [parseInt(req.params.id)];
-    const rels = await pool.query(`
-      SELECT CASE WHEN person_id_a=$1 THEN person_id_b ELSE person_id_a END AS related_id
-      FROM person_relationships WHERE person_id_a=$1 OR person_id_b=$1
-    `, [req.params.id]);
-    rels.rows.forEach(r => memberIds.push(parseInt(r.related_id)));
-    const placeholders = memberIds.map((_,i) => `$${i+1}`).join(',');
-    const r = await pool.query(`
-      SELECT a.*, p.first_name, p.last_name
-      FROM activities a
-      JOIN people p ON p.id = a.person_id
-      WHERE a.person_id IN (${placeholders})
-      ORDER BY a.created_at DESC LIMIT 100
-    `, memberIds);
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── INBOX ─────────────────────────────────────────────────────────────────────
-app.get('/api/inbox', auth, async (req, res) => {
-  try {
-    const missedR = await pool.query(`
-      SELECT
-        c.id, c.from_number AS phone, c.created_at,
-        c.status, c.direction,
-        p.id AS person_id,
-        COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), c.from_number) AS contact_name
-      FROM calls c
-      LEFT JOIN people p ON p.id::text = c.person_id
-      WHERE c.direction = 'inbound'
-        AND c.status IN ('no-answer','busy','failed','canceled')
-        AND c.created_at > NOW() - INTERVAL '7 days'
-        AND (c.inbox_cleared IS NULL OR c.inbox_cleared = false)
-      ORDER BY c.created_at DESC
-      LIMIT 50
-    `);
-    const textsR = await pool.query(`
-      SELECT
-        a.id, a.body, a.created_at, a.person_id,
-        COALESCE(pp.phone, p.phone) AS phone,
-        COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), p.phone) AS contact_name
-      FROM activities a
-      LEFT JOIN people p ON p.id::text = a.person_id
-      LEFT JOIN person_phones pp ON pp.person_id = p.id AND pp.is_primary = true
-      WHERE a.type = 'sms'
-        AND a.direction = 'inbound'
-        AND a.created_at > NOW() - INTERVAL '7 days'
-        AND (a.inbox_cleared IS NULL OR a.inbox_cleared = false)
-      ORDER BY a.created_at DESC
-      LIMIT 50
-    `);
-    res.json({ missed_calls: missedR.rows, unread_texts: textsR.rows });
-  } catch(e) { console.error('Inbox error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/inbox/clear', auth, async (req, res) => {
-  try {
-    const { type } = req.body;
-    if (type === 'missed' || type === 'all') {
-      await pool.query(`UPDATE calls SET inbox_cleared=true WHERE direction='inbound' AND status IN ('no-answer','busy','failed','canceled') AND created_at > NOW() - INTERVAL '7 days'`);
-    }
-    if (type === 'texts' || type === 'all') {
-      await pool.query(`UPDATE activities SET inbox_cleared=true WHERE type='sms' AND direction='inbound' AND created_at > NOW() - INTERVAL '7 days'`);
-    }
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/security/events/clear', auth, async (req, res) => {
-  try {
-    await pool.query(`UPDATE security_events SET dismissed=true WHERE dismissed=false`);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── ACTIVITIES ───────────────────────────────────────────────────────────────
-app.get('/api/activities', auth, async (req, res) => {
-  try {
-    const { personId, limit = 50, type } = req.query;
-    let where = ['1=1']; let params = [];
-    if (personId) { params.push(personId); where.push(`a.person_id=$${params.length}`); }
-    if (type) { params.push(type); where.push(`a.type=$${params.length}`); }
-    params.push(limit);
-    const r = await pool.query(
-      `SELECT
-         a.id, a.person_id, a.agent_id, a.call_id, a.type, a.body,
-         a.duration, a.direction, a.sms_status, a.sms_error, a.message_sid,
-         a.created_at,
-         ag.name AS agent_name,
-         c.transcript,
-         c.summary,
-         COALESCE(a.recording_url, c.recording_url) AS recording_url
-       FROM activities a
-       LEFT JOIN agents ag ON ag.id::text = a.agent_id::text
-       LEFT JOIN calls c ON c.id::text = a.call_id::text
-       WHERE ${where.join(' AND ')}
-       ORDER BY a.created_at DESC
-       LIMIT $${params.length}`,
-      params
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/activities', auth, async (req, res) => {
-  try {
-    const { personId, type, body, duration, recordingUrl, callId, direction, mentions, emailSubject } = req.body;
-    const r = await pool.query(
-      `INSERT INTO activities (person_id,agent_id,type,body,duration,recording_url,call_id,direction,mentions,email_subject)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [personId, req.agent.id, type||'note', body||null, duration||null, recordingUrl||null, callId||null,
-       direction||'outbound', mentions||[], emailSubject||null]
-    );
-    const activity = r.rows[0];
-    if (body && (mentions?.length || body.includes('@'))) {
-      const agentNames = mentions || [];
-      if (agentNames.length) {
-        const personR = await pool.query('SELECT first_name, last_name FROM people WHERE id=$1', [personId]);
-        const personName = personR.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'a contact';
-        for (const mentionedName of agentNames) {
-          const agR = await pool.query('SELECT id FROM agents WHERE LOWER(name) LIKE LOWER($1) LIMIT 1', [`%${mentionedName}%`]);
-          if (agR.rows[0] && String(agR.rows[0].id) !== String(req.agent.id)) {
-            await createNotification({
-              recipientId: agR.rows[0].id,
-              senderId: req.agent.id,
-              type: 'mention',
-              personId: personId,
-              activityId: activity.id,
-              body: `${req.agent.name} mentioned you in a note on ${personName}: "${body.substring(0,120)}"`
-            });
-          }
-        }
-      }
-    }
-    res.json(activity);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── TASKS ────────────────────────────────────────────────────────────────────
-app.get('/api/tasks', auth, async (req, res) => {
-  try {
-    const { personId, completed } = req.query;
-    let where = ['1=1']; let params = [];
-    if (personId) { params.push(personId); where.push(`t.person_id=$${params.length}`); }
-    if (completed !== undefined) { params.push(completed === 'true'); where.push(`t.completed=$${params.length}`); }
-    const r = await pool.query(
-      `SELECT t.*, ag.name as agent_name
-       FROM tasks t
-       LEFT JOIN agents ag ON ag.id::text=t.agent_id::text
-       WHERE ${where.join(' AND ')} ORDER BY t.due_date ASC NULLS LAST`,
-      params
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/tasks', auth, async (req, res) => {
-  try {
-    const { personId, title, note, dueDate } = req.body;
-    const r = await pool.query(
-      'INSERT INTO tasks (person_id,agent_id,title,note,due_date) VALUES($1,$2,$3,$4,$5) RETURNING *',
-      [personId, req.agent.id, title, note||null, dueDate||null]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/tasks/:id', auth, async (req, res) => {
-  try {
-    const { title, note, dueDate, completed } = req.body;
-    const r = await pool.query(
-      `UPDATE tasks SET
-        title=COALESCE($1,title), note=COALESCE($2,note),
-        due_date=COALESCE($3,due_date), completed=COALESCE($4,completed),
-        completed_at=CASE WHEN $4=true THEN NOW() WHEN $4=false THEN NULL ELSE completed_at END
-       WHERE id=$5 RETURNING *`,
-      [title||null, note||null, dueDate||null, completed!=null?completed:null, req.params.id]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── SMART LISTS & CUSTOM FIELDS ──────────────────────────────────────────────
-app.get('/api/smart-lists', auth, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT * FROM smart_lists ORDER BY sort_order');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Bulk count endpoint — returns { listId: count } for all smart lists
-app.get('/api/smart-lists/counts', auth, async (req, res) => {
-  try {
-    const listsR = await pool.query('SELECT * FROM smart_lists ORDER BY sort_order');
-    const counts = {};
-    await Promise.all(listsR.rows.map(async list => {
-      try {
-        const f = list.filters || {};
-        if (f.type === 'upcoming_showings_72h') {
-          const r = await pool.query(`
-            SELECT COUNT(DISTINCT p.id)::int AS cnt
-            FROM people p
-            JOIN showings s ON s.connect_person_id = p.id::text
-              AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '72 hours'
-              AND s.status = 'Scheduled'
-          `);
-          counts[list.id] = r.rows[0]?.cnt || 0;
-        } else if (f.type === 'toured_no_followup') {
-          const days = parseInt(f.days_ago || 90);
-          const r = await pool.query(`
-            SELECT COUNT(DISTINCT p.id)::int AS cnt
-            FROM people p
-            JOIN showings s ON s.connect_person_id = p.id::text
-              AND s.showing_time < NOW()
-              AND s.showing_time > NOW() - INTERVAL '1 day' * $1
-              AND s.status = 'Completed'
-            JOIN LATERAL (
-              SELECT showing_time AS last_tour FROM showings
-              WHERE connect_person_id = p.id::text AND status = 'Completed' AND showing_time < NOW()
-              ORDER BY showing_time DESC LIMIT 1
-            ) s2 ON TRUE
-            LEFT JOIN activities a ON a.person_id::text = p.id::text
-            GROUP BY p.id, s2.last_tour
-            HAVING MAX(a.created_at) FILTER (
-              WHERE a.direction='outbound' AND a.created_at > s2.last_tour
-            ) IS NULL
-          `, [days]);
-          counts[list.id] = r.rows[0]?.cnt ?? r.rows.length;
-        } else {
-          let where = ['1=1']; let params = [];
-          if (f.stages?.length > 1) { params.push(f.stages); where.push(`stage=ANY($${params.length})`); }
-          else if (f.stage) { params.push(f.stage); where.push(`stage=$${params.length}`); }
-          if (f.tags?.length) { for (const t of f.tags) { params.push(t); where.push(`$${params.length}=ANY(tags)`); } }
-          const r = await pool.query(
-            `SELECT COUNT(*)::int AS cnt FROM people WHERE ${where.join(' AND ')}`, params
-          );
-          counts[list.id] = r.rows[0]?.cnt || 0;
-        }
-      } catch(e) { counts[list.id] = null; }
-    }));
-    res.json(counts);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/smart-lists', auth, async (req, res) => {
-  try {
-    const { name, filters = {} } = req.body;
-    const maxOrder = await pool.query('SELECT COALESCE(MAX(sort_order),0)+1 as n FROM smart_lists');
-    const r = await pool.query(
-      'INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) RETURNING *',
-      [name, JSON.stringify(filters), maxOrder.rows[0].n]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/smart-lists/:id', auth, async (req, res) => {
-  try {
-    const { name, filters } = req.body;
-    const r = await pool.query(
-      'UPDATE smart_lists SET name=COALESCE($1,name), filters=COALESCE($2::jsonb,filters) WHERE id=$3 RETURNING *',
-      [name||null, filters ? JSON.stringify(filters) : null, req.params.id]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/api/smart-lists/:id', auth, async (req, res) => {
-  try {
-    // Record deletion so default lists don't re-seed on next deploy
-    const delR = await pool.query('SELECT name FROM smart_lists WHERE id=$1', [req.params.id]);
-    await pool.query('DELETE FROM smart_lists WHERE id=$1', [req.params.id]);
-    if (delR.rows[0]?.name) {
-      await pool.query(
-        `INSERT INTO deleted_smart_lists (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
-        [delR.rows[0].name]
-      ).catch(()=>{});
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/custom-fields', auth, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT * FROM custom_fields ORDER BY sort_order');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── TWILIO HELPERS ───────────────────────────────────────────────────────────
-const initTwilio = () => {
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_API_KEY_SID) return null;
-  return require('twilio')(process.env.TWILIO_API_KEY_SID, process.env.TWILIO_API_KEY_SECRET, {
-    accountSid: process.env.TWILIO_ACCOUNT_SID
-  });
-};
-
-const initTwilioFull = () => {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  if (!sid) return null;
-  if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
-    return require('twilio')(process.env.TWILIO_API_KEY_SID, process.env.TWILIO_API_KEY_SECRET, { accountSid: sid });
-  }
-  if (process.env.TWILIO_AUTH_TOKEN) {
-    return require('twilio')(sid, process.env.TWILIO_AUTH_TOKEN);
-  }
-  return null;
-};
-
-const twilioBasicAuth = () => {
-  if (process.env.TWILIO_API_KEY_SID && process.env.TWILIO_API_KEY_SECRET) {
-    return Buffer.from(`${process.env.TWILIO_API_KEY_SID}:${process.env.TWILIO_API_KEY_SECRET}`).toString('base64');
-  }
-  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-    return Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
-  }
-  return null;
-};
-
-const initDeepgram = () => {
-  if (!process.env.DEEPGRAM_API_KEY) return null;
-  const { createClient } = require('@deepgram/sdk');
-  return createClient(process.env.DEEPGRAM_API_KEY);
-};
-
-const initGrok = () => {
-  if (!process.env.GROK_API_KEY) return null;
-  const OpenAI = require('openai');
-  return new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
-};
-
-// ─── TWILIO TOKEN ─────────────────────────────────────────────────────────────
-const buildTwilioToken = async (req, res) => {
-  try {
-    const missing = [];
-    if (!process.env.TWILIO_ACCOUNT_SID)    missing.push('TWILIO_ACCOUNT_SID');
-    if (!process.env.TWILIO_API_KEY_SID)    missing.push('TWILIO_API_KEY_SID');
-    if (!process.env.TWILIO_API_KEY_SECRET) missing.push('TWILIO_API_KEY_SECRET');
-    if (!process.env.TWILIO_TWIML_APP_SID)  missing.push('TWILIO_TWIML_APP_SID');
-    if (missing.length) {
-      console.error('[Twilio Token] Missing env vars:', missing.join(', '));
-      return res.status(503).json({ error: `Twilio not fully configured — missing: ${missing.join(', ')}` });
-    }
-    const { AccessToken } = require('twilio').jwt;
-    const { VoiceGrant } = AccessToken;
-    const token = new AccessToken(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_API_KEY_SID,
-      process.env.TWILIO_API_KEY_SECRET,
-      { identity: String(req.agent.id), ttl: 3600 }
-    );
-    token.addGrant(new VoiceGrant({
-      outgoingApplicationSid: process.env.TWILIO_TWIML_APP_SID,
-      incomingAllow: true
-    }));
-    const jwt = token.toJwt();
-    console.log(`[Twilio Token] Issued to agent ${req.agent.id} (${req.agent.name})`);
-    res.json({ token: jwt, identity: String(req.agent.id) });
-  } catch (e) {
-    console.error('[Twilio Token] Error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-};
-
-app.get('/api/twilio/token', auth, buildTwilioToken);
-app.post('/api/twilio/token', auth, buildTwilioToken);
-
-app.get('/api/twilio/lines', auth, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT * FROM call_lines WHERE is_active=true ORDER BY name');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── SMS SEND ─────────────────────────────────────────────────────────────────
-// FIX: type is now 'sms' (was 'text') to match inbox query and inbound webhook
-app.post('/api/twilio/sms', auth, async (req, res) => {
-  try {
-    const twilio = initTwilioFull() || initTwilio();
-    if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
-
-    const { to, body, personId, lineId } = req.body;
-    if (!to || !body) return res.status(400).json({ error: 'Missing to or body' });
-
-    let fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
-    if (lineId) {
-      const lineR = await pool.query('SELECT twilio_number FROM call_lines WHERE id=$1', [lineId]);
-      if (lineR.rows[0]) fromNumber = lineR.rows[0].twilio_number;
-    }
-
-    // FIX: type changed from 'text' to 'sms' so outbound messages appear in inbox
-    const actR = await pool.query(
-      `INSERT INTO activities (person_id, agent_id, type, body, direction, sms_status)
-       VALUES ($1, $2, 'sms', $3, 'outbound', 'sending') RETURNING *`,
-      [personId || null, req.agent.id, body]
-    );
-    const activityId = actR.rows[0].id;
-
-    const statusCallbackUrl = process.env.APP_URL
-      ? `${process.env.APP_URL}/api/twilio/sms-status?activityId=${activityId}`
-      : null;
-
-    try {
-      const msgParams = { body, from: fromNumber, to };
-      if (statusCallbackUrl) msgParams.statusCallback = statusCallbackUrl;
-      const message = await twilio.messages.create(msgParams);
-      await pool.query(
-        `UPDATE activities SET message_sid=$1, sms_status='sent' WHERE id=$2`,
-        [message.sid, activityId]
-      );
-      res.json({ ok: true, sid: message.sid, activityId });
-    } catch (twilioErr) {
-      await pool.query(
-        `UPDATE activities SET sms_status='failed', sms_error=$1 WHERE id=$2`,
-        [twilioErr.message, activityId]
-      );
-      res.status(500).json({ error: twilioErr.message, activityId });
-    }
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── SMS RETRY ────────────────────────────────────────────────────────────────
-app.post('/api/twilio/sms/retry/:activityId', auth, async (req, res) => {
-  try {
-    const twilio = initTwilioFull() || initTwilio();
-    if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
-
-    const actR = await pool.query('SELECT * FROM activities WHERE id=$1', [req.params.activityId]);
-    const act = actR.rows[0];
-    if (!act) return res.status(404).json({ error: 'Activity not found' });
-
-    const personR = act.person_id
-      ? await pool.query('SELECT phone FROM people WHERE id=$1', [act.person_id])
-      : null;
-    const to = personR?.rows[0]?.phone;
-    if (!to) return res.status(400).json({ error: 'No phone number on contact' });
-
-    const fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
-    await pool.query(`UPDATE activities SET sms_status='sending', sms_error=NULL WHERE id=$1`, [act.id]);
-
-    const statusCallbackUrl = process.env.APP_URL
-      ? `${process.env.APP_URL}/api/twilio/sms-status?activityId=${act.id}`
-      : null;
-
-    try {
-      const msgParams = { body: act.body, from: fromNumber, to };
-      if (statusCallbackUrl) msgParams.statusCallback = statusCallbackUrl;
-      const message = await twilio.messages.create(msgParams);
-      await pool.query(
-        `UPDATE activities SET message_sid=$1, sms_status='sent' WHERE id=$2`,
-        [message.sid, act.id]
-      );
-      res.json({ ok: true, sid: message.sid });
-    } catch (twilioErr) {
-      await pool.query(
-        `UPDATE activities SET sms_status='failed', sms_error=$1 WHERE id=$2`,
-        [twilioErr.message, act.id]
-      );
-      res.status(500).json({ error: twilioErr.message });
-    }
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── SMS STATUS WEBHOOK (Twilio delivery receipts) ────────────────────────────
-app.post('/api/twilio/sms-status', async (req, res) => {
-  res.sendStatus(200);
-  try {
-    const { activityId } = req.query;
-    const { MessageStatus, MessageSid, ErrorCode, ErrorMessage } = req.body;
-    if (!activityId) return;
-    const statusMap = {
-      queued: 'sending', accepted: 'sending', sending: 'sending',
-      sent: 'sent', delivered: 'delivered', undelivered: 'failed', failed: 'failed'
-    };
-    const mapped = statusMap[MessageStatus] || MessageStatus;
-    const errorMsg = ErrorCode ? `Error ${ErrorCode}: ${ErrorMessage || MessageStatus}` : null;
-    await pool.query(
-      `UPDATE activities SET sms_status=$1, sms_error=$2, message_sid=COALESCE($3, message_sid) WHERE id=$4`,
-      [mapped, errorMsg, MessageSid || null, activityId]
-    );
-  } catch (e) { console.error('SMS status webhook error:', e.message); }
-});
-
-// ─── SMS INBOUND WEBHOOK ──────────────────────────────────────────────────────
-// FIX: This route was missing entirely — inbound texts were silently dropped.
-// In Twilio Console → Phone Numbers → +14052562614 → Messaging → set:
-//   "A message comes in" → Webhook → https://connect.okcreal.com/api/twilio/sms-inbound → HTTP POST
-app.post('/api/twilio/sms-inbound', async (req, res) => {
-  res.sendStatus(200); // respond immediately so Twilio doesn't retry
-  try {
-    const { From, Body, To } = req.body;
-    if (!From || !Body) return;
-
-    const normalized = From.replace(/\D/g, '').slice(-10);
-
-    // Look up person — check person_phones first, then people.phone fallback
-    let person = null;
-    const ppR = await pool.query(
-      `SELECT p.* FROM people p
-       JOIN person_phones pp ON pp.person_id = p.id
-       WHERE RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $1
-         AND (pp.is_bad IS NULL OR pp.is_bad = false)
-       LIMIT 1`,
-      [normalized]
-    );
-    if (ppR.rows.length) {
-      person = ppR.rows[0];
-    } else {
-      const pR = await pool.query(
-        `SELECT * FROM people WHERE RIGHT(REGEXP_REPLACE(COALESCE(phone,''), '[^0-9]', '', 'g'), 10) = $1 LIMIT 1`,
-        [normalized]
-      );
-      person = pR.rows[0] || null;
-    }
-
-    // Save as type 'sms' inbound activity
-    const actR = await pool.query(
-      `INSERT INTO activities (person_id, type, body, direction, sms_status, created_at)
-       VALUES ($1, 'sms', $2, 'inbound', 'received', NOW()) RETURNING *`,
-      [person?.id || null, Body]
-    );
-
-    if (!person) {
-      console.log(`[SMS Inbound] Unmatched number ${From}: "${Body.substring(0, 80)}"`);
-    } else {
-      console.log(`[SMS Inbound] From ${person.first_name} ${person.last_name||''} (${From}): "${Body.substring(0, 80)}"`);
-    }
-
-    // Real-time push to all connected agents
-    broadcastToAll({
-      type: 'inbound_sms',
-      activityId: actR.rows[0].id,
-      personId: person?.id || null,
-      personName: person ? `${person.first_name} ${person.last_name || ''}`.trim() : From,
-      from: From,
-      body: Body,
-      createdAt: actR.rows[0].created_at
-    });
-
-    // Create notifications for all active agents
-    try {
-      const agentsR = await pool.query('SELECT id FROM agents WHERE is_active=true');
-      const preview = Body.length > 80 ? Body.substring(0, 80) + '…' : Body;
-      const senderName = person ? `${person.first_name} ${person.last_name||''}`.trim() : From;
-      for (const ag of agentsR.rows) {
-        await createNotification({
-          recipientId: ag.id,
-          type: 'inbound_sms',
-          personId: person?.id || null,
-          activityId: actR.rows[0].id,
-          body: `💬 ${senderName}: "${preview}"`
-        });
-      }
-    } catch(e) { console.warn('[SMS Notif]', e.message); }
-
-  } catch (e) {
-    console.error('[SMS Inbound] Error:', e.message);
-  }
-});
-
-// ─── VOICE TWIML ──────────────────────────────────────────────────────────────
-app.post('/api/twilio/voice', async (req, res) => {
-  try {
-    const VoiceResponse = require('twilio').twiml.VoiceResponse;
-    const response = new VoiceResponse();
-    const { To, CallerId, personId, lineId, agentId } = req.body;
-    const callSid = req.body.CallSid;
-    if (!To) { response.say('No destination number provided.'); return res.type('xml').send(response.toString()); }
-    const dial = response.dial({
-      callerId: CallerId || process.env.TWILIO_RESIDENT_NUMBER,
-      record: 'record-from-ringing-dual',
-      recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
-      recordingStatusCallbackMethod: 'POST'
-    });
-    dial.number({ statusCallbackEvent: 'initiated ringing answered completed', statusCallback: `${process.env.APP_URL}/api/twilio/status`, statusCallbackMethod: 'POST' }, To);
-    if (callSid) {
-      pool.query(
-        'INSERT INTO calls (twilio_call_sid,person_id,agent_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (twilio_call_sid) DO NOTHING',
-        [callSid, personId||null, agentId||null, lineId||null, 'outbound', 'initiated', CallerId||process.env.TWILIO_RESIDENT_NUMBER, To]
-      ).catch(e => console.error('Insert call error:', e.message));
-    }
-    res.type('xml').send(response.toString());
-  } catch (e) { console.error(e); res.status(500).send('<Response><Say>Error</Say></Response>'); }
-});
-
-app.post('/api/twilio/inbound', async (req, res) => {
-  try {
-    const VoiceResponse = require('twilio').twiml.VoiceResponse;
-    const response = new VoiceResponse();
-    const { To: toNum, From: fromNum, CallSid: callSid } = req.body;
-    const lineR = await pool.query('SELECT * FROM call_lines WHERE twilio_number=$1', [toNum]);
-    const line = lineR.rows[0];
-    const normalizedFrom = fromNum.replace(/\D/g,'');
-    let person = null;
-    const ppR = await pool.query(
-      `SELECT p.* FROM people p
-       JOIN person_phones pp ON pp.person_id = p.id
-       WHERE regexp_replace(pp.phone, '\\D', '', 'g') = $1
-         AND (pp.is_bad IS NULL OR pp.is_bad=false)
-       LIMIT 1`,
-      [normalizedFrom]
-    );
-    if (ppR.rows.length) {
-      person = ppR.rows[0];
-    } else {
-      const pR = await pool.query(`SELECT * FROM people WHERE regexp_replace(phone,'\\D','','g')=$1 LIMIT 1`, [normalizedFrom]);
-      person = pR.rows[0] || null;
-    }
-    const callInsert = await pool.query(
-      'INSERT INTO calls (twilio_call_sid,person_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
-      [callSid, person?.id||null, line?.id||null, 'inbound', 'ringing', fromNum, toNum]
-    );
-    let agents = [];
-    if (line) {
-      const aR = await pool.query('SELECT a.* FROM agents a JOIN line_agents la ON la.agent_id::text=a.id::text WHERE la.line_id=$1 AND a.is_active=true', [line.id]);
-      agents = aR.rows;
-    }
-    if (agents.length === 0) {
-      const aR = await pool.query('SELECT * FROM agents WHERE is_active=true');
-      agents = aR.rows;
-    }
-    if (agents.length === 0) {
-      response.say('You have reached OKCREAL. Please leave a message after the beep.');
-      response.record({ maxLength: 120, recordingStatusCallback: `${process.env.APP_URL}/api/twilio/voicemail?callId=${callInsert.rows[0].id}` });
-    } else {
-      const dial = response.dial({
-        record: 'record-from-ringing-dual',
-        recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
-        recordingStatusCallbackMethod: 'POST',
-        action: `${process.env.APP_URL}/api/twilio/inbound-complete?callSid=${callSid}`,
-        method: 'POST',
-        timeout: 30
-      });
-      agents.forEach(a => dial.client(a.id));
-    }
-    res.type('xml').send(response.toString());
-  } catch (e) { console.error(e); res.status(500).send('<Response><Say>Error connecting</Say></Response>'); }
-});
-
-app.post('/api/twilio/status', async (req, res) => {
-  try {
-    const { CallSid, CallStatus, CallDuration } = req.body;
-    if (['completed', 'failed', 'busy', 'no-answer'].includes(CallStatus)) {
-      const r = await pool.query(
-        'UPDATE calls SET status=$1,duration_seconds=$2,ended_at=NOW() WHERE twilio_call_sid=$3 RETURNING *',
-        [CallStatus, parseInt(CallDuration)||0, CallSid]
-      );
-      const call = r.rows[0];
-      if (call) {
-        pool.query(
-          'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7)',
-          [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', call.duration_seconds, call.direction||'outbound']
-        ).catch(() => {});
-      }
-    }
-    res.sendStatus(200);
-  } catch (e) { console.error(e); res.sendStatus(200); }
-});
-
-app.post('/api/twilio/inbound-complete', async (req, res) => {
-  res.type('xml').send('<Response></Response>');
-  try {
-    const { callSid } = req.query;
-    const { DialCallDuration, DialCallStatus } = req.body;
-    const duration = parseInt(DialCallDuration) || 0;
-    const status = DialCallStatus || 'completed';
-    const r = await pool.query(
-      'UPDATE calls SET status=$1,duration_seconds=$2,ended_at=NOW() WHERE twilio_call_sid=$3 RETURNING *',
-      [status, duration, callSid]
-    );
-    const call = r.rows[0];
-    if (call && call.person_id) {
-      await pool.query(
-        'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
-        [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', duration, 'inbound']
-      ).catch(() => {});
-    }
-  } catch (e) { console.error('inbound-complete error:', e.message); }
-});
-
-app.post('/api/twilio/recording', async (req, res) => {
-  res.sendStatus(200);
-  try {
-    const { CallSid, ParentCallSid, RecordingUrl, RecordingSid } = req.body;
-    console.log('Recording webhook:', { CallSid, ParentCallSid, RecordingUrl: RecordingUrl?.substring(0,60), RecordingSid });
-    let callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [CallSid]);
-    if (!callR.rows.length && ParentCallSid) {
-      callR = await pool.query('SELECT * FROM calls WHERE twilio_call_sid=$1', [ParentCallSid]);
-    }
-    const call = callR.rows[0];
-    if (!call) {
-      console.log('Recording webhook: no call found for SID', CallSid, 'or parent', ParentCallSid);
-      return;
-    }
-    const recUrl = `${RecordingUrl}.mp3`;
-    await pool.query('UPDATE calls SET recording_url=$1 WHERE id=$2', [recUrl, call.id]);
-    const existingAct = await pool.query('SELECT id FROM activities WHERE call_id=$1 LIMIT 1', [call.id]);
-    if (existingAct.rows.length === 0) {
-      await pool.query(
-        'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
-        [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', call.duration_seconds||0, call.direction||'outbound']
-      ).catch(()=>{});
-    }
-    let transcript = '', summary = '';
-    const dg = initDeepgram();
-    if (dg) {
-      try {
-        const audioBuffer = await new Promise((resolve, reject) => {
-          const https = require('https');
-          const url   = new URL(recUrl);
-          const opts  = {
-            hostname: url.hostname,
-            path:     url.pathname + url.search,
-            method:   'GET',
-            headers:  { Authorization: 'Basic ' + twilioBasicAuth() }
-          };
-          const req = https.request(opts, (res) => {
-            if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch failed: ${res.statusCode}`)); }
-            const chunks = [];
-            res.on('data', c => chunks.push(c));
-            res.on('end',  () => resolve(Buffer.concat(chunks)));
-            res.on('error', reject);
-          });
-          req.on('error', reject);
-          req.end();
-        });
-        console.log(`Deepgram: fetched ${audioBuffer.length} bytes, sending to transcription`);
-        const { result } = await dg.listen.prerecorded.transcribeFile(
-          audioBuffer,
-          { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true, mimetype: 'audio/mpeg' }
-        );
-        const utterances = result?.results?.utterances;
-        if (utterances?.length) {
-          transcript = utterances.map(u => {
-            const ts = `[${Math.floor(u.start/60)}:${String(Math.floor(u.start%60)).padStart(2,'0')}]`;
-            return `${ts} ${u.channel === 0 ? 'Agent' : 'Caller'}: ${u.transcript}`;
-          }).join('\n');
-        } else {
-          transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
-        }
-        console.log(`Deepgram: transcript length ${transcript.length}`);
-      } catch (e) { console.error('Deepgram error:', e.message, e.stack?.split('\n')[1] || ''); }
-    } else {
-      console.warn('Deepgram: no API key set, skipping transcription');
-    }
-    const grok = initGrok();
-    if (grok && transcript.length > 20) {
-      try {
-        const personR = call.person_id ? await pool.query('SELECT first_name,last_name FROM people WHERE id=$1', [call.person_id]) : null;
-        const agentR = call.agent_id ? await pool.query('SELECT name FROM agents WHERE id::text=$1', [call.agent_id]) : null;
-        const contactName = personR?.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'Unknown';
-        const agentName = agentR?.rows[0]?.name || 'Agent';
-        const completion = await grok.chat.completions.create({
-          model: 'grok-3', max_tokens: 200,
-          messages: [
-            { role: 'system', content: 'You summarize property management calls in 2-3 sentences. Focus on: payment commitments, maintenance issues, lease inquiries, delinquency resolutions, action items.' },
-            { role: 'user', content: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} call. Agent: ${agentName}. Contact: ${contactName}.\n\nTranscript:\n${transcript}` }
-          ]
-        });
-        summary = completion.choices[0]?.message?.content || '';
-      } catch (e) { console.error('Grok error:', e.message); }
-    }
-    await pool.query('UPDATE calls SET transcript=$1,summary=$2 WHERE id=$3', [transcript, summary, call.id]);
-    const activityBody = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. No transcript available.');
-    await pool.query('UPDATE activities SET body=$1, recording_url=$2 WHERE call_id=$3', [activityBody, recUrl, call.id]).catch((e) => { console.error('Activity update error:', e.message); });
-  } catch (e) { console.error('Recording webhook error:', e.message); }
-});
-
-app.post('/api/twilio/recording/retry/:callId', auth, async (req, res) => {
-  try {
-    const callR = await pool.query('SELECT * FROM calls WHERE id=$1', [req.params.callId]);
-    const call = callR.rows[0];
-    if (!call?.recording_url) return res.status(404).json({ error: 'No recording found' });
-    res.json({ ok: true, message: 'Retrying transcription...' });
-    (async () => {
-      let transcript = '', summary = '';
-      const dg = initDeepgram();
-      if (dg) {
-        try {
-          const audioBuffer = await new Promise((resolve, reject) => {
-            const https = require('https');
-            const url   = new URL(call.recording_url);
-            const opts  = {
-              hostname: url.hostname,
-              path:     url.pathname + url.search,
-              method:   'GET',
-              headers:  { Authorization: 'Basic ' + twilioBasicAuth() }
-            };
-            const req = https.request(opts, (res) => {
-              if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch failed: ${res.statusCode}`)); }
-              const chunks = [];
-              res.on('data', c => chunks.push(c));
-              res.on('end',  () => resolve(Buffer.concat(chunks)));
-              res.on('error', reject);
-            });
-            req.on('error', reject);
-            req.end();
-          });
-          console.log(`Retry Deepgram: fetched ${audioBuffer.length} bytes`);
-          const { result } = await dg.listen.prerecorded.transcribeFile(
-            audioBuffer,
-            { model: 'nova-2', smart_format: true, diarize: true, punctuate: true, utterances: true, mimetype: 'audio/mpeg' }
-          );
-          const utterances = result?.results?.utterances;
-          if (utterances?.length) {
-            transcript = utterances.map(u => {
-              const ts = `[${Math.floor(u.start/60)}:${String(Math.floor(u.start%60)).padStart(2,'0')}]`;
-              return `${ts} ${u.channel === 0 ? 'Agent' : 'Caller'}: ${u.transcript}`;
-            }).join('\n');
-          } else {
-            transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
-          }
-        } catch(e) { console.error('Retry Deepgram error:', e.message, e.stack?.split('\n')[1] || ''); }
-      }
-      const grok = initGrok();
-      if (grok && transcript.length > 20) {
-        try {
-          const personR = call.person_id ? await pool.query('SELECT first_name,last_name FROM people WHERE id=$1', [call.person_id]) : null;
-          const agentR = call.agent_id ? await pool.query('SELECT name FROM agents WHERE id::text=$1', [call.agent_id]) : null;
-          const contactName = personR?.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'Unknown';
-          const agentName = agentR?.rows[0]?.name || 'Agent';
-          const completion = await grok.chat.completions.create({
-            model: 'grok-3', max_tokens: 200,
-            messages: [
-              { role: 'system', content: 'You summarize property management calls in 2-3 sentences. Focus on: payment commitments, maintenance issues, lease inquiries, delinquency resolutions, action items.' },
-              { role: 'user', content: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} call. Agent: ${agentName}. Contact: ${contactName}.\n\nTranscript:\n${transcript}` }
-            ]
-          });
-          summary = completion.choices[0]?.message?.content || '';
-        } catch(e) { console.error('Retry Grok error:', e.message); }
-      }
-      await pool.query('UPDATE calls SET transcript=$1,summary=$2 WHERE id=$3', [transcript, summary, call.id]);
-      const body = summary || (transcript ? transcript.substring(0, 300) : 'Call recorded. Transcript unavailable.');
-      await pool.query('UPDATE activities SET body=$1 WHERE call_id=$2', [body, call.id]).catch(() => {});
-    })();
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/calls/:callId/recording', async (req, res) => {
-  try {
-    const headerToken = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null;
-    const queryToken  = req.query.token || null;
-    const token = headerToken || queryToken;
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
-    let agentId;
-    try { agentId = jwt.verify(token, JWT_SECRET).id; } catch(e) { return res.status(401).json({ error: 'Unauthorized' }); }
-    const agentR = await pool.query('SELECT id FROM agents WHERE id=$1 AND is_active=true', [agentId]);
-    if (!agentR.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
-    const callR = await pool.query(
-      `SELECT COALESCE(c.recording_url, a.recording_url) AS recording_url
-       FROM calls c
-       LEFT JOIN activities a ON a.call_id::text = c.id::text
-       WHERE c.id::text = $1
-       LIMIT 1`,
-      [req.params.callId]
-    );
-    let recUrl = callR.rows[0]?.recording_url;
-    if (!recUrl) {
-      const actR = await pool.query(
-        `SELECT COALESCE(a.recording_url, c.recording_url) AS recording_url
-         FROM activities a
-         LEFT JOIN calls c ON c.id::text = a.call_id::text
-         WHERE a.id::text = $1 OR a.call_id::text = $1
-         LIMIT 1`,
-        [req.params.callId]
-      );
-      recUrl = actR.rows[0]?.recording_url;
-    }
-    if (!recUrl) return res.status(404).json({ error: 'No recording found for this call' });
-    const auth = twilioBasicAuth();
-    if (!auth) return res.status(500).json({ error: 'Twilio credentials not configured' });
-    const https = require('https');
-    const url   = new URL(recUrl);
-    const opts  = {
-      hostname: url.hostname,
-      path:     url.pathname + url.search,
-      method:   'GET',
-      headers:  { Authorization: 'Basic ' + auth }
-    };
-    const upstream = await new Promise((resolve, reject) => {
-      const r = https.request(opts, resolve);
-      r.on('error', reject);
-      r.end();
-    });
-    if (upstream.statusCode !== 200) {
-      upstream.resume();
-      return res.status(502).json({ error: `Twilio returned ${upstream.statusCode}` });
-    }
-    res.set('Content-Type', upstream.headers['content-type'] || 'audio/mpeg');
-    res.set('Cache-Control', 'private, max-age=3600');
-    upstream.pipe(res);
-  } catch(e) { console.error('Recording proxy error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/twilio/voicemail', async (req, res) => {
-  res.sendStatus(200);
-  try {
-    const { callId } = req.query;
-    const { RecordingUrl } = req.body;
-    if (!callId) return;
-    await pool.query('UPDATE calls SET status=$1,recording_url=$2 WHERE id=$3', ['voicemail', `${RecordingUrl}.mp3`, callId]);
-    const callR = await pool.query('SELECT * FROM calls WHERE id=$1', [callId]);
-    const call = callR.rows[0];
-    if (call) {
-      pool.query(
-        'INSERT INTO activities (person_id,call_id,type,body,recording_url) VALUES($1,$2,$3,$4,$5)',
-        [call.person_id, call.id, 'voicemail', 'Voicemail received', `${RecordingUrl}.mp3`]
-      ).catch(() => {});
-    }
-  } catch (e) { console.error('Voicemail error:', e.message); }
-});
-
-// ─── ADMIN ────────────────────────────────────────────────────────────────────
-app.get('/api/config/maps-key', auth, (req, res) => {
-  res.json({ key: process.env.GOOGLE_MAPS_API_KEY || null });
-});
-
-app.get('/api/admin/agents', auth, adminOnly, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,is_active,created_at FROM agents ORDER BY name');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── FUB IMPORT ────────────────────────────────────────────────────────────────
-const uploadMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-
-function fubParseCSV(raw) {
-  const cleaned = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const rows2D = [[]];
-  let cur = '', inQ = false;
-  for (let i = 0; i < cleaned.length; i++) {
-    const ch = cleaned[i];
-    if (ch === '"') {
-      if (!inQ) { inQ = true; continue; }
-      if (cleaned[i+1] === '"') { cur += '"'; i++; continue; }
-      inQ = false; continue;
-    }
-    if (!inQ && ch === ',')  { rows2D[rows2D.length-1].push(cur); cur = ''; continue; }
-    if (!inQ && ch === '\n') { rows2D[rows2D.length-1].push(cur); cur = ''; rows2D.push([]); continue; }
-    cur += ch;
-  }
-  rows2D[rows2D.length-1].push(cur);
-  const headers = rows2D[0].map(h => h.trim());
-  const result = [];
-  for (let r = 1; r < rows2D.length; r++) {
-    const vals = rows2D[r];
-    if (vals.every(v => !v.trim())) continue;
-    const row = {};
-    headers.forEach((h, j) => { row[h] = (vals[j] || '').trim(); });
-    result.push(row);
-  }
-  return result;
-}
-
-function fubMapStage(s) {
-  const v = (s||'').toLowerCase().trim();
-  if (!v) return 'Lead';
-  if (['hot','warm','cold','nurture','active','rental prospect','prospect','new',
-       'uncontacted','attempted contact','pre-approval','showing scheduled'].includes(v)) return 'Lead';
-  if (['past client','past tenant','past buyer','past seller','closed','purchased','sold'].includes(v)) return 'Past Tenant';
-  if (['owner','property owner','landlord'].includes(v)) return 'Property Owner';
-  if (['resident','tenant','active tenant','current tenant'].includes(v)) return 'Resident';
-  if (['contractor','vendor','maintenance'].includes(v)) return 'Contractor';
-  if (['caseworker','case worker','social worker','hap','section 8'].includes(v)) return 'Caseworker';
-  return 'Lead';
-}
-
-function fubIsBlocked(s) {
-  return ['trash','do not contact','dnc','spam','blocked'].includes((s||'').toLowerCase().trim());
-}
-
-function fubNormalizePhone(ph) {
-  if (!ph) return null;
-  const d = ph.replace(/\D/g,'');
-  if (d.length===10) return '+1'+d;
-  if (d.length===11 && d[0]==='1') return '+'+d;
-  return null;
-}
-
-function fubParseDOB(val) {
-  if (!val) return null;
-  const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-  return null;
-}
-
-app.post('/api/import/fub', auth, uploadMemory.single('csv'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded' });
-    const commit = req.body.commit === '1';
-    const raw = req.file.buffer.toString('utf8');
-    const csvRows = fubParseCSV(raw);
-    const trunc = (s, n=1000) => s ? String(s).substring(0, n) : s;
-    const contacts = csvRows.map(row => ({
-      first_name:  trunc(row['First Name'] || (row['Name']||'').split(' ')[0] || '', 200),
-      last_name:   trunc(row['Last Name']  || (row['Name']||'').split(' ').slice(1).join(' ') || '', 200),
-      fub_id:      trunc(row['ID'] || null, 100),
-      email:       trunc((row['Email 1'] || row['Email'] || '').toLowerCase() || null, 300),
-      phone:       fubNormalizePhone(row['Phone 1'] || row['Phone']),
-      phone_type:  trunc(row['Phone 1 - Type'] || 'mobile', 50),
-      fub_stage:   trunc(row['Stage'] || '', 100),
-      stage:       fubMapStage(row['Stage']),
-      is_blocked:  fubIsBlocked(row['Stage']),
-      source:      trunc(row['Lead Source'] || null, 200),
-      tags:        row['Tags'] ? row['Tags'].split(',').map(t=>t.trim()).filter(Boolean) : [],
-      notes:       [row['Notes'],row['Description'],row['Background']].filter(Boolean).join('\n\n') || null,
-      dob:         fubParseDOB(row['DOB:'] || row['Birthday'] || row['DOB']),
-      address:     trunc(row['Property Address'] || row['Address'] || null, 300),
-      city:        trunc(row['Property City'] || row['City'] || null, 100),
-      state:       trunc(row['Property State'] || row['State'] || null, 50),
-      zip:         trunc(row['Property Postal Code'] || row['Zip'] || null, 20),
-    })).filter(c => c.first_name);
-    const existingByFubId = new Map();
-    const existingByEmail = new Map();
-    const existingByPhone = new Map();
-    const { rows: existing } = await pool.query(`
-      SELECT p.id, p.fub_id, p.email, p.phone AS main_phone,
-             array_agg(pp.phone) FILTER (WHERE pp.phone IS NOT NULL) AS phones
-      FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
-      GROUP BY p.id
-    `);
-    const normalizeForDedup = ph => {
-      if (!ph) return null;
-      const d = String(ph).replace(/\D/g,'');
-      if (d.length === 10) return '+1' + d;
-      if (d.length === 11 && d[0] === '1') return '+' + d;
-      return d || null;
-    };
-    for (const p of existing) {
-      if (p.fub_id) existingByFubId.set(String(p.fub_id).trim(), p.id);
-      if (p.email)  existingByEmail.set(p.email.toLowerCase().trim(), p.id);
-      const allPhones = [...(p.phones || [])];
-      if (p.main_phone) allPhones.push(p.main_phone);
-      for (const ph of allPhones) {
-        const norm = normalizeForDedup(ph);
-        if (norm) existingByPhone.set(norm, p.id);
-      }
-    }
-    let inserted = 0, updated = 0, skipped = 0, blocked = 0;
-    const preview = [];
-    for (const c of contacts) {
-      if (!c.first_name) { skipped++; continue; }
-      let existingId = null;
-      if (c.fub_id && existingByFubId.has(c.fub_id))        existingId = existingByFubId.get(c.fub_id);
-      else if (c.email && existingByEmail.has(c.email))      existingId = existingByEmail.get(c.email);
-      else if (c.phone && existingByPhone.has(c.phone))      existingId = existingByPhone.get(c.phone);
-      const name = `${c.first_name} ${c.last_name||''}`.trim();
-      if (c.is_blocked) blocked++;
-      if (existingId) {
-        updated++;
-        preview.push({ action:'update', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
-        if (commit) {
-          await pool.query(`UPDATE people SET fub_id=COALESCE(fub_id,$1), dob=COALESCE(dob,$2), source=COALESCE(source,$3),
-            notes=COALESCE(NULLIF(notes,''),$4), is_blocked=is_blocked OR $5, updated_at=NOW() WHERE id=$6`,
-            [c.fub_id, c.dob||null, c.source||null, c.notes||null, c.is_blocked, existingId]);
-          if (c.phone) await pool.query(
-            `INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`,
-            [existingId, c.phone, c.phone_type||'mobile']);
-        }
-      } else {
-        inserted++;
-        preview.push({ action:'insert', name, stage:c.stage, phone:c.phone, email:c.email, fub_stage:c.fub_stage, is_blocked:c.is_blocked });
-        if (commit) {
-          const { rows:[np] } = await pool.query(`
-            INSERT INTO people (first_name,last_name,email,stage,source,tags,notes,dob,fub_id,is_blocked,address,city,state,zip)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-            [c.first_name, c.last_name||null, c.email||null, c.stage, c.source||null,
-             c.tags||[], c.notes||null, c.dob||null, c.fub_id||null, c.is_blocked||false,
-             c.address||null, c.city||null, c.state||null, c.zip||null]);
-          if (c.phone && np) await pool.query(
-            `INSERT INTO person_phones (person_id,phone,label,is_primary) VALUES ($1,$2,$3,true) ON CONFLICT DO NOTHING`,
-            [np.id, c.phone, c.phone_type||'mobile']);
-        }
-      }
-    }
-    res.json({ inserted, updated, skipped, blocked, commit, total: contacts.length, preview: preview.slice(0, 200) });
-  } catch(e) { console.error('FUB import error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/agents', auth, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,is_active,created_at FROM agents ORDER BY name');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/call-lines', auth, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT * FROM call_lines WHERE is_active=true ORDER BY name');
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/admin/agents', auth, adminOnly, async (req, res) => {
-  try {
-    const { name, email, password, role, phone, avatarColor } = req.body;
-    const hash = await bcrypt.hash(password, 10);
-    const r = await pool.query(
-      'INSERT INTO agents (name,email,password_hash,role,phone,avatar_color) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,name,email,role,phone,avatar_color,is_active',
-      [name, email, hash, role||'agent', phone||null, avatarColor||'#6366f1']
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/admin/agents/:id', auth, adminOnly, async (req, res) => {
-  try {
-    const { name, email, role, phone, isActive, avatarColor, password } = req.body;
-    let hash;
-    if (password) hash = await bcrypt.hash(password, 10);
-    const r = await pool.query(
-      `UPDATE agents SET name=$1,email=$2,role=$3,phone=$4,is_active=$5,avatar_color=$6${hash?',password_hash=$8':''} WHERE id=$7 RETURNING id,name,email,role,phone,avatar_color,is_active`,
-      hash ? [name,email,role,phone,isActive,avatarColor,req.params.id,hash] : [name,email,role,phone,isActive,avatarColor,req.params.id]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/admin/lines', auth, adminOnly, async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT cl.*, COALESCE(json_agg(json_build_object('id',a.id,'name',a.name)) FILTER (WHERE a.id IS NOT NULL),'[]') as agents
-      FROM call_lines cl
-      LEFT JOIN line_agents la ON la.line_id=cl.id
-      LEFT JOIN agents a ON a.id::text=la.agent_id::text
-      GROUP BY cl.id ORDER BY cl.name`);
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/admin/lines', auth, adminOnly, async (req, res) => {
-  try {
-    const { name, twilioNumber, description } = req.body;
-    const r = await pool.query('INSERT INTO call_lines (name,twilio_number,description) VALUES($1,$2,$3) RETURNING *', [name, twilioNumber, description]);
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/admin/lines/:id/agents', auth, adminOnly, async (req, res) => {
-  try {
-    const { agentIds } = req.body;
-    await pool.query('DELETE FROM line_agents WHERE line_id=$1', [req.params.id]);
-    if (agentIds?.length) {
-      for (const aid of agentIds) {
-        await pool.query('INSERT INTO line_agents (line_id,agent_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [req.params.id, aid]);
-      }
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
-  try {
-    const stages = await pool.query('SELECT stage, COUNT(*) FROM people GROUP BY stage');
-    const tasks = await pool.query('SELECT COUNT(*) FROM tasks WHERE completed=false');
-    res.json({ stages: stages.rows, openTasks: tasks.rows[0].count });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── DB INIT ──────────────────────────────────────────────────────────────────
-async function initDB() {
-  const run = async (sql, label) => {
-    try { await pool.query(sql); }
-    catch (e) { console.error(`[DB] ${label}: ${e.message}`); }
-  };
-
-  await run(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`, 'uuid-ossp');
-  await run(`CREATE TABLE IF NOT EXISTS agents (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT DEFAULT 'agent', phone TEXT, avatar_color TEXT DEFAULT '#6366f1', is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, 'create agents');
-  await run(`CREATE TABLE IF NOT EXISTS people (id SERIAL PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT, phone TEXT, email TEXT, stage TEXT DEFAULT 'lead', source TEXT, background TEXT, tags TEXT[] DEFAULT '{}', custom_fields JSONB DEFAULT '{}', assigned_to TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, 'create people');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS background TEXT`, 'people.background');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`, 'people.tags');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'`, 'people.custom_fields');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`, 'people.updated_at');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS assigned_to TEXT`, 'people.assigned_to');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS source TEXT`, 'people.source');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'lead'`, 'people.stage');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS unifi_person_id TEXT`, 'people.unifi_person_id');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS id_photo_b64 TEXT`, 'people.id_photo_b64');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS id_photo_name TEXT`, 'people.id_photo_name');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS security_notes TEXT`, 'people.security_notes');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS criminal_history TEXT`, 'people.criminal_history');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dv_victim BOOLEAN DEFAULT FALSE`, 'people.dv_victim');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dv_notes TEXT`, 'people.dv_notes');
-  await run(`CREATE TABLE IF NOT EXISTS security_events (id SERIAL PRIMARY KEY, event_id TEXT UNIQUE, unifi_person_id TEXT, camera_mac TEXT, camera_name TEXT, site TEXT, event_link TEXT, thumbnail_b64 TEXT, triggered_at TIMESTAMPTZ DEFAULT NOW(), alarm_name TEXT, raw_payload TEXT, dismissed BOOLEAN DEFAULT FALSE)`, 'create security_events');
-  await run(`CREATE TABLE IF NOT EXISTS protect_cameras (id SERIAL PRIMARY KEY, mac TEXT UNIQUE NOT NULL, name TEXT NOT NULL, site TEXT DEFAULT 'Main')`, 'create protect_cameras');
-  const knownCams = [['847848B2C827', 'Marlin Rear Overwatch', 'Marlin']];
-  for (const [mac, name, site] of knownCams) {
-    await pool.query(`INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING`, [mac, name, site]).catch(()=>{});
-  }
-  await run(`UPDATE people SET stage='Resident' WHERE stage='Active Tenant'`, 'migrate Active Tenant->Resident');
-  await run(`UPDATE people SET stage='Contractor' WHERE stage='Vendor'`, 'migrate Vendor->Contractor');
-  if (process.env.PROTECT_CLOUD_BASE_URL) {
-    await pool.query(`UPDATE security_events SET event_link = $1 || '/protect/events/event/' || event_id WHERE event_id IS NOT NULL AND (event_link IS NULL OR event_link NOT LIKE '%/event/%')`, [process.env.PROTECT_CLOUD_BASE_URL]).catch(e => console.warn('Fix event_links:', e.message));
-  }
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS address TEXT`, 'people.address');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS city TEXT`, 'people.city');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS state TEXT`, 'people.state');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS zip TEXT`, 'people.zip');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS fub_id TEXT`, 'people.fub_id');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dob DATE`, 'people.dob');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE`, 'people.is_blocked');
-  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS notes TEXT`, 'people.notes');
-  await run(`ALTER TABLE people ALTER COLUMN first_name TYPE TEXT`, 'people.first_name->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN last_name TYPE TEXT`, 'people.last_name->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN phone TYPE TEXT`, 'people.phone->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN email TYPE TEXT`, 'people.email->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN stage TYPE TEXT`, 'people.stage->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN source TYPE TEXT`, 'people.source->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN background TYPE TEXT`, 'people.background->TEXT');
-  await run(`ALTER TABLE people ALTER COLUMN assigned_to TYPE TEXT`, 'people.assigned_to->TEXT');
-  await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'calls.inbox_cleared');
-  await run(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`, 'calls.created_at');
-  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS inbox_cleared BOOLEAN DEFAULT FALSE`, 'activities.inbox_cleared');
-  await run(`CREATE TABLE IF NOT EXISTS person_phones (id SERIAL PRIMARY KEY, person_id INTEGER REFERENCES people(id) ON DELETE CASCADE, phone TEXT NOT NULL, label TEXT DEFAULT 'mobile', is_primary BOOLEAN DEFAULT FALSE, is_bad BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create person_phones');
-  await run(`CREATE INDEX IF NOT EXISTS idx_person_phones_person ON person_phones(person_id)`, 'idx_person_phones');
-  await run(`CREATE TABLE IF NOT EXISTS person_relationships (id SERIAL PRIMARY KEY, person_id_a INTEGER REFERENCES people(id) ON DELETE CASCADE, person_id_b INTEGER REFERENCES people(id) ON DELETE CASCADE, label TEXT DEFAULT 'household', created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(person_id_a, person_id_b))`, 'create person_relationships');
-  await run(`CREATE INDEX IF NOT EXISTS idx_rels_a ON person_relationships(person_id_a)`, 'idx_rels_a');
-  await run(`CREATE INDEX IF NOT EXISTS idx_rels_b ON person_relationships(person_id_b)`, 'idx_rels_b');
-  await run(`CREATE TABLE IF NOT EXISTS call_lines (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL, twilio_number TEXT NOT NULL, description TEXT, is_active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create call_lines');
-  await run(`CREATE TABLE IF NOT EXISTS line_agents (line_id TEXT NOT NULL, agent_id TEXT NOT NULL, PRIMARY KEY (line_id, agent_id))`, 'create line_agents');
-  await run(`CREATE TABLE IF NOT EXISTS smart_lists (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name TEXT NOT NULL UNIQUE, filters JSONB DEFAULT '{}', sort_order INTEGER DEFAULT 0)`, 'create smart_lists');
-  await pool.query(`ALTER TABLE smart_lists ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0`).catch(()=>{});
-  await pool.query(`DELETE FROM smart_lists WHERE id NOT IN (SELECT MIN(id) FROM smart_lists GROUP BY name)`).catch(()=>{});
-  await run(`CREATE UNIQUE INDEX IF NOT EXISTS smart_lists_name_idx ON smart_lists(name)`, 'smart_lists name index');
-  await run(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)`, 'create app_settings');
-  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_b64 TEXT`).catch(()=>{});
-  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT`).catch(()=>{});
-  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS gmail_email TEXT`).catch(()=>{});
-  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT 'online' CHECK (availability IN ('online','offline','oncall'))`).catch(()=>{});
-  await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS phone_personal TEXT`).catch(()=>{});
-  await pool.query(`INSERT INTO app_settings(key,value) VALUES('oncall_agent_id','') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
-  await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_start','18:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
-  await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_end','08:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
-  await pool.query(`INSERT INTO app_settings(key,value) VALUES('emergency_iVR_enabled','true') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
-  await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
-  await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS email_subject TEXT`).catch(()=>{});
-  await run(`CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), recipient_id TEXT NOT NULL, sender_id TEXT, type TEXT NOT NULL DEFAULT 'mention', person_id TEXT, activity_id TEXT, body TEXT, is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create notifications');
-  await pool.query(`CREATE INDEX IF NOT EXISTS notif_recipient_idx ON notifications(recipient_id, is_read, created_at DESC)`).catch(()=>{});
-  await run(`CREATE TABLE IF NOT EXISTS custom_fields (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, field_type TEXT DEFAULT 'text', options TEXT[], sort_order INTEGER DEFAULT 0)`, 'create custom_fields');
-  await run(`CREATE TABLE IF NOT EXISTS calls (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), twilio_call_sid TEXT UNIQUE, person_id TEXT, agent_id TEXT, line_id TEXT, direction TEXT, status TEXT, duration_seconds INTEGER, from_number TEXT, to_number TEXT, recording_url TEXT, recording_sid TEXT, transcript TEXT, summary TEXT, started_at TIMESTAMPTZ DEFAULT NOW(), ended_at TIMESTAMPTZ)`, 'create calls');
-  await run(`CREATE TABLE IF NOT EXISTS activities (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, call_id TEXT, type TEXT NOT NULL DEFAULT 'note', body TEXT, duration INTEGER, recording_url TEXT, direction TEXT DEFAULT 'outbound', sms_status TEXT DEFAULT NULL, sms_error TEXT DEFAULT NULL, message_sid TEXT DEFAULT NULL, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create activities');
-  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS direction TEXT DEFAULT 'outbound'`, 'activities.direction');
-  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT NULL`, 'activities.sms_status');
-  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS sms_error TEXT DEFAULT NULL`, 'activities.sms_error');
-  await run(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS message_sid TEXT DEFAULT NULL`, 'activities.message_sid');
-  await run(`CREATE TABLE IF NOT EXISTS showings (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    property TEXT NOT NULL,
-    unit TEXT,
-    guest_name TEXT,
-    email TEXT,
-    phone TEXT,
-    showing_time TIMESTAMPTZ,
-    status TEXT,
-    showing_type TEXT,
-    assigned_user TEXT,
-    description TEXT,
-    last_activity_date TIMESTAMPTZ,
-    last_activity_type TEXT,
-    upload_batch TEXT,
-    feedback_sent BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    connect_person_id TEXT,
-    UNIQUE(property, guest_name, showing_time)
-  )`, 'create showings');
-  await run(`ALTER TABLE showings ADD COLUMN IF NOT EXISTS connect_person_id TEXT`, 'showings.connect_person_id');
-  // Add feedback_sent column if upgrading existing table
-  await run(`ALTER TABLE showings ADD COLUMN IF NOT EXISTS feedback_sent BOOLEAN DEFAULT FALSE`, 'alter showings feedback_sent');
-  await run(`CREATE TABLE IF NOT EXISTS showing_feedback (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    showing_id UUID REFERENCES showings(id) ON DELETE CASCADE,
-    agent_id TEXT,
-    agent_name TEXT,
-    verdict TEXT NOT NULL CHECK (verdict IN ('go','no-go','maybe')),
-    categories JSONB DEFAULT '[]',
-    notes TEXT,
-    source TEXT DEFAULT 'agent',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(showing_id, agent_id)
-  )`, 'create showing_feedback');
-  await run(`ALTER TABLE showing_feedback ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'agent'`, 'alter showing_feedback source');
-  await run(`CREATE TABLE IF NOT EXISTS showing_uploads (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    filename TEXT,
-    uploaded_by TEXT,
-    record_count INTEGER,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  )`, 'create showing_uploads');
-
-  await run(`CREATE TABLE IF NOT EXISTS rent_roll (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    property TEXT NOT NULL,
-    unit TEXT NOT NULL,
-    tenant_name TEXT,
-    status TEXT,
-    bedrooms TEXT,
-    sqft INTEGER,
-    market_rent NUMERIC(10,2),
-    rent NUMERIC(10,2),
-    deposit NUMERIC(10,2),
-    lease_from DATE,
-    lease_to DATE,
-    move_in DATE,
-    move_out DATE,
-    past_due NUMERIC(10,2) DEFAULT 0,
-    nsf_count INTEGER DEFAULT 0,
-    late_count INTEGER DEFAULT 0,
-    upload_batch TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(property, unit)
-  )`, 'create rent_roll');
-  await run(`CREATE TABLE IF NOT EXISTS rent_roll_uploads (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    filename TEXT,
-    uploaded_by TEXT,
-    unit_count INTEGER,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  )`, 'create rent_roll_uploads');
-  await run(`CREATE TABLE IF NOT EXISTS work_orders (
-    id SERIAL PRIMARY KEY,
-    property TEXT NOT NULL,
-    wo_number TEXT,
-    priority TEXT,
-    wo_type TEXT,
-    job_description TEXT,
-    status TEXT,
-    vendor TEXT,
-    unit TEXT,
-    resident TEXT,
-    created_at TIMESTAMPTZ,
-    scheduled_start TIMESTAMPTZ,
-    completed_on TIMESTAMPTZ,
-    amount NUMERIC,
-    upload_batch UUID,
-    imported_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(wo_number)
-  )`, 'create work_orders');
-  await run(`CREATE TABLE IF NOT EXISTS work_order_uploads (id SERIAL PRIMARY KEY, filename TEXT, uploaded_by TEXT, record_count INTEGER, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create work_order_uploads');
-
-  await run(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
-
-  // Seed admin
-  try {
-    const exists = await pool.query(`SELECT 1 FROM agents WHERE email='admin@okcreal.com'`);
-    if (exists.rows.length === 0) {
-      const hash = await bcrypt.hash('password', 10);
-      await pool.query(`INSERT INTO agents (name,email,password_hash,role) VALUES ('Admin','admin@okcreal.com',$1,'admin')`, [hash]);
-      console.log('[DB] Admin seeded');
-    }
-  } catch (e) { console.error('[DB] seed admin:', e.message); }
-
-  // Seed smart lists — only if not already present AND not previously deleted
-  await run(`CREATE TABLE IF NOT EXISTS deleted_smart_lists (name TEXT PRIMARY KEY, deleted_at TIMESTAMPTZ DEFAULT NOW())`, 'create deleted_smart_lists');
-  try {
-    const smartListDefs = [
-      { name: 'Delinquent Residents', filters: { stage: 'Delinquent' }, sort_order: 0 },
-      { name: 'Delinquent Leads',     filters: { stage: 'Lead', tags: ['Delinquent'] }, sort_order: 1 },
-      { name: 'Active Residents',     filters: { stage: 'Resident' }, sort_order: 2 },
-      { name: 'Active Leads',         filters: { stage: 'Lead' }, sort_order: 3 },
-      { name: 'Evicting',             filters: { stage: 'Evicting' }, sort_order: 4 },
-      { name: 'Past Clients',         filters: { stage: 'Past Tenant' }, sort_order: 5 },
-      { name: '🏠 Upcoming Showings',  filters: { type: 'upcoming_showings_72h' }, sort_order: 1 },
-      { name: '👻 Tours — No Follow-Up', filters: { type: 'toured_no_followup', days_ago: 90 }, sort_order: 2 },
-    ];
-    // Tombstone any default list that is NOT currently in smart_lists (was deleted before tombstones existed)
-    const existingR = await pool.query('SELECT name FROM smart_lists');
-    const existingNames = new Set(existingR.rows.map(r => r.name));
-    for (const sl of smartListDefs) {
-      if (!existingNames.has(sl.name)) {
-        // List is gone — make sure it's tombstoned so it won't re-seed
-        await pool.query(
-          `INSERT INTO deleted_smart_lists (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
-          [sl.name]
-        ).catch(() => {});
-      }
-    }
-    // Get full tombstone list
-    const deletedR = await pool.query('SELECT name FROM deleted_smart_lists');
-    const deletedNames = new Set(deletedR.rows.map(r => r.name));
-    for (const sl of smartListDefs) {
-      if (deletedNames.has(sl.name)) continue; // user deleted this — never re-seed
-      await pool.query(
-        `INSERT INTO smart_lists (name,filters,sort_order) VALUES($1,$2::jsonb,$3) ON CONFLICT (name) DO NOTHING`,
-        [sl.name, JSON.stringify(sl.filters), sl.sort_order]
-      ).catch(() => {});
-    }
-  } catch (e) { console.error('[DB] seed smart_lists:', e.message); }
-
-  // Seed custom fields
-  try {
-    await pool.query(`INSERT INTO custom_fields (key,label,field_type,sort_order) VALUES ('past_due_balance','Past Due Balance','number',0), ('past_due_days','Days Past Due','number',1), ('payment_commitment_date','Payment Commitment Date','date',2), ('unit_number','Unit Number','text',3), ('lease_end_date','Lease End Date','date',4) ON CONFLICT (key) DO NOTHING`);
-  } catch (e) { console.error('[DB] seed custom_fields:', e.message); }
-
-  // Seed call line
-  try {
-    await pool.query(`DELETE FROM call_lines WHERE id::text NOT IN (SELECT MIN(id::text) FROM call_lines GROUP BY twilio_number)`).catch(e => console.warn('[DB] dedup call_lines:', e.message));
-    await pool.query(`INSERT INTO call_lines (name,twilio_number,description) VALUES ('OKCREAL Connect Line','+14052562614','Main OKCREAL line') ON CONFLICT DO NOTHING`);
-    const lineR = await pool.query(`SELECT id FROM call_lines WHERE twilio_number='+14052562614' LIMIT 1`);
-    const agentsR = await pool.query(`SELECT id FROM agents WHERE is_active=true`);
-    if (lineR.rows[0]) {
-      for (const agent of agentsR.rows) {
-        await pool.query(`INSERT INTO line_agents (line_id,agent_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [lineR.rows[0].id, agent.id]).catch(() => {});
-      }
-      console.log(`[DB] Linked ${agentsR.rows.length} agent(s) to call line`);
-    }
-  } catch (e) { console.error('[DB] seed call_lines:', e.message); }
-
-  console.log('[DB] Init complete');
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// JIREH SECURITY — UniFi Protect Webhook + SSE
-// ══════════════════════════════════════════════════════════════════════════
-app.get('/api/security/stream', auth, (req, res) => {
-  res.setHeader('Content-Type',  'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection',    'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-  res.write(':ok\n\n');
-  const client = { res, agentId: req.agent?.id };
-  sseClients.add(client);
-  const ping = setInterval(() => {
-    try { res.write(':ping\n\n'); } catch(e) { clearInterval(ping); sseClients.delete(client); }
-  }, 25000);
-  req.on('close', () => { clearInterval(ping); sseClients.delete(client); });
-});
-
-app.get('/api/security/events/raw', auth, adminOnly, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT id, event_id, event_link, camera_mac, site, raw_payload FROM security_events ORDER BY triggered_at DESC LIMIT 5');
-    res.json(r.rows.map(row => ({ id: row.id, event_id: row.event_id, event_link: row.event_link, camera_mac: row.camera_mac, site: row.site, payload: row.raw_payload ? JSON.parse(row.raw_payload) : null })));
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/security/events', auth, async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT se.*, p.first_name, p.last_name, p.id as person_id, p.stage,
-             COALESCE(pc.name, se.camera_name) AS camera_name,
-             COALESCE(pc.site, se.site)         AS site
-      FROM security_events se
-      LEFT JOIN people p          ON p.unifi_person_id = se.unifi_person_id
-      LEFT JOIN protect_cameras pc ON pc.mac = se.camera_mac
-      ORDER BY se.triggered_at DESC LIMIT 50
-    `);
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/admin/cameras', auth, adminOnly, async (req, res) => {
-  try { const r = await pool.query('SELECT * FROM protect_cameras ORDER BY site, name'); res.json(r.rows); }
-  catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/admin/cameras', auth, adminOnly, async (req, res) => {
-  const { mac, name, site } = req.body;
-  try {
-    const r = await pool.query(`INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO UPDATE SET name=$2, site=$3 RETURNING *`, [mac.toUpperCase(), name, site || 'Main']);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.put('/api/admin/cameras/:mac', auth, adminOnly, async (req, res) => {
-  const { name, site } = req.body;
-  try {
-    const r = await pool.query(`INSERT INTO protect_cameras (mac,name,site) VALUES($1,$2,$3) ON CONFLICT (mac) DO UPDATE SET name=$2, site=COALESCE($3, protect_cameras.site) RETURNING *`, [req.params.mac.toUpperCase(), name, site || null]);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-app.delete('/api/admin/cameras/:id', auth, adminOnly, async (req, res) => {
-  await pool.query('DELETE FROM protect_cameras WHERE id=$1', [req.params.id]);
-  res.json({ ok: true });
-});
-app.post('/api/admin/cameras/bulk', auth, adminOnly, async (req, res) => {
-  const { cameras } = req.body;
-  if (!Array.isArray(cameras)) return res.status(400).json({ error: 'cameras array required' });
-  let saved = 0;
-  for (const cam of cameras) {
-    if (!cam.mac) continue;
-    const mac = cam.mac.replace(/:/g, '').toUpperCase();
-    await pool.query(`INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3) ON CONFLICT (mac) DO UPDATE SET name=EXCLUDED.name, site=COALESCE(EXCLUDED.site, protect_cameras.site)`, [mac, cam.name || mac, cam.site || 'Marlin']).catch(() => {});
-    saved++;
-  }
-  res.json({ saved });
-});
-app.post('/api/admin/cameras/discover', auth, adminOnly, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`SELECT DISTINCT camera_mac AS mac, site FROM security_events WHERE camera_mac IS NOT NULL AND camera_mac != ''`);
-    let added = 0;
-    for (const row of rows) {
-      const r = await pool.query(`INSERT INTO protect_cameras (mac, name, site) VALUES($1,$2,$3) ON CONFLICT (mac) DO NOTHING RETURNING id`, [row.mac.toUpperCase(), row.mac.toUpperCase(), row.site || 'Main']);
-      if (r.rowCount) added++;
-    }
-    res.json({ discovered: rows.length, added });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/protect/webhook', async (req, res) => {
-  const secret = process.env.PROTECT_WEBHOOK_SECRET;
-  if (secret) {
-    const provided = req.query.token || req.headers['x-webhook-token'];
-    if (provided !== secret) { console.warn('[Jireh] Webhook rejected — bad token'); return res.status(401).json({ error: 'Unauthorized' }); }
-  }
-  try {
-    const body = req.body;
-    const alarm  = body?.alarm || {};
-    const trigger = alarm.triggers?.[0] || {};
-    const eventId  = trigger.eventId || body.eventId || null;
-    const deviceMac = (trigger.device || '').toUpperCase();
-    const ts        = trigger.timestamp || body.timestamp || Date.now();
-    const eventPath = alarm.eventPath || null;
-    const localLink = alarm.eventLocalLink || null;
-    const cloudBase = process.env.PROTECT_CLOUD_BASE_URL || '';
-    const cloudLink = cloudBase && eventId ? `${cloudBase}/protect/events/event/${eventId}` : (cloudBase && eventPath ? `${cloudBase}${eventPath}` : localLink);
-    const camRow = deviceMac ? await pool.query('SELECT name, site FROM protect_cameras WHERE mac=$1', [deviceMac]).then(r=>r.rows[0]) : null;
-    const cameraName = camRow?.name || deviceMac || 'Unknown Camera';
-    const site       = camRow?.site || alarm.name || '';
-    const personId = trigger.personId || trigger.metadata?.personId || trigger.metadata?.face?.personId || null;
-    const thumbnail = body.thumbnail || alarm.thumbnail || null;
-    let matchedPerson = null;
-    if (personId) {
-      const pRow = await pool.query('SELECT id, first_name, last_name, stage FROM people WHERE unifi_person_id=$1 LIMIT 1', [personId]);
-      matchedPerson = pRow.rows[0] || null;
-    }
-    await pool.query(`INSERT INTO security_events (event_id, unifi_person_id, camera_mac, camera_name, site, event_link, thumbnail_b64, triggered_at, alarm_name, raw_payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (event_id) DO NOTHING`,
-      [eventId, personId, deviceMac, cameraName, site, cloudLink || localLink, thumbnail ? thumbnail.substring(0, 500000) : null, new Date(typeof ts === 'number' && ts > 1e12 ? ts : ts * 1000), alarm.name || 'Watchlist', JSON.stringify(body).substring(0, 10000)]
-    ).catch(e => console.warn('[Jireh] Insert event:', e.message));
-    broadcastSecurityEvent({ type: 'poi_detected', eventId, cameraName, site, triggeredAt: ts, eventLink: cloudLink || localLink, thumbnail: thumbnail || null, alarmName: alarm.name || 'Watchlist', person: matchedPerson ? { id: matchedPerson.id, name: `${matchedPerson.first_name||''} ${matchedPerson.last_name||''}`.trim(), stage: matchedPerson.stage } : null });
-    res.json({ ok: true, matched: !!matchedPerson });
-  } catch(e) { console.error('[Jireh] Webhook error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// ─── AGENT SSE STREAM ─────────────────────────────────────────────────────────
-app.get('/api/events/stream', auth, (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  const agentId = String(req.agent.id);
-  agentConnections.set(agentId, res);
-  console.log(`[SSE] Agent ${req.agent.name} connected (${agentConnections.size} total)`);
-  res.write(':ok\n\n');
-
-  // Tell ALL agents (including this one) the online count changed — triggers dashboard refresh
-  const onlineIds = Array.from(agentConnections.keys());
-  broadcastToAll({ type: 'crew_online', onlineCount: onlineIds.length, onlineIds, agentId, name: req.agent.name, event: 'connect' });
-
-  const ping = setInterval(() => {
-    try { res.write(':ping\n\n'); }
-    catch(e) { clearInterval(ping); agentConnections.delete(agentId); }
-  }, 25000);
-  req.on('close', () => {
-    clearInterval(ping);
-    agentConnections.delete(agentId);
-    for (const [personId, map] of presenceMap) {
-      if (map.has(agentId)) {
-        map.delete(agentId);
-        if (!map.size) presenceMap.delete(personId);
-        broadcastPresence(personId);
-      }
-    }
-    console.log(`[SSE] Agent ${req.agent.name} disconnected (${agentConnections.size} total)`);
-    // Notify remaining agents the count dropped
-    const stillOnline = Array.from(agentConnections.keys());
-    broadcastToAll({ type: 'crew_online', onlineCount: stillOnline.length, onlineIds: stillOnline, agentId, name: req.agent.name, event: 'disconnect' });
-  });
-});
-
-// ─── MY PROFILE ───────────────────────────────────────────────────────────────
-// Fast availability update — called every time agent changes status
-app.post('/api/me/availability', auth, async (req, res) => {
-  try {
-    const { availability } = req.body;
-    if (!['online','busy','offline'].includes(availability)) return res.status(400).json({ error: 'Invalid' });
-    await pool.query(`UPDATE agents SET availability=$1, updated_at=NOW() WHERE id=$2`, [availability, req.agent.id]);
-    broadcastToAll({ type: 'agent_status', agentId: String(req.agent.id), name: req.agent.name, availability });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/me', auth, async (req, res) => {
-  try {
-    const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,avatar_b64,gmail_email,is_active FROM agents WHERE id=$1', [req.agent.id]);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/me', auth, async (req, res) => {
-  try {
-    const { name, phone, avatar_color, avatar_b64, availability } = req.body;
-    const r = await pool.query(
-      `UPDATE agents SET name = COALESCE($1, name), phone = COALESCE($2, phone), avatar_color = COALESCE($3, avatar_color), avatar_b64 = COALESCE($4, avatar_b64), availability = COALESCE($5, availability), updated_at = NOW() WHERE id=$6 RETURNING id,name,email,role,phone,avatar_color,avatar_b64,gmail_email`,
-      [name||null, phone||null, avatar_color||null, avatar_b64||null, availability||null, req.agent.id]
-    );
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/me/password', auth, async (req, res) => {
-  try {
-    const { current_password, new_password } = req.body;
-    const r = await pool.query('SELECT password_hash FROM agents WHERE id=$1', [req.agent.id]);
-    const ok = await bcrypt.compare(current_password, r.rows[0].password_hash);
-    if (!ok) return res.status(400).json({ error: 'Current password is incorrect' });
-    const hash = await bcrypt.hash(new_password, 10);
-    await pool.query('UPDATE agents SET password_hash=$1 WHERE id=$2', [hash, req.agent.id]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── PRESENCE ─────────────────────────────────────────────────────────────────
-app.post('/api/presence/enter', auth, async (req, res) => {
-  const { personId } = req.body;
-  if (!personId) return res.status(400).json({ error: 'personId required' });
-  const ar = await pool.query('SELECT id,name,avatar_b64,avatar_color FROM agents WHERE id=$1', [req.agent.id]);
-  setPresence(personId, ar.rows[0]);
-  res.json({ ok: true });
-});
-
-app.post('/api/presence/leave', auth, async (req, res) => {
-  const { personId } = req.body;
-  if (!personId) return res.status(400).json({ error: 'personId required' });
-  clearPresence(personId, req.agent.id);
-  res.json({ ok: true });
-});
-
-app.get('/api/presence/:personId', auth, (req, res) => {
-  const map = presenceMap.get(String(req.params.personId));
-  const viewers = map ? Array.from(map.values()) : [];
-  res.json({ viewers });
-});
-
-// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
-app.get('/api/notifications', auth, async (req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT n.*, a.name as sender_name, a.avatar_b64 as sender_avatar, a.avatar_color as sender_color, p.first_name, p.last_name
-       FROM notifications n
-       LEFT JOIN agents a ON a.id::text = n.sender_id
-       LEFT JOIN people p ON p.id::text = n.person_id
-       WHERE n.recipient_id = $1
-       ORDER BY n.created_at DESC LIMIT 50`,
-      [String(req.agent.id)]
-    );
-    const unread = r.rows.filter(n => !n.is_read).length;
-    res.json({ notifications: r.rows, unread });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/notifications/:id/read', auth, async (req, res) => {
-  try {
-    await pool.query('UPDATE notifications SET is_read=true WHERE id=$1 AND recipient_id=$2', [req.params.id, String(req.agent.id)]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/notifications/read-all', auth, async (req, res) => {
-  try {
-    await pool.query('UPDATE notifications SET is_read=true WHERE recipient_id=$1', [String(req.agent.id)]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-async function createNotification({ recipientId, senderId, type, personId, activityId, body }) {
-  try {
-    const r = await pool.query(
-      `INSERT INTO notifications (recipient_id, sender_id, type, person_id, activity_id, body) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [String(recipientId), senderId ? String(senderId) : null, type, personId ? String(personId) : null, activityId ? String(activityId) : null, body]
-    );
-    sendToAgent(recipientId, { type: 'notification', notification: r.rows[0] });
-    return r.rows[0];
-  } catch(e) { console.error('[notification]', e.message); }
-}
-
-// ─── GMAIL ────────────────────────────────────────────────────────────────────
-app.get('/api/gmail/connect', async (req, res) => {
-  const token = req.query.token || (req.headers.authorization?.slice(7));
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  let agent;
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const r = await pool.query('SELECT * FROM agents WHERE id=$1 AND is_active=true', [decoded.id]);
-    if (!r.rows[0]) return res.status(401).json({ error: 'Unauthorized' });
-    agent = r.rows[0];
-  } catch(e) { return res.status(401).json({ error: 'Unauthorized' }); }
-  if (!process.env.GMAIL_CLIENT_ID) return res.status(400).json({ error: 'GMAIL_CLIENT_ID not set' });
-  const oauth2 = getGmailOAuth(agent);
-  const url = oauth2.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.settings.basic', 'https://www.googleapis.com/auth/userinfo.email'], state: String(agent.id) });
-  res.redirect(url);
-});
-
-app.get('/api/gmail/callback', async (req, res) => {
-  const { code, state: agentId } = req.query;
-  if (!code || !agentId) return res.send('Missing params.');
-  try {
-    const oauth2 = new google.auth.OAuth2(process.env.GMAIL_CLIENT_ID, process.env.GMAIL_CLIENT_SECRET, process.env.APP_URL + '/api/gmail/callback');
-    const { tokens } = await oauth2.getToken(code);
-    oauth2.setCredentials(tokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    const gmailEmail = profile.data.emailAddress;
-    await pool.query(`UPDATE agents SET gmail_refresh_token=$1, gmail_email=$2 WHERE id=$3`, [tokens.refresh_token || null, gmailEmail, agentId]);
-    res.send(`<script>window.close();</script><p>Gmail connected (${gmailEmail}). You can close this tab.</p>`);
-  } catch(e) { res.send('Error: ' + e.message); }
-});
-
-app.post('/api/gmail/disconnect', auth, async (req, res) => {
-  try {
-    await pool.query('UPDATE agents SET gmail_refresh_token=NULL, gmail_email=NULL WHERE id=$1', [req.agent.id]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/gmail/send', auth, async (req, res) => {
-  try {
-    const { to, subject, body, personId } = req.body;
-    const agentR = await pool.query('SELECT gmail_refresh_token, gmail_email, name FROM agents WHERE id=$1', [req.agent.id]);
-    const agent = agentR.rows[0];
-    if (!agent.gmail_refresh_token) return res.status(400).json({ error: 'Gmail not connected' });
-    const oauth2 = getGmailOAuth(agent);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2 });
-    let signature = '';
-    try {
-      const sendAsRes = await gmail.users.settings.sendAs.get({ userId: 'me', sendAsEmail: agent.gmail_email });
-      if (sendAsRes.data.signature) {
-        signature = '\r\n\r\n--\r\n' + sendAsRes.data.signature.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
-      }
-    } catch(sigErr) { console.log('[Gmail] Could not fetch signature:', sigErr.message); }
-    const fullBody = body + signature;
-    const msgLines = [`From: ${agent.name} <${agent.gmail_email}>`, `To: ${to}`, `Subject: ${subject}`, `Content-Type: text/plain; charset=utf-8`, ``, fullBody];
-    const raw = Buffer.from(msgLines.join('\r\n')).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-    await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-    if (personId) {
-      await pool.query(`INSERT INTO activities (person_id,agent_id,type,body,direction) VALUES ($1,$2,'email',$3,'outbound')`, [String(personId), String(req.agent.id), `To: ${to}\nSubject: ${subject}\n\n${fullBody}`]);
-    }
-    res.json({ ok: true });
-  } catch(e) { console.error('[Gmail send]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// ─── LEAD INBOUND EMAIL WEBHOOK ───────────────────────────────────────────────
-app.post('/api/leads/inbound', async (req, res) => {
-  const secret = process.env.LEADS_WEBHOOK_SECRET;
-  if (secret && req.query.token !== secret) return res.status(401).json({ error: 'unauthorized' });
-  try {
-    const { subject = '', body = '', from = '' } = req.body;
-    if (!subject && !body) return res.json({ skipped: true, reason: 'empty' });
-    const OpenAI = require('openai');
-    const grok = new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
-    const r = await grok.chat.completions.create({ model: 'grok-3', max_tokens: 300, messages: [{ role: 'user', content: `Extract contact info from this lead email. Return ONLY JSON, no markdown.\nFrom: ${from}\nSubject: ${subject}\nBody: ${body.substring(0,2000)}\n\nJSON format: {"first_name":"","last_name":"","email":"","phone":"10 digits only","source":"platform name","property":"","message":"","is_lead":true}\nSet is_lead false for spam/receipts/non-leads.` }] });
-    let fields;
-    try { fields = JSON.parse(r.choices[0].message.content.replace(/```json?|```/g,'')); }
-    catch(e) { return res.json({ skipped: true, reason: 'AI parse fail' }); }
-    if (!fields.is_lead) return res.json({ skipped: true, reason: 'not a lead' });
-    if (!fields.first_name && !fields.email && !fields.phone) return res.json({ skipped: true, reason: 'no contact info' });
-    if (fields.email) {
-      const d = await pool.query('SELECT id FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1', [fields.email]);
-      if (d.rows[0]) return res.json({ skipped: true, reason: 'dup email', id: d.rows[0].id });
-    }
-    if (fields.phone) {
-      const d = await pool.query(`SELECT id FROM people WHERE regexp_replace(COALESCE(phone,''),'\\D','','g')=$1 LIMIT 1`, [fields.phone.replace(/\D/g,'')]);
-      if (d.rows[0]) return res.json({ skipped: true, reason: 'dup phone', id: d.rows[0].id });
-    }
-    const phone = fields.phone ? '+1' + fields.phone.replace(/\D/g,'').slice(-10) : null;
-    const notes = [fields.property && `Interested in: ${fields.property}`, fields.source && `Source: ${fields.source}`, fields.message && `Message: ${fields.message}`].filter(Boolean).join('\n');
-    const ins = await pool.query(`INSERT INTO people (first_name,last_name,email,phone,stage,source,notes,updated_at) VALUES ($1,$2,$3,$4,'Lead',$5,$6,NOW()) RETURNING id`, [fields.first_name||'Unknown', fields.last_name||'', fields.email||null, phone, fields.source||'Email Lead', notes||null]);
-    broadcastToAll({ type: 'new_lead', personId: ins.rows[0].id, name: `${fields.first_name} ${fields.last_name}`, source: fields.source });
-    // Notify all active agents of new inbound lead
-    try {
-      const agentsR2 = await pool.query('SELECT id FROM agents WHERE is_active=true');
-      for (const ag of agentsR2.rows) {
-        await createNotification({
-          recipientId: ag.id,
-          type: 'new_lead',
-          personId: String(ins.rows[0].id),
-          body: `🏠 New lead: ${fields.first_name} ${fields.last_name||''} (${fields.source||'Web'})`
-        });
-      }
-    } catch(e) {}
-    res.json({ created: true, id: ins.rows[0].id });
-  } catch(e) { console.error('[leads/inbound]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// =============================================================================
-// GROKFUB SERVICE API
-// =============================================================================
-const GROKFUB_TOKEN = process.env.GROKFUB_SERVICE_TOKEN || 'grokfub-okcreal-2026-bridge-token';
-
-function requireGrokfubToken(req, res, next) {
-  const token = req.headers['x-grokfub-token'];
-  if (!token || token !== GROKFUB_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
-  next();
-}
-
-app.get('/api/grokfub/people', requireGrokfubToken, async (req, res) => {
-  try {
-    const { phone, tag } = req.query;
-    let rows = [];
-    if (phone) {
-      const digits = phone.replace(/\D/g, '').slice(-10);
-      const result = await pool.query(`SELECT p.*, pp.phone as matched_phone FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id WHERE pp.phone LIKE $1 OR p.phone LIKE $1 LIMIT 5`, [`%${digits}`]);
-      rows = result.rows;
-    } else if (tag) {
-      const result = await pool.query(`SELECT * FROM people WHERE $1 = ANY(tags) ORDER BY updated_at DESC LIMIT 100`, [tag]);
-      rows = result.rows;
-    } else return res.status(400).json({ error: 'Provide phone or tag' });
-    res.json({ people: rows });
-  } catch (e) { console.error('[GROKFUB API] GET /people error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/grokfub/activity', requireGrokfubToken, async (req, res) => {
-  try {
-    const { person_id, type = 'note', body, subject, direction = 'outbound' } = req.body;
-    if (!person_id || !body) return res.status(400).json({ error: 'person_id and body required' });
-    await pool.query(`INSERT INTO activities (person_id, type, body, direction, created_at) VALUES ($1, $2, $3, $4, NOW())`, [person_id, type, `[GROKFUB] ${subject ? subject + '\n\n' : ''}${body}`, direction]);
-    res.json({ ok: true });
-  } catch (e) { console.error('[GROKFUB API] POST /activity error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/grokfub/people/:id/tags', requireGrokfubToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { add = [], remove = [] } = req.body;
-    const { rows } = await pool.query('SELECT tags FROM people WHERE id = $1', [id]);
-    if (!rows.length) return res.status(404).json({ error: 'Person not found' });
-    let tags = (rows[0].tags || []).filter(t => !remove.includes(t));
-    for (const t of add) { if (!tags.includes(t)) tags.push(t); }
-    await pool.query('UPDATE people SET tags = $1, updated_at = NOW() WHERE id = $2', [tags, id]);
-    res.json({ ok: true, tags });
-  } catch (e) { console.error('[GROKFUB API] POST /tags error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/grokfub/people/:id/stage', requireGrokfubToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { stage } = req.body;
-    if (!stage) return res.status(400).json({ error: 'stage required' });
-    await pool.query('UPDATE people SET stage = $1, updated_at = NOW() WHERE id = $2', [stage, id]);
-    res.json({ ok: true, stage });
-  } catch (e) { console.error('[GROKFUB API] POST /stage error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// Dedicated debt update — GrokFUB calls this whenever balance or days change
-app.post('/api/grokfub/people/:id/debt', requireGrokfubToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { balance, days_past_due, stage } = req.body;
-    if (balance == null && days_past_due == null) return res.status(400).json({ error: 'balance or days_past_due required' });
-    const cfPatch = {};
-    if (balance       != null) cfPatch.past_due_balance = parseFloat(balance);
-    if (days_past_due != null) cfPatch.past_due_days    = parseInt(days_past_due);
-    const updates = ['custom_fields = custom_fields || $1::jsonb', 'updated_at = NOW()'];
-    const params  = [JSON.stringify(cfPatch)];
-    if (stage) { params.push(stage); updates.push(`stage = $${params.length}`); }
-    params.push(id);
-    await pool.query(`UPDATE people SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
-    // Broadcast live update to any open Connect tabs
-    broadcastToAll({ type: 'debt_update', personId: id, ...cfPatch, ...(stage ? { stage } : {}) });
-    console.log(`[GROKFUB API] debt update person ${id}: balance=${cfPatch.past_due_balance ?? 'n/a'} days=${cfPatch.past_due_days ?? 'n/a'}`);
-    res.json({ ok: true, ...cfPatch });
-  } catch (e) { console.error('[GROKFUB API] debt update error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// Debug: check what debt data is stored for a person
-app.get('/api/grokfub/people/:id/debt-check', requireGrokfubToken, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, first_name, last_name, stage, custom_fields,
-              custom_fields->>'past_due_balance' AS past_due_balance,
-              custom_fields->>'past_due_days'    AS past_due_days
-       FROM people WHERE id = $1`, [req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
-    res.json(rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/grokfub/people/:id/acknowledge-trigger', requireGrokfubToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rows } = await pool.query('SELECT tags FROM people WHERE id = $1', [id]);
-    if (!rows.length) return res.status(404).json({ error: 'Person not found' });
-    let tags = (rows[0].tags || []).filter(t => t !== 'Initiate debt collection robot');
-    if (!tags.includes('Grok Call In Progress')) tags.push('Grok Call In Progress');
-    await pool.query('UPDATE people SET tags = $1, updated_at = NOW() WHERE id = $2', [tags, id]);
-    res.json({ ok: true });
-  } catch (e) { console.error('[GROKFUB API] acknowledge-trigger error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/grokfub/bulk-stage-sync', requireGrokfubToken, async (req, res) => {
-  try {
-    const { tenants = [], clearOthers = false } = req.body;
-    let synced = 0, cleared = 0, notFound = 0;
-
-    // Build map: last10digits -> { stage, balance, days_past_due }
-    const phoneMap = new Map();
-    for (const t of tenants) {
-      if (!t.phone) continue;
-      const digits = t.phone.replace(/\D/g, '').slice(-10);
-      if (digits) phoneMap.set(digits, {
-        stage:         t.stage || 'Delinquent',
-        balance:       t.balance        != null ? t.balance        : t.past_due_balance  != null ? t.past_due_balance  : null,
-        days_past_due: t.days_past_due  != null ? t.days_past_due  : t.days             != null ? t.days             : null,
-      });
-    }
-
-    for (const [digits, data] of phoneMap.entries()) {
-      // Find matching people
-      const found = await pool.query(
-        `SELECT DISTINCT p.id FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
-         WHERE RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', '', 'g'), 10) = $1
-            OR RIGHT(REGEXP_REPLACE(pp.phone, '[^0-9]', '', 'g'), 10) = $1`,
-        [digits]
-      );
-      if (!found.rowCount) { notFound++; continue; }
-
-      // Build custom_fields patch — only set keys GrokFUB is providing
-      const cfPatch = {};
-      if (data.balance       != null) cfPatch.past_due_balance = parseFloat(data.balance);
-      if (data.days_past_due != null) cfPatch.past_due_days    = parseInt(data.days_past_due);
-      const cfJson = JSON.stringify(cfPatch);
-
-      for (const row of found.rows) {
-        await pool.query(
-          `UPDATE people SET stage = $1, custom_fields = custom_fields || $2::jsonb, updated_at = NOW() WHERE id = $3`,
-          [data.stage, cfJson, row.id]
-        );
-      }
-      synced += found.rowCount;
-    }
-
-    if (clearOthers && phoneMap.size > 0) {
-      const delinquents = await pool.query(
-        `SELECT p.id, p.phone, array_agg(pp.phone) as alt_phones
-         FROM people p LEFT JOIN person_phones pp ON pp.person_id = p.id
-         WHERE p.stage = 'Delinquent' GROUP BY p.id`
-      );
-      for (const person of delinquents.rows) {
-        const allPhones = [person.phone, ...(person.alt_phones || [])].filter(Boolean).map(ph => ph.replace(/\D/g, '').slice(-10));
-        if (!allPhones.some(d => phoneMap.has(d))) {
-          await pool.query(
-            `UPDATE people SET stage = $1, custom_fields = custom_fields || '{"past_due_balance":null,"past_due_days":null}'::jsonb, updated_at = NOW() WHERE id = $2`,
-            ['Resident', person.id]
-          );
-          cleared++;
-        }
-      }
-    }
-
-    console.log(`[GROKFUB API] bulk-stage-sync: ${synced} synced, ${cleared} cleared, ${notFound} not found`);
-    res.json({ ok: true, synced, cleared, notFound });
-  } catch (e) { console.error('[GROKFUB API] bulk-stage-sync error:', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// =============================================================================
-// SHOWINGS API
-// =============================================================================
-
-// Upload showings — accepts pre-parsed JSON rows from browser-side SheetJS
-// (no server-side xlsx dependency needed)
-// Helper: parse AppFolio "Last, First" or "First Last" name format
-function parseShowingName(raw) {
-  if (!raw) return { first_name: 'Unknown', last_name: '' };
-  const s = raw.trim();
-  if (s.includes(',')) {
-    const [last, ...rest] = s.split(',');
-    return { last_name: last.trim(), first_name: rest.join(',').trim() };
-  }
-  const parts = s.split(' ').filter(Boolean);
-  return { first_name: parts[0] || 'Unknown', last_name: parts.slice(1).join(' ') };
-}
-
-// Helper: normalize phone to 10 digits
-function normPhone(p) {
-  if (!p) return null;
-  const d = String(p).replace(/\D/g,'');
-  return d.length === 11 && d.startsWith('1') ? d.slice(1) : d.length === 10 ? d : null;
-}
-
-app.post('/api/showings/upload', auth, async (req, res) => {
-  try {
-    const { rows, filename } = req.body;
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ error: 'No rows provided' });
-    }
-
-    const batchId = crypto.randomUUID();
-    let inserted = 0, skipped = 0, leadsCreated = 0, leadsMatched = 0;
-
-    for (const row of rows) {
-      if (!row.guest_name || !row.showing_time) continue;
-      try {
-        const phone10 = normPhone(row.phone);
-        const emailLow = row.email ? row.email.toLowerCase().trim() : null;
-
-        // ── 1. Find or create the Connect lead ──
-        let personId = null;
-
-        // Try match by phone first, then email
-        if (phone10) {
-          const r = await pool.query(
-            `SELECT id FROM people WHERE regexp_replace(phone,'\\D','','g') = $1 LIMIT 1`,
-            [phone10]
-          );
-          if (r.rows[0]) { personId = r.rows[0].id; leadsMatched++; }
-        }
-        if (!personId && emailLow) {
-          const r = await pool.query(
-            `SELECT id FROM people WHERE LOWER(email) = $1 LIMIT 1`,
-            [emailLow]
-          );
-          if (r.rows[0]) { personId = r.rows[0].id; leadsMatched++; }
-        }
-
-        // Create lead if not found
-        if (!personId) {
-          const { first_name, last_name } = parseShowingName(row.guest_name);
-          const propShort = (row.property||'').split(' - ')[0].substring(0, 60);
-          const showingDate = new Date(row.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-          const notes = `Auto-created from AppFolio showing import.\nProperty: ${propShort}${row.unit ? ' · Unit '+row.unit : ''}\nShowing: ${showingDate}${row.showing_type ? ' ('+row.showing_type+')' : ''}`;
-          const ins = await pool.query(
-            `INSERT INTO people (first_name, last_name, phone, email, stage, source, background, updated_at)
-             VALUES ($1,$2,$3,$4,'Lead','AppFolio Showing',$5,NOW()) RETURNING id`,
-            [first_name, last_name,
-             phone10 ? phone10 : null,
-             emailLow || null,
-             notes]
-          );
-          personId = ins.rows[0].id;
-          leadsCreated++;
-          broadcastToAll({ type: 'new_lead', personId, name: `${first_name} ${last_name}`.trim(), source: 'AppFolio Showing' });
-        }
-
-        // ── 2. Upsert the showing, linking to person ──
-        await pool.query(
-          `INSERT INTO showings (property,unit,guest_name,email,phone,showing_time,status,showing_type,
-                                assigned_user,description,last_activity_date,last_activity_type,
-                                upload_batch,connect_person_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           ON CONFLICT (property,guest_name,showing_time) DO UPDATE SET
-             status=EXCLUDED.status, last_activity_type=EXCLUDED.last_activity_type,
-             last_activity_date=EXCLUDED.last_activity_date, upload_batch=EXCLUDED.upload_batch,
-             connect_person_id=EXCLUDED.connect_person_id`,
-          [ row.property||null, row.unit||null, row.guest_name.trim(),
-            row.email||null, row.phone||null, new Date(row.showing_time),
-            row.status||null, row.showing_type||null, row.assigned_user||null,
-            row.description||null,
-            row.last_activity_date ? new Date(row.last_activity_date) : null,
-            row.last_activity_type||null, batchId, String(personId) ]
-        );
-        inserted++;
-      } catch(e) {
-        console.warn('[Showings Upload] Row skip:', e.message);
-        skipped++;
-      }
-    }
-
-    if (inserted === 0 && skipped === 0) {
-      return res.status(400).json({ error: 'No valid showings found in file. Check file format.' });
-    }
-    const uploader = req.agent?.name || req.agent?.id || null;
-    await pool.query(`INSERT INTO showing_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
-      [filename || 'showings.xlsx', uploader, inserted]);
-    res.json({ ok: true, inserted, skipped, leadsCreated, leadsMatched, batchId });
-  } catch(e) { console.error('[Showings Upload]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// Get property summary
-app.get('/api/showings/properties', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        s.property,
-        COUNT(*)::int                                            AS total_showings,
-        COUNT(*) FILTER (WHERE s.status='Completed')::int       AS completed,
-        COUNT(*) FILTER (WHERE s.status='Scheduled')::int       AS scheduled,
-        COUNT(*) FILTER (WHERE s.status ILIKE '%Cancel%')::int  AS canceled,
-        COUNT(f.id)::int                                        AS feedback_count,
-        COUNT(*) FILTER (WHERE f.verdict='go')::int             AS go_count,
-        COUNT(*) FILTER (WHERE f.verdict='no-go')::int          AS nogo_count,
-        COUNT(*) FILTER (WHERE f.verdict='maybe')::int          AS maybe_count,
-        MAX(s.showing_time)                                      AS last_showing
-      FROM showings s
-      LEFT JOIN showing_feedback f ON f.showing_id = s.id
-      GROUP BY s.property
-      ORDER BY last_showing DESC NULLS LAST
-    `);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Get showings for a property
-app.get('/api/showings', auth, async (req, res) => {
-  try {
-    const { property, status } = req.query;
-    let where = ['1=1']; const params = [];
-    if (property) { params.push(property); where.push(`s.property = $${params.length}`); }
-    if (status)   { params.push(status);   where.push(`s.status   = $${params.length}`); }
-    const { rows } = await pool.query(`
-      SELECT s.*,
-        f.verdict, f.categories, f.notes, f.agent_name, f.agent_id AS feedback_agent_id,
-        f.created_at AS feedback_at
-      FROM showings s
-      LEFT JOIN showing_feedback f ON f.showing_id = s.id
-      WHERE ${where.join(' AND ')}
-      ORDER BY s.showing_time DESC
-    `, params);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Save / update feedback
-app.post('/api/showings/:id/feedback', auth, async (req, res) => {
-  try {
-    const { verdict, categories = [], notes = '' } = req.body;
-    if (!verdict) return res.status(400).json({ error: 'verdict required' });
-    const agentName = req.agent?.name || 'Agent';
-    const agentId   = req.agent?.id   || null;
-    await pool.query(
-      `INSERT INTO showing_feedback (showing_id,agent_id,agent_name,verdict,categories,notes,source)
-       VALUES ($1,$2,$3,$4,$5,$6,'agent')
-       ON CONFLICT (showing_id,agent_id) DO UPDATE SET
-         verdict=EXCLUDED.verdict, categories=EXCLUDED.categories,
-         notes=EXCLUDED.notes, source='agent', created_at=NOW()`,
-      [req.params.id, agentId, agentName, verdict, JSON.stringify(categories), notes]
-    );
-    broadcastToAll({ type: 'showing_feedback', showingId: req.params.id, verdict });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Global feedback report — all properties, all time
-app.get('/api/showings/feedback-report', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        s.property,
-        s.guest_name,
-        s.showing_time,
-        s.unit,
-        s.showing_type,
-        f.verdict,
-        f.categories,
-        f.notes,
-        f.agent_name,
-        f.source,
-        f.created_at AS feedback_at
-      FROM showing_feedback f
-      JOIN showings s ON s.id = f.showing_id
-      ORDER BY f.created_at DESC
-    `);
-
-    // Aggregate totals
-    let go = 0, nogo = 0, maybe = 0;
-    const catCounts = {};
-    const byProperty = {};
-
-    for (const r of rows) {
-      if (r.verdict === 'go')    go++;
-      if (r.verdict === 'no-go') nogo++;
-      if (r.verdict === 'maybe') maybe++;
-      for (const c of (r.categories || [])) {
-        catCounts[c] = (catCounts[c] || 0) + 1;
-      }
-      const prop = r.property || 'Unknown';
-      if (!byProperty[prop]) byProperty[prop] = { go:0, nogo:0, maybe:0, total:0, categories:{} };
-      byProperty[prop].total++;
-      byProperty[prop][r.verdict === 'no-go' ? 'nogo' : r.verdict]++;
-      for (const c of (r.categories || [])) {
-        byProperty[prop].categories[c] = (byProperty[prop].categories[c] || 0) + 1;
-      }
-    }
-
-    const topIssues = Object.entries(catCounts)
-      .sort((a,b) => b[1]-a[1])
-      .slice(0, 12)
-      .map(([cat, count]) => ({ cat, count }));
-
-    const propertyList = Object.entries(byProperty)
-      .sort((a,b) => b[1].total - a[1].total)
-      .map(([property, stats]) => ({
-        property,
-        ...stats,
-        topIssues: Object.entries(stats.categories).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([cat,count])=>({cat,count}))
-      }));
-
-    res.json({
-      total: rows.length, go, nogo, maybe,
-      topIssues, byProperty: propertyList,
-      recent: rows.slice(0, 50)
-    });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Quick AI rec for a single property — used in the feedback form
-app.get('/api/showings/property-ai-rec', auth, async (req, res) => {
-  try {
-    const { property } = req.query;
-    if (!property) return res.status(400).json({ error: 'property required' });
-
-    const grok = initGrok();
-    if (!grok) return res.status(503).json({ error: 'Grok not configured' });
-
-    // Pull stats for this property
-    const { rows } = await pool.query(`
-      SELECT f.verdict, f.categories, f.notes
-      FROM showing_feedback f
-      JOIN showings s ON s.id = f.showing_id
-      WHERE s.property = $1
-    `, [property]);
-
-    if (!rows.length) return res.json({ recommendation: null, total: 0 });
-
-    let go=0, nogo=0, maybe=0;
-    const catCounts = {};
-    const notes = [];
-    for (const r of rows) {
-      if (r.verdict === 'go')    go++;
-      if (r.verdict === 'no-go') nogo++;
-      if (r.verdict === 'maybe') maybe++;
-      for (const c of (r.categories||[])) catCounts[c] = (catCounts[c]||0)+1;
-      if (r.notes) notes.push(r.notes);
-    }
-    const topIssues = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).slice(0,8)
-      .map(([cat,count])=>({ cat, count }));
-    const issueList = topIssues.map(i=>`  - ${i.cat}: mentioned ${i.count}x`).join('\n') || '  - No issues tagged';
-    const notesSample = notes.slice(0,5).map((n,i)=>`  ${i+1}. "${n}"`).join('\n') || '  None recorded';
-
-    const propName = property.split(' - ')[0];
-
-    const prompt = `You are a property management advisor for OKCREAL in Oklahoma City, OK.
-
-PROPERTY: "${propName}"
-TOUR FEEDBACK:
-- Totals: ${rows.length} tours | GO: ${go} | MAYBE: ${maybe} | NO-GO: ${nogo}
-- Top objections:
-${issueList}
-- Sample agent notes:
-${notesSample}
-
-Write exactly TWO paragraphs separated by a blank line:
-
-PARAGRAPH 1 — FEEDBACK ANALYSIS: Based on this feedback, what specific changes should the owner make to get a GO on the next tour? Be direct and actionable (pricing, cosmetic updates, appliances, cleaning, curb appeal, finishes).
-
-PARAGRAPH 2 — COMPETITIVE MARKET ANALYSIS: Search Zillow, Apartments.com, and Realtor.com for rentals within 0.25 miles of "${propName}" in Oklahoma City, OK priced within 10% of this unit's market rent. What amenities or features are nearby competitors offering that this property lacks? Is a price adjustment warranted? What upgrades would close the gap fastest?
-
-Write ONLY the two paragraphs. No headers, no bullets.`;
-
-    const completion = await grok.chat.completions.create({
-      model: 'grok-3', max_tokens: 600,
-      messages: [{ role: 'user', content: prompt }],
-      search_parameters: { mode: 'on', max_search_results: 5 }
-    });
-
-    const text = completion.choices?.[0]?.message?.content || '';
-    res.json({ recommendation: text.trim(), total: rows.length, go, nogo, maybe, topIssues });
-  } catch(e) {
-    console.error('property-ai-rec error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// AI property recommendation — feedback + live nearby listing search via Grok
-app.post('/api/showings/property-recommendation', auth, async (req, res) => {
-  try {
-    const { propertyName, stats } = req.body;
-    if (!propertyName) return res.status(400).json({ error: 'propertyName required' });
-
-    const grok = initGrok();
-    if (!grok) return res.status(503).json({ error: 'Grok API key not configured' });
-
-    const { go=0, nogo=0, maybe=0, total=0, topIssues=[], recentNotes=[] } = stats || {};
-    const issueList = topIssues.map(i => `  - ${i.cat}: mentioned ${i.count} time(s)`).join('\n') || '  - No issues tagged';
-    const notesSample = recentNotes.filter(Boolean).slice(0, 6).map((n,i) => `  ${i+1}. "${n}"`).join('\n') || '  None recorded';
-
-    const prompt = `You are a property management advisor for OKCREAL, a property management company in Oklahoma City, OK.
-
-PROPERTY: "${propertyName}"
-TOUR FEEDBACK SUMMARY:
-- Total tours: ${total} | GO: ${go} | MAYBE: ${maybe} | NO-GO: ${nogo}
-- Top objections from prospective renters:
-${issueList}
-- Sample agent notes from tours:
-${notesSample}
-
-YOUR TASK — write exactly TWO paragraphs separated by a blank line:
-
-PARAGRAPH 1 — FEEDBACK ANALYSIS:
-Based on the tour feedback above, write a direct actionable paragraph explaining what specific changes the property owner should make to convert future tours to a "GO" decision. Focus on what can actually be fixed: pricing, cosmetic updates, appliances, cleaning, curb appeal, finishes, etc.
-
-PARAGRAPH 2 — COMPETITIVE MARKET ANALYSIS:
-Search for current rental listings within 0.25 miles of "${propertyName}" in Oklahoma City, OK. Look on Zillow, Apartments.com, or Realtor.com. Find comparable rentals priced within 10% of this property's likely market rent. Compare their listed amenities, finishes, and features to the objections raised in the feedback. Then write a paragraph stating: which specific amenities or features nearby competitors are offering that this property may be lacking, whether a price adjustment is warranted, and what upgrades would make the biggest competitive difference.
-
-Write ONLY the two paragraphs. No headers, no bullet points, no preamble.`;
-
-    const completion = await grok.chat.completions.create({
-      model: 'grok-3',
-      max_tokens: 600,
-      messages: [{ role: 'user', content: prompt }],
-      search_parameters: { mode: 'on', max_search_results: 5 }
-    });
-
-    const text = completion.choices?.[0]?.message?.content || '';
-    res.json({ recommendation: text.trim() });
-
-  } catch(e) {
-    console.error('property-recommendation error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Get trends for a property — aggregate categories + notes
-app.get('/api/showings/trends', auth, async (req, res) => {
-  try {
-    const { property } = req.query;
-    if (!property) return res.status(400).json({ error: 'property required' });
-    const { rows } = await pool.query(`
-      SELECT f.verdict, f.categories, f.notes, f.agent_name, f.created_at, s.guest_name, s.showing_time
-      FROM showing_feedback f
-      JOIN showings s ON s.id = f.showing_id
-      WHERE s.property = $1
-      ORDER BY f.created_at DESC
-    `, [property]);
-
-    // Tally categories
-    const catCounts = {};
-    let go=0, nogo=0, maybe=0;
-    for (const r of rows) {
-      if (r.verdict === 'go')     go++;
-      if (r.verdict === 'no-go')  nogo++;
-      if (r.verdict === 'maybe')  maybe++;
-      for (const c of (r.categories || [])) {
-        catCounts[c] = (catCounts[c] || 0) + 1;
-      }
-    }
-    const topIssues = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).map(([cat,count])=>({cat,count}));
-    res.json({ go, nogo, maybe, total: rows.length, topIssues, feedback: rows });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Last upload info — for the "stale data" warning
-app.get('/api/showings/last-upload', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT filename, uploaded_by, record_count, created_at FROM showing_uploads ORDER BY created_at DESC LIMIT 1`
-    );
-    res.json(rows[0] || null);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Upcoming showings — next 90 minutes, used by alert poller
-// Also tries to match to a Connect person for "View Lead File" deep-link
-app.get('/api/showings/upcoming', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT s.id, s.property, s.unit, s.guest_name, s.phone, s.email,
-             s.showing_time, s.status, s.showing_type,
-             p.id AS connect_person_id
-      FROM showings s
-      LEFT JOIN LATERAL (
-        SELECT p.id FROM people p
-        WHERE (p.phone IS NOT NULL AND p.phone = s.phone)
-           OR (p.email IS NOT NULL AND LOWER(p.email) = LOWER(s.email))
-        LIMIT 1
-      ) p ON TRUE
-      WHERE s.status = 'Scheduled'
-        AND s.showing_time BETWEEN NOW() AND NOW() + INTERVAL '90 minutes'
-      ORDER BY s.showing_time ASC
-    `);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Showings for a specific contact — matched by phone, email, or name
-app.get('/api/showings/by-contact', auth, async (req, res) => {
-  try {
-    const { phone, email, name } = req.query;
-    if (!phone && !email && !name) return res.json([]);
-
-    const conditions = [];
-    const params = [];
-
-    if (phone) {
-      const digits = phone.replace(/\D/g,'').slice(-10);
-      params.push('%' + digits);
-      conditions.push(`regexp_replace(s.phone,'[^0-9]','','g') LIKE $${params.length}`);
-    }
-    if (email) {
-      params.push(email.toLowerCase());
-      conditions.push(`LOWER(s.email) = $${params.length}`);
-    }
-    if (name) {
-      // AppFolio format: "Last, First" — try fuzzy match
-      params.push('%' + name.toLowerCase().replace(/,\s*/,' ').trim() + '%');
-      const nameParts = name.split(',').map(x=>x.trim());
-      const reversed = (nameParts[1]||'') + ' ' + (nameParts[0]||'');
-      params.push('%' + reversed.toLowerCase().trim() + '%');
-      conditions.push(`(LOWER(s.guest_name) LIKE $${params.length-1} OR LOWER(s.guest_name) LIKE $${params.length})`);
-    }
-
-    const { since } = req.query;
-    if (since) {
-      params.push(since);
-      conditions.push(`1=1`); // placeholder — add date filter below
-    }
-
-    const sinceClause = since ? `AND s.showing_time >= $${params.length}` : '';
-
-    const { rows } = await pool.query(`
-      SELECT s.*, f.verdict, f.categories, f.notes, f.agent_name, f.source AS feedback_source, f.created_at AS feedback_at
-      FROM showings s
-      LEFT JOIN showing_feedback f ON f.showing_id = s.id
-      WHERE (${conditions.slice(0, since ? conditions.length - 1 : conditions.length).join(' OR ')})
-      ${sinceClause}
-      ORDER BY s.showing_time DESC
-      LIMIT 50
-    `, params);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// =============================================================================
-// SHOWING FEEDBACK — public page + poller
-// =============================================================================
-
-// Public feedback submission (no auth — prospect fills this out)
-app.get('/feedback/:showingId', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tour Feedback — OKCREAL</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#eee;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-  .card{background:#141414;border:1px solid #2a2a2a;border-radius:16px;max-width:480px;width:100%;padding:32px}
-  h1{font-size:22px;font-weight:800;margin-bottom:4px;color:#fff}
-  .sub{font-size:13px;color:#888;margin-bottom:28px}
-  .verdict-row{display:flex;gap:10px;margin-bottom:24px}
-  .vbtn{flex:1;padding:16px 8px;border:2px solid #333;border-radius:12px;background:transparent;cursor:pointer;color:#888;font-size:13px;font-weight:700;text-align:center;transition:all .15s}
-  .vbtn.go.sel{border-color:#00e87a;color:#00e87a;background:rgba(0,232,122,.08)}
-  .vbtn.maybe.sel{border-color:#ff8c00;color:#ff8c00;background:rgba(255,140,0,.08)}
-  .vbtn.nogo.sel{border-color:#e8003a;color:#e8003a;background:rgba(232,0,58,.08)}
-  .vbtn .emoji{font-size:28px;display:block;margin-bottom:6px}
-  label{display:block;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#666;margin-bottom:8px}
-  .cats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px}
-  .cat{padding:6px 12px;border:1px solid #333;border-radius:20px;font-size:12px;cursor:pointer;color:#888;background:#1a1a1a;transition:all .12s}
-  .cat.sel{border-color:#e8003a;color:#e8003a;background:rgba(232,0,58,.08)}
-  textarea{width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:14px;padding:12px;resize:vertical;min-height:80px;font-family:inherit;margin-bottom:20px}
-  textarea:focus{outline:none;border-color:#444}
-  .submit{width:100%;padding:14px;background:#e8003a;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;letter-spacing:.05em}
-  .submit:disabled{opacity:.5;cursor:not-allowed}
-  .thanks{text-align:center;padding:40px 0}
-  .thanks .big{font-size:48px;margin-bottom:16px}
-  .thanks h2{font-size:22px;font-weight:800;margin-bottom:8px;color:#fff}
-  .logo{text-align:center;margin-bottom:24px;font-size:13px;letter-spacing:.15em;text-transform:uppercase;color:#555}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OKCREAL Connect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <script src="/twilio-voice.js"></script>
+  <style>
+    /* ── DESIGN TOKENS ────────────────────────────────────────── */
+    :root {
+      --bg:          #080808;
+      --bg-2:        #0f0f0f;
+      --bg-3:        #161616;
+      --bg-4:        #1e1e1e;
+      --bg-5:        #262626;
+      --border:      #242424;
+      --border-hi:   #333333;
+      --text:        #f0f0f0;
+      --text-2:      #999999;
+      --text-3:      #555555;
+
+      --red:         #E8003A;
+      --red-dim:     rgba(232, 0, 58, 0.15);
+      --red-glow:    rgba(232, 0, 58, 0.5);
+      --green:       #00E87A;
+      --green-dim:   rgba(0, 232, 122, 0.12);
+      --green-glow:  rgba(0, 232, 122, 0.5);
+      --amber:       #FF8C00;
+      --amber-dim:   rgba(255, 140, 0, 0.12);
+      --blue:        #0099FF;
+      --blue-dim:    rgba(0, 153, 255, 0.12);
+
+      --radius:      6px;
+      --radius-lg:   12px;
+      --sidebar-w:   256px;
+      --font-body:   'Outfit', sans-serif;
+      --font-mono:   'JetBrains Mono', monospace;
+      --font-cond:   'Barlow Condensed', sans-serif;
+      --font-disp:   'Bebas Neue', cursive;
+
+      /* ── Tactical / Intel panel tokens (stealth defaults) ── */
+      --tac-bg:         #050203;
+      --tac-bg-2:       #0c0004;
+      --tac-header:     linear-gradient(160deg, #120005 0%, #070101 100%);
+      --tac-border:     #1a0008;
+      --tac-border-2:   #2a0008;
+      --tac-border-3:   #1e0008;
+      --tac-corner:     #3a0010;
+      --tac-input-bg:   transparent;
+      --tac-input-line: #2a0010;
+      --tac-chip-bg:    transparent;
+      --tac-chip-border:#160008;
+      --tac-chip-text:  #3a1a28;
+      --tac-chip-dot:   #2a0010;
+      --tac-muted:      #2a0e18;
+      --tac-muted-2:    #4a2030;
+      --tac-footer-bg:  #040001;
+      --tac-name:       #ffffff;
+      --tac-name-glow:  rgba(232,0,58,0.5);
+      --tac-scan:       rgba(232,0,58,0.03);
+      --tac-scanline-h: rgba(255,255,255,0.008);
+      --tac-count-bar:  #1a0008;
+      --tac-lh-name:    #ffffff;
+      --tac-lh-sub:     #884060;
+      --tac-lh-btn-bg:  #0c0002;
+      --tac-nav-label:  #4a2030;
+    }
+
+    /* ── DAYLIGHT THEME ──────────────────────────────────────────── */
+    [data-theme="light"] {
+      --bg:          #f2f2f7;
+      --bg-2:        #ffffff;
+      --bg-3:        #f2f2f7;
+      --bg-4:        #e8e8ed;
+      --bg-5:        #dcdce1;
+      --border:      #d1d1d6;
+      --border-hi:   #b8b8bf;
+      --text:        #1c1c1e;
+      --text-2:      #636366;
+      --text-3:      #aeaeb2;
+      --red-dim:     rgba(232, 0, 58, 0.10);
+      --red-glow:    rgba(232, 0, 58, 0.3);
+      --green-dim:   rgba(0, 180, 100, 0.12);
+      --green-glow:  rgba(0, 180, 100, 0.4);
+      --amber-dim:   rgba(200, 100, 0, 0.10);
+      --blue-dim:    rgba(0, 100, 210, 0.10);
+
+      /* ── Tactical tokens — Daylight "Classified Dossier" mode ── */
+      --tac-bg:         #f7f4f0;
+      --tac-bg-2:       #f0ebe4;
+      --tac-header:     linear-gradient(160deg, #fff 0%, #f7f4f0 100%);
+      --tac-border:     #ddd0c8;
+      --tac-border-2:   #c8b8b0;
+      --tac-border-3:   #d8c8c0;
+      --tac-corner:     #c0a898;
+      --tac-input-bg:   transparent;
+      --tac-input-line: #c0a898;
+      --tac-chip-bg:    transparent;
+      --tac-chip-border:#ddd0c8;
+      --tac-chip-text:  #a08070;
+      --tac-chip-dot:   #c0a898;
+      --tac-muted:      #b0a098;
+      --tac-muted-2:    #907060;
+      --tac-footer-bg:  #ede8e2;
+      --tac-name:       #1c1c1e;
+      --tac-name-glow:  rgba(232,0,58,0.2);
+      --tac-scan:       rgba(0,0,0,0.015);
+      --tac-scanline-h: rgba(0,0,0,0.012);
+      --tac-count-bar:  #ddd0c8;
+      --tac-lh-name:    #1c1c1e;
+      --tac-lh-sub:     #a08070;
+      --tac-lh-btn-bg:  #f0ebe4;
+      --tac-nav-label:  #a08070;
+    }
+
+    /* Scrollbar — light */
+    [data-theme="light"] ::-webkit-scrollbar-track { background: var(--bg-3); }
+    [data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--border-hi); }
+
+    /* ── Light mode element overrides ── */
+    /* App-level bg */
+    [data-theme="light"] body,
+    [data-theme="light"] #app { background: var(--bg); color: var(--text); }
+
+    /* Login */
+    [data-theme="light"] .login-card { background: var(--bg-2); }
+
+    /* Main header */
+    [data-theme="light"] .main-header { background: var(--bg-2); border-color: var(--border); }
+
+    /* Activity timeline items */
+    [data-theme="light"] .activity-item { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .activity-body { color: var(--text-2); }
+
+    /* SMS bubbles */
+    [data-theme="light"] .sms-bubble-out { background: #007AFF; color: #fff; }
+    [data-theme="light"] .sms-bubble-in  { background: var(--bg-4); color: var(--text); }
+
+    /* Call bar */
+    [data-theme="light"] #call-bar .call-bar-inner { background: var(--bg-2); border-color: var(--border); }
+
+    /* Contact panels */
+    /* ── DAYLIGHT MODE — CONTACT RECORD ──────────────────── */
+    [data-theme="light"] .contact-left  { background: var(--tac-bg); border-color: var(--tac-border); }
+    [data-theme="light"] .contact-right { background: var(--tac-bg); border-color: var(--tac-border); }
+    [data-theme="light"] .contact-center { background: var(--bg); }
+    [data-theme="light"] .contact-card-top { background: var(--tac-header); border-bottom-color: var(--red); }
+
+    /* Avatar — warm parchment hex in daylight */
+    [data-theme="light"] .contact-big-avatar { background: #ede8e2; color: var(--red); }
+    [data-theme="light"] .contact-big-avatar.stage-delinquent  { background: #fce8ed; color: var(--red); filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-evicting    { background: #fce0e0; color: #cc2200; filter: none; animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    [data-theme="light"] .contact-big-avatar.stage-resident    { background: #e0f8fa; color: #007a85; filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-caseworker  { background: #f0e8fa; color: #7c3aed; filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-contractor  { background: #fef0e6; color: #c2610a; filter: none; }
+    [data-theme="light"] .contact-big-avatar.stage-owner       { background: #e6f4fd; color: #0369a1; filter: none; }
+    [data-theme="light"] .contact-avatar-ring { border-color: rgba(232,0,58,0.15); border-top-color: rgba(232,0,58,0.4); }
+
+    /* Subject ID + stage badge */
+    [data-theme="light"] .contact-subject-id { color: rgba(180,0,30,0.45); }
+    [data-theme="light"] .contact-record-name { color: #1c1c1e; text-shadow: none; }
+    [data-theme="light"] .contact-stage-badge { color: rgba(180,0,30,0.7); border-color: rgba(232,0,58,0.25); background: rgba(232,0,58,0.05); }
+
+    /* Action buttons — warm bordered chips in daylight */
+    [data-theme="light"] .cqa-btn { border-color: var(--tac-border-2); color: var(--tac-muted-2); background: rgba(240,235,228,0.7); }
+    [data-theme="light"] .cqa-btn:hover { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.07); }
+    [data-theme="light"] .cqa-call { border-color: rgba(0,150,80,0.35); color: #00804a; background: rgba(0,180,100,0.07); }
+    [data-theme="light"] .cqa-call:hover { border-color: #00804a; background: rgba(0,180,100,0.12); color: #00804a; }
+    [data-theme="light"] .cqa-text { border-color: rgba(0,100,200,0.3); color: #0055cc; background: rgba(0,100,210,0.07); }
+    [data-theme="light"] .cqa-text:hover { border-color: #0055cc; background: rgba(0,100,210,0.12); color: #0055cc; }
+    [data-theme="light"] .cqa-note { border-color: rgba(160,80,0,0.3); color: #a05000; background: rgba(200,100,0,0.07); }
+    [data-theme="light"] .cqa-note:hover { border-color: #a05000; background: rgba(200,100,0,0.1); }
+
+    /* Sections */
+    [data-theme="light"] .contact-section { border-color: var(--tac-border); }
+    [data-theme="light"] .contact-section::before,
+    [data-theme="light"] .contact-section::after { border-color: var(--tac-corner); }
+    [data-theme="light"] .contact-section-title { color: rgba(180,0,30,0.65); opacity: 1; }
+    [data-theme="light"] .detail-label { color: var(--tac-muted-2); }
+    [data-theme="light"] .detail-value { color: var(--text); }
+    [data-theme="light"] .stage-select { background: var(--tac-bg-2); border-bottom-color: var(--tac-input-line); color: var(--text); }
+
+    /* Right panel */
+    [data-theme="light"] .right-section { border-color: var(--tac-border); }
+    [data-theme="light"] .right-section::before,
+    [data-theme="light"] .right-section::after { border-color: var(--tac-corner); }
+    [data-theme="light"] .right-section-title { color: rgba(180,0,30,0.65); opacity: 1; }
+    [data-theme="light"] .add-btn { border-color: var(--tac-border-2); color: var(--tac-muted-2); }
+    [data-theme="light"] .add-btn:hover { color: var(--red); border-color: rgba(232,0,58,0.4); }
+
+    /* Timeline center */
+    [data-theme="light"] .timeline-header { background: var(--tac-bg); border-color: var(--tac-border); }
+    [data-theme="light"] .compose-tabs { background: var(--tac-bg-2); border-color: var(--tac-border); }
+    [data-theme="light"] .compose-tab { color: var(--tac-muted-2); }
+    [data-theme="light"] .compose-tab.active { color: var(--red); }
+    [data-theme="light"] .compose-footer { background: var(--tac-bg-2); border-color: var(--tac-border); }
+    [data-theme="light"] .filter-pill { background: transparent; border-color: var(--tac-border-2); color: var(--tac-muted-2); }
+    [data-theme="light"] .filter-pill.active { background: rgba(232,0,58,0.08); color: var(--red); border-color: rgba(232,0,58,0.3); }
+
+    /* Back button */
+    [data-theme="light"] .back-btn { color: var(--tac-muted-2); }
+    [data-theme="light"] .back-btn:hover { color: var(--red); }
+
+    /* Compose */
+    [data-theme="light"] .compose-area  { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .compose-tabs  { background: var(--bg-3); }
+    [data-theme="light"] .compose-input { background: var(--bg-2); color: var(--text); }
+
+    /* ══ STEALTH MODE — FIGHTER JET HUD ══════════════════════════════════
+       Deep cockpit black + phosphor green, red kept ONLY for danger states  */
+
+    /* App chrome */
+    [data-theme="dark"] body { background: #010a04; }
+    [data-theme="dark"] #sidebar { background: #020c05; border-color: #042210; }
+    [data-theme="dark"] #main-header { background: #020c05; border-color: #042210; }
+
+    /* Sidebar nav */
+    [data-theme="dark"] .nav-item { color: rgba(0,200,80,0.35); }
+    [data-theme="dark"] .nav-item:hover { color: rgba(0,255,120,0.65); background: rgba(0,180,60,0.06); }
+    [data-theme="dark"] .nav-item.active { color: #00ff88; background: rgba(0,200,80,0.08); border-color: rgba(0,200,80,0.22); }
+    [data-theme="dark"] .nav-section-label { color: rgba(0,160,55,0.28); }
+    [data-theme="dark"] .sl-nav-item { color: rgba(0,200,80,0.4); }
+    [data-theme="dark"] .sl-nav-item:hover,
+    [data-theme="dark"] .sl-nav-item.active { color: #00e87a; }
+
+    /* Contact panels */
+    [data-theme="dark"] .contact-left  { background: #010c05; border-color: #042810; }
+    [data-theme="dark"] .contact-right { background: #010c05; border-color: #042810; }
+    [data-theme="dark"] .contact-center { background: #010a04; }
+    [data-theme="dark"] .contact-card-top {
+      background: linear-gradient(160deg, #021a08 0%, #010c04 100%);
+      border-color: rgba(0,200,80,0.45);
+      box-shadow: 0 3px 20px rgba(0,200,80,0.1);
+    }
+
+    /* Avatar */
+    [data-theme="dark"] .contact-avatar-ring { border-color: rgba(0,200,80,0.1); border-top-color: rgba(0,255,120,0.45); }
+    [data-theme="dark"] .contact-big-avatar  { background: #021408; color: rgba(0,200,80,0.6); }
+
+    /* Name + ID + badge */
+    [data-theme="dark"] .contact-subject-id  { color: rgba(0,200,80,0.38); }
+    [data-theme="dark"] .contact-record-name { color: #eafff2; text-shadow: 0 0 20px rgba(0,255,120,0.25); }
+    [data-theme="dark"] .contact-stage-badge { color: rgba(0,220,90,0.8); border-color: rgba(0,180,70,0.28); }
+    [data-theme="dark"] .contact-stage-badge::before { background: #00e87a; box-shadow: 0 0 5px #00e87a; }
+
+    /* Section borders + HUD corners */
+    [data-theme="dark"] .contact-section { border-color: #031a0c; }
+    [data-theme="dark"] .contact-section::before,
+    [data-theme="dark"] .contact-section::after { border-color: rgba(0,130,50,0.4); }
+    [data-theme="dark"] .right-section   { border-color: #031a0c; }
+    [data-theme="dark"] .right-section::before,
+    [data-theme="dark"] .right-section::after  { border-color: rgba(0,130,50,0.4); }
+
+    /* Section titles — phosphor green */
+    [data-theme="dark"] .contact-section-title { color: rgba(0,220,90,0.85); opacity: 1; }
+    [data-theme="dark"] .right-section-title   { color: rgba(0,220,90,0.85); opacity: 1; }
+
+    /* Detail rows */
+    [data-theme="dark"] .detail-label { color: rgba(0,180,70,0.48); }
+    [data-theme="dark"] .detail-value { color: #ceeedd; }
+
+    /* Stage select */
+    [data-theme="dark"] .stage-select { color: #b8e8c8; background: rgba(1,14,6,0.95); border-bottom-color: rgba(0,130,50,0.38); }
+
+    /* Action buttons */
+    [data-theme="dark"] .cqa-btn        { border-color: rgba(0,140,50,0.3); color: rgba(0,190,75,0.48); }
+    [data-theme="dark"] .cqa-btn:hover  { border-color: #00e87a; color: #00e87a; background: rgba(0,200,80,0.07); }
+    [data-theme="dark"] .cqa-call       { border-color: rgba(0,200,80,0.28); color: rgba(0,230,100,0.7); }
+    [data-theme="dark"] .cqa-call:hover { border-color: #00ff88; color: #00ff88; background: rgba(0,255,136,0.06); }
+    [data-theme="dark"] .cqa-text       { border-color: rgba(0,160,255,0.22); color: rgba(0,200,255,0.62); }
+    [data-theme="dark"] .cqa-text:hover { border-color: #00c8ff; color: #00c8ff; background: rgba(0,200,255,0.06); }
+    [data-theme="dark"] .cqa-note       { border-color: rgba(0,200,80,0.18); color: rgba(0,200,80,0.52); }
+    [data-theme="dark"] .cqa-note:hover { border-color: #00e87a; color: #00e87a; background: rgba(0,200,80,0.06); }
+    /* Delete stays red — danger action */
+    [data-theme="dark"] .cqa-btn[style*="220,38,38"],
+    [data-theme="dark"] .cqa-btn[style*="232,0,58"] { border-color: rgba(232,0,58,0.28) !important; color: rgba(232,0,58,0.48) !important; }
+
+    /* Back / add buttons */
+    [data-theme="dark"] .back-btn        { color: rgba(0,180,60,0.38); }
+    [data-theme="dark"] .back-btn:hover  { color: #00e87a; }
+    [data-theme="dark"] .add-btn         { border-color: rgba(0,140,50,0.32); color: rgba(0,180,60,0.42); }
+    [data-theme="dark"] .add-btn:hover   { color: #00e87a; border-color: rgba(0,232,122,0.38); }
+
+    /* Tasks */
+    [data-theme="dark"] .task-text  { color: #b0e8c4; }
+    [data-theme="dark"] .task-check { border-color: rgba(0,140,50,0.42); }
+
+    /* Timeline center */
+    [data-theme="dark"] .timeline-header { background: #010c05; border-color: #031a0c; }
+    [data-theme="dark"] .compose-area    { background: #010c05; border-color: rgba(0,90,38,0.48); }
+    [data-theme="dark"] .compose-area:focus-within { border-color: rgba(0,200,80,0.38); }
+    [data-theme="dark"] .compose-tabs    { background: #010905; border-color: #031a0c; }
+    [data-theme="dark"] .compose-tab     { color: rgba(0,180,60,0.38); }
+    [data-theme="dark"] .compose-tab.active { color: #00e87a; border-bottom-color: #00e87a; }
+    [data-theme="dark"] .compose-footer  { background: #010905; border-color: #031a0c; }
+    [data-theme="dark"] .compose-submit  { background: linear-gradient(135deg, #005a28 0%, #009848 60%, #005a28 100%); }
+    [data-theme="dark"] .compose-submit:hover { box-shadow: 0 0 18px rgba(0,200,80,0.45); }
+    [data-theme="dark"] .filter-pill     { border-color: rgba(0,90,38,0.42); color: rgba(0,180,60,0.42); }
+    [data-theme="dark"] .filter-pill.active { background: rgba(0,200,80,0.09); color: #00e87a; border-color: rgba(0,200,80,0.32); }
+    [data-theme="dark"] .ti-time { color: rgba(0,180,60,0.38); }
+    [data-theme="dark"] .ti-connector { background: #031a0c; }
+
+    /* SL nav bar */
+    [data-theme="dark"] .sl-nav-bar { background: #010c05; border-color: #031a0c; color: rgba(0,200,80,0.58); }
+    [data-theme="dark"] .sl-nav-bar button { color: rgba(0,200,80,0.55); border-color: rgba(0,130,48,0.28); }
+    [data-theme="dark"] .sl-nav-bar button:hover:not(:disabled) { color: #00ff88; border-color: rgba(0,200,80,0.48); }
+    [data-theme="dark"] .sl-nav-info  { color: #00e87a; }
+    [data-theme="dark"] .sl-nav-label { color: rgba(0,180,60,0.52); }
+
+    /* Modals */
+    [data-theme="light"] .modal-box { background: var(--bg-2); border-color: var(--border); }
+
+    /* Tables */
+    [data-theme="light"] .data-table th { background: var(--bg-3); color: var(--text-2); }
+    [data-theme="light"] .data-table td { border-color: var(--border); }
+    [data-theme="light"] .data-table tr:hover td { background: var(--bg-3); }
+
+    /* People list */
+    [data-theme="light"] .people-list { background: var(--bg-2); }
+    [data-theme="light"] .list-row:hover { background: var(--bg-3); }
+    [data-theme="light"] .list-row.active { background: var(--bg-3); }
+
+    /* ── Tactical panel — daylight structural overrides ── */
+    [data-theme="light"] .sl-panel { border-left-color: var(--tac-border); }
+    [data-theme="light"] .sl-panel-header { border-bottom-color: var(--red); box-shadow: 0 2px 10px rgba(232,0,58,0.08); }
+    [data-theme="light"] .sl-badge { border-color: rgba(232,0,58,0.25); color: rgba(180,0,30,0.6); }
+    [data-theme="light"] .sl-panel-title { text-shadow: 0 0 12px rgba(232,0,58,0.15); }
+    [data-theme="light"] .sl-close-btn:hover { background: var(--red-dim); }
+    [data-theme="light"] .sl-section::before,
+    [data-theme="light"] .sl-section::after,
+    [data-theme="light"] .sl-section-tl,
+    [data-theme="light"] .sl-section-br { border-color: var(--tac-corner); }
+    [data-theme="light"] .sl-input { color: var(--text); }
+    [data-theme="light"] textarea.sl-input { background: rgba(240,235,228,0.6); }
+    [data-theme="light"] .sl-stage-chip.selected { box-shadow: inset 0 0 10px rgba(232,0,58,0.06), 0 0 6px rgba(232,0,58,0.06); }
+    [data-theme="light"] .sl-panel-footer { border-top-color: var(--tac-border); }
+    [data-theme="light"] .sl-del-btn { color: var(--tac-muted-2); border-color: var(--tac-border); }
+    [data-theme="light"] .sl-del-btn:hover { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+    [data-theme="light"] .sl-nav-bar { background: var(--bg-3); border-bottom-color: var(--border); }
+    [data-theme="light"] .sl-nav-bar button { background: var(--bg-4); border-color: var(--border); color: var(--text-2); }
+    [data-theme="light"] .sl-lh-edit:hover { color: var(--red); border-color: var(--red); }
+    /* Scanline is barely visible in light mode — reduce opacity */
+    [data-theme="light"] .sl-panel::after { opacity: 0.4; }
+    [data-theme="light"] .sl-panel::before { opacity: 0.5; }
+
+    /* Inputs & selects */
+    [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea {
+      background: var(--bg-2); color: var(--text); border-color: var(--border);
+    }
+    [data-theme="light"] input::placeholder,
+    [data-theme="light"] textarea::placeholder { color: var(--text-3); }
+
+    /* Neon connection bar — soften glow in daylight */
+    [data-theme="light"] #conn-status-bar.connected::before {
+      opacity: 0.75;
+    }
+
+    /* Stage banners — keep glow but slightly more opaque bg */
+    [data-theme="light"] .banner-resident { background: rgba(0,232,240,0.12); }
+    [data-theme="light"] .banner-evicting  { background: rgba(255,59,59,0.14); }
+    [data-theme="light"] .banner-delinquent { background: rgba(59,158,255,0.12); }
+
+    /* Sidebar */
+    [data-theme="light"] #sidebar { background: var(--bg-2); border-color: var(--border); }
+    [data-theme="light"] .nav-item:hover { background: var(--bg-3); }
+    [data-theme="light"] .nav-item.active { background: var(--bg-3); }
+
+    /* Theme toggle */
+    .theme-toggle-wrap {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .theme-toggle-label {
+      font-size: 12px; color: var(--text-3); flex: 1;
+      font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .theme-toggle-icon { font-size: 14px; line-height: 1; transition: transform 0.4s ease; }
+    .theme-toggle-track {
+      width: 40px; height: 22px;
+      background: var(--bg-5);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      position: relative;
+      transition: background 0.3s, border-color 0.3s;
+      flex-shrink: 0;
+    }
+    [data-theme="light"] .theme-toggle-track {
+      background: #007AFF;
+      border-color: #007AFF;
+    }
+    .theme-toggle-thumb {
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 16px; height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    [data-theme="light"] .theme-toggle-thumb {
+      transform: translateX(18px);
+    }
+
+    /* ── RESET ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button { cursor: pointer; font-family: var(--font-body); border: none; outline: none; }
+    input, textarea, select { font-family: var(--font-body); outline: none; border: none; }
+    a { text-decoration: none; color: inherit; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-5); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
+
+    /* ── ANIMATIONS ───────────────────────────────────────────── */
+    @keyframes glow-breathe-red {
+      0%, 100% { box-shadow: 0 0 8px var(--red-glow), 0 0 20px rgba(232,0,58,0.2); }
+      50%       { box-shadow: 0 0 20px var(--red-glow), 0 0 50px rgba(232,0,58,0.35), 0 0 80px rgba(232,0,58,0.1); }
+    }
+    @keyframes glow-breathe-green {
+      0%, 100% { box-shadow: 0 0 8px var(--green-glow), 0 0 20px rgba(0,232,122,0.2); }
+      50%       { box-shadow: 0 0 20px var(--green-glow), 0 0 50px rgba(0,232,122,0.35), 0 0 80px rgba(0,232,122,0.1); }
+    }
+    @keyframes pulse-ring {
+      0%   { transform: scale(1); opacity: 1; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes dot-bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+      40%            { transform: translateY(-4px); opacity: 1; }
+    }
+    @keyframes logo-appear {
+      0%   { opacity: 0; letter-spacing: 0.5em; filter: blur(8px); }
+      100% { opacity: 1; letter-spacing: normal; filter: blur(0); }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes sms-status-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── LOGIN ────────────────────────────────────────────────── */
+    #login-screen {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse 60% 50% at 50% 100%, rgba(232,0,58,0.08) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 30% at 20% 20%, rgba(0,232,122,0.04) 0%, transparent 60%);
+    }
+    #login-screen::before {
+      content: '';
+      position: absolute; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.015'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    }
+    .login-card {
+      position: relative; z-index: 1;
+      width: 400px;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 48px 40px;
+      animation: fade-in 0.6s ease forwards;
+    }
+    .login-logo { text-align: center; margin-bottom: 36px; }
+    .login-logo .wordmark {
+      font-family: var(--font-disp);
+      font-size: 42px; letter-spacing: 0.02em;
+      animation: logo-appear 0.8s ease forwards;
+    }
+    .login-logo .wordmark span { color: var(--red); text-shadow: 0 0 20px var(--red-glow); }
+    .login-logo .sub {
+      font-family: var(--font-cond);
+      font-size: 11px; letter-spacing: 0.3em;
+      color: var(--text-2); margin-top: 4px; text-transform: uppercase;
+    }
+    [data-theme="light"] .login-logo .sub { color: #444; }
+    .login-field { margin-bottom: 16px; }
+    .login-field label {
+      display: block; font-size: 11px; font-weight: 600;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-2); margin-bottom: 8px;
+    }
+    [data-theme="light"] .login-field label { color: #333; }
+    .login-field input {
+      width: 100%; height: 44px;
+      background: var(--bg-3); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0 14px;
+      color: var(--text); font-size: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    [data-theme="light"] .login-field input { background: #fff; border-color: #ccc; color: #111; }
+    [data-theme="light"] .login-card { background: #fff; border-color: #ddd; box-shadow: 0 8px 40px rgba(0,0,0,0.1); }
+    .login-field input:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
+    .login-btn {
+      width: 100%; height: 46px; margin-top: 8px;
+      background: var(--red); color: #fff;
+      font-family: var(--font-cond); font-size: 15px; font-weight: 700;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      border-radius: var(--radius);
+      transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+    }
+    .login-btn:hover { background: #ff1a4e; box-shadow: 0 0 20px var(--red-glow); }
+    .login-btn:active { transform: scale(0.98); }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-error { color: var(--red); font-size: 13px; text-align: center; margin-top: 12px; min-height: 18px; }
+
+    /* ── APP SHELL ────────────────────────────────────────────── */
+    #app { display: none; height: 100vh; flex-direction: column; }
+    #app.visible { display: flex; }
+
+    /* ── PRIVACY BLUR MODE — CLASSIFIED ────────────────────────── */
+    #privacy-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 99998;
+      backdrop-filter: blur(3.6px) brightness(0.72) saturate(0.6);
+      -webkit-backdrop-filter: blur(3.6px) brightness(0.72) saturate(0.6);
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0.07) 0px, rgba(0,0,0,0.07) 1px,
+        transparent 1px, transparent 4px
+      );
+      align-items: center; justify-content: center;
+      flex-direction: column; cursor: pointer;
+    }
+    #privacy-overlay.active { display: flex; }
+
+    /* Red scanline flicker layer */
+    #privacy-overlay::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgba(200,0,0,0.03) 48%,
+        rgba(200,0,0,0.07) 50%,
+        rgba(200,0,0,0.03) 52%,
+        transparent 100%
+      );
+      animation: priv-scan 6s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes priv-scan {
+      0%   { transform: translateY(-100%); }
+      100% { transform: translateY(100%); }
+    }
+
+    /* Vignette */
+    #privacy-overlay::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%);
+      pointer-events: none;
+    }
+
+    .priv-stamp {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; align-items: center; gap: 0;
+      animation: priv-stamp-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      transform-origin: center;
+      /* Constrain to middle ~25% of the screen */
+      width: 40%; max-width: 480px; min-width: 260px;
+    }
+    @keyframes priv-stamp-in {
+      0%   { transform: scale(1.35) rotate(-4deg); opacity: 0; }
+      60%  { transform: scale(0.97) rotate(1deg); opacity: 1; }
+      100% { transform: scale(1) rotate(-2deg); opacity: 1; }
+    }
+
+    .priv-stamp-word {
+      font-family: 'Arial Black', 'Impact', sans-serif;
+      font-size: clamp(32px, 4.5vw, 58px);
+      font-weight: 900;
+      letter-spacing: 0.14em;
+      color: #e8000a;
+      text-transform: uppercase;
+      line-height: 1;
+      white-space: nowrap;
+      display: inline-block;
+      /* Extra right padding absorbs trailing letter-spacing gap */
+      padding: 8px 20px 5px 20px;
+      border: 5px solid #e8000a;
+      border-radius: 4px;
+      opacity: 0.88;
+      text-shadow:
+        1px 0 0 rgba(232,0,10,0.4),
+        -1px 0 0 rgba(232,0,10,0.4),
+        0 1px 0 rgba(232,0,10,0.3),
+        0 0 20px rgba(232,0,10,0.5);
+      box-shadow:
+        inset 0 0 0 2px rgba(232,0,10,0.2),
+        0 0 40px rgba(232,0,10,0.25);
+      animation: priv-glow 3s ease-in-out infinite;
+    }
+    @keyframes priv-glow {
+      0%,100% { box-shadow: inset 0 0 0 2px rgba(232,0,10,0.2), 0 0 30px rgba(232,0,10,0.2); }
+      50%      { box-shadow: inset 0 0 0 2px rgba(232,0,10,0.3), 0 0 60px rgba(232,0,10,0.4); }
+    }
+
+    .priv-stamp-sub {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.35em;
+      color: rgba(232,0,10,0.7);
+      text-transform: uppercase;
+      margin-top: 10px;
+    }
+
+    .priv-stamp-hint {
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: rgba(255,255,255,0.25);
+      margin-top: 18px;
+      text-transform: uppercase;
+    }
+
+    #privacy-indicator {
+      display: none; position: fixed; top: 12px; right: 16px; z-index: 99997;
+      background: rgba(232,0,10,0.12); border: 1px solid rgba(232,0,10,0.5);
+      color: #e8000a; font-size: 10px; font-weight: 800; padding: 4px 12px;
+      border-radius: 3px; letter-spacing: 0.15em; cursor: pointer;
+      font-family: 'Courier New', monospace; text-transform: uppercase;
+    }
+    #privacy-indicator.active { display: block; animation: priv-blink 2s step-end infinite; }
+    @keyframes priv-blink {
+      0%,100% { opacity: 1; } 50% { opacity: 0.4; }
+    }
+
+
+    /* ── SECURITY ALERT HISTORY ──────────────────────────────────── */
+    /* ── Watchlist Alert Cards ── */
+    .sec-hist-day-label { font-size:10px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-3); padding:8px 0 4px; margin-top:4px; }
+    .sec-hist-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:60px 20px; color:var(--text-3); text-align:center; }
+    .sec-hist-card {
+      background: var(--bg-2); border-radius: 12px;
+      border: 1px solid var(--border); overflow: hidden;
+      transition: border-color 0.15s, box-shadow 0.15s; flex-shrink: 0;
+      display: flex; gap: 0;
+    }
+    .sec-hist-card:hover { border-color: rgba(255,59,59,0.5); box-shadow: 0 2px 16px rgba(255,59,59,0.08); }
+    /* Left: thumbnail strip */
+    .sec-hist-thumb-col {
+      width: 140px; flex-shrink: 0; position: relative; background: var(--bg);
+      border-right: 1px solid var(--border);
+    }
+    .sec-hist-thumb {
+      width: 140px; height: 100%; min-height: 90px; object-fit: cover; display: block;
+    }
+    .sec-hist-thumb-ph {
+      width: 140px; min-height: 90px; height: 100%; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; font-size: 32px;
+    }
+    /* Right: content */
+    .sec-hist-content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px 14px; gap: 6px; }
+    .sec-hist-row1 { display: flex; align-items: flex-start; gap: 8px; }
+    .sec-hist-cam-block { flex: 1; min-width: 0; }
+    .sec-hist-site { font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #ff3b3b; margin-bottom: 1px; }
+    .sec-hist-cam { font-size: 13px; font-weight: 700; color: var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sec-hist-time { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+    .sec-hist-divider { height: 1px; background: var(--border); margin: 2px 0; }
+    .sec-hist-person-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sec-hist-name { font-size: 14px; font-weight: 700; color: var(--text); }
+    .sec-hist-unknown { font-size: 13px; color: var(--text-3); font-style: italic; }
+    .sec-hist-stage { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+    .sec-hist-actions { display: flex; gap: 6px; margin-top: 4px; }
+    .sec-hist-btn {
+      font-size: 12px; padding: 6px 14px; border-radius: 7px; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap;
+    }
+    .sec-hist-btn.footage { background:rgba(255,59,59,0.15); color:#ff3b3b; border:1px solid rgba(255,59,59,0.35); }
+    .sec-hist-btn.footage:hover { background:rgba(255,59,59,0.28); }
+    .sec-hist-btn.open { background:var(--bg-3); color:var(--text); border:1px solid var(--border); }
+    .sec-hist-btn.open:hover { border-color:var(--accent); color:var(--accent); }
+
+    /* ── SECURITY PROFILE PANEL ──────────────────────────────────── */
+    .sec-profile-section { display: flex; flex-direction: column; gap: 14px; }
+    .sec-id-row { display: flex; gap: 14px; align-items: flex-start; }
+    .sec-id-col { display: flex; flex-direction: column; align-items: center; gap: 6px; flex-shrink: 0; }
+    .sec-id-photo-wrap {
+      width: 100%; height: 120px; border-radius: 8px;
+      border: 2px dashed var(--border); background: var(--bg-2);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; overflow: hidden; transition: border-color 0.2s;
+      position: relative; box-sizing: border-box;
+    }
+    .sec-id-photo-wrap:hover { border-color: var(--accent); }
+    .sec-id-photo-wrap img { width:100%; height:100%; object-fit:cover; border-radius:6px; display:block; }
+    .sec-id-missing {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      color: var(--text-3); font-size: 10px; text-align: center; padding: 6px; pointer-events: none;
+    }
+    .sec-id-badge {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.12em;
+      color: #ff3b3b; text-transform: uppercase; margin-top: 2px;
+    }
+    .sec-id-btns { display: flex; gap: 4px; }
+    .sec-micro-btn {
+      font-size: 10px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-2); transition: all 0.15s; font-family: inherit;
+    }
+    .sec-micro-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .sec-micro-btn.del:hover { border-color: #ff3b3b; color: #ff3b3b; }
+    .sec-info-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    .sec-field { display: flex; flex-direction: column; gap: 4px; }
+    .sec-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-3);
+    }
+    .sec-textarea {
+      width: 100%; box-sizing: border-box; min-height: 58px;
+      background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 12px;
+      padding: 8px 10px; resize: vertical; font-family: inherit;
+      transition: border-color 0.15s; line-height: 1.5;
+    }
+    .sec-textarea:focus { outline: none; border-color: var(--accent); }
+    .sec-dv-box {
+      border-radius: 8px; padding: 10px 12px;
+      border: 1px solid rgba(255,59,59,0.2);
+      background: rgba(255,59,59,0.04); transition: all 0.2s;
+    }
+    .sec-dv-box.active { background: rgba(255,59,59,0.1); border-color: rgba(255,59,59,0.45); }
+    .sec-dv-top { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .sec-dv-check { width: 16px; height: 16px; accent-color: #ff3b3b; cursor: pointer; flex-shrink:0; }
+    .sec-dv-title { font-size: 12px; font-weight: 700; color: var(--text); }
+    .sec-dv-sub { font-size: 11px; color: var(--text-3); margin-left: 24px; margin-top: 2px; }
+    .sec-dv-notes-wrap { margin-top: 8px; display: none; }
+    .sec-dv-box.active .sec-dv-notes-wrap { display: block; }
+    .sec-save-row { display: flex; align-items: center; gap: 10px; }
+    .sec-save-btn {
+      padding: 7px 18px; border-radius: 6px; font-size: 12px; font-weight: 700;
+      background: var(--accent); color: #fff; border: none; cursor: pointer;
+      transition: all 0.2s; font-family: inherit; letter-spacing: 0.04em;
+    }
+    .sec-save-btn:hover { opacity: 0.88; }
+    .sec-save-btn.saved { background: var(--green) !important; }
+    .sec-saved-msg { font-size: 11px; color: var(--green); opacity: 0; transition: opacity 0.3s; }
+    .sec-saved-msg.show { opacity: 1; }
+    .sec-detections-list { display: flex; flex-direction: column; gap: 6px; }
+    .sec-det-row {
+      display: flex; gap: 8px; align-items: flex-start;
+      padding: 7px 8px; background: var(--bg-2); border-radius: 6px;
+      border-left: 3px solid rgba(255,59,59,0.5);
+    }
+    .sec-det-thumb {
+      width: 38px; height: 38px; border-radius: 4px; object-fit: cover;
+      border: 1px solid rgba(255,59,59,0.4); flex-shrink: 0;
+    }
+    .sec-det-info { min-width: 0; font-size: 11px; }
+    .sec-det-cam { font-weight: 600; color: var(--text); }
+    .sec-det-meta { color: var(--text-3); margin-top: 1px; }
+    .sec-det-link { color: #ff3b3b; font-size: 10px; margin-top: 2px; display: inline-block; }
+
+    /* ── JIREH SECURITY ALERT BANNER ──────────────────────────────── */
+    #security-alert {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 9999;
+      transform: translateY(-110%);
+      transition: transform 0.4s cubic-bezier(0.34, 1.4, 0.64, 1);
+      background: #0a0a0f;
+      border-bottom: 2px solid #ff3b3b;
+      box-shadow: 0 4px 32px rgba(255,59,59,0.4), 0 0 60px rgba(255,59,59,0.15);
+    }
+    #security-alert.visible { transform: translateY(0); }
+    .security-alert-inner {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 20px;
+      max-width: 1400px;
+    }
+    .security-alert-icon {
+      font-size: 28px; flex-shrink: 0;
+      animation: sec-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes sec-pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.7; transform: scale(1.15); }
+    }
+    .security-alert-thumb {
+      width: 52px; height: 52px; border-radius: 6px;
+      object-fit: cover; border: 2px solid #ff3b3b;
+      flex-shrink: 0;
+      background: #1a1a1a;
+    }
+    .security-alert-thumb-placeholder {
+      width: 52px; height: 52px; border-radius: 6px;
+      background: #1a1a1a; border: 2px solid #333;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px; flex-shrink: 0;
+    }
+    .security-alert-body { flex: 1; min-width: 0; }
+    .security-alert-title {
+      font-size: 13px; font-weight: 700; color: #ff3b3b;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .security-alert-sub {
+      font-size: 12px; color: var(--text-2); margin-top: 2px;
+    }
+    .security-alert-name {
+      font-size: 14px; font-weight: 600; color: #fff; margin-top: 3px;
+    }
+    .security-alert-actions {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+    .sec-btn {
+      padding: 6px 14px; border-radius: 6px; font-size: 12px;
+      font-weight: 600; cursor: pointer; border: none; transition: all 0.15s;
+    }
+    .sec-btn-view  { background: #ff3b3b; color: #fff; }
+    .sec-btn-view:hover  { background: #ff6060; box-shadow: 0 0 12px rgba(255,59,59,0.6); }
+    .sec-btn-open  { background: rgba(255,59,59,0.15); color: #ff3b3b; border: 1px solid #ff3b3b; }
+    .sec-btn-open:hover  { background: rgba(255,59,59,0.3); }
+    .sec-btn-close { background: transparent; color: var(--text-3); font-size: 18px; padding: 4px 8px; }
+    .sec-btn-close:hover { color: var(--text); }
+    [data-theme="light"] #security-alert { background: #fff; box-shadow: 0 4px 32px rgba(220,0,0,0.25); }
+    [data-theme="light"] .security-alert-name { color: #1c1c1e; }
+
+    #call-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 900;
+      transform: translateY(-100%);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    #call-bar.visible { transform: translateY(0); }
+    .call-bar-inner {
+      margin: 8px auto; max-width: 620px;
+      background: var(--bg-3); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 12px 16px;
+      display: flex; align-items: center; gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    }
+    #call-bar.ringing .call-bar-inner { animation: glow-breathe-green 1.4s ease-in-out infinite; border-color: var(--green); }
+    #call-bar.active .call-bar-inner { border-color: rgba(0,232,122,0.4); }
+    .call-pulse-ring {
+      position: relative; width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .call-pulse-ring::before, .call-pulse-ring::after {
+      content: ''; position: absolute; inset: 0;
+      border-radius: 50%; border: 2px solid var(--green);
+      animation: pulse-ring 1.5s ease-out infinite;
+    }
+    .call-pulse-ring::after { animation-delay: 0.5s; }
+    #call-bar:not(.ringing) .call-pulse-ring::before,
+    #call-bar:not(.ringing) .call-pulse-ring::after { display: none; }
+    .call-avatar {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--bg-5); border: 2px solid var(--green);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; font-weight: 700; color: var(--green);
+      position: relative; z-index: 1;
+    }
+    .call-info { flex: 1; min-width: 0; }
+    .call-status-label { font-size: 10px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: var(--green); margin-bottom: 2px; }
+    .call-contact-name { font-family: var(--font-cond); font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .call-number { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+    .call-timer { font-family: var(--font-mono); font-size: 18px; font-weight: 500; color: var(--green); min-width: 52px; text-align: center; }
+    .call-actions { display: flex; gap: 8px; align-items: center; }
+    .call-btn {
+      height: 36px; padding: 0 14px; border-radius: 100px;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+      transition: all 0.15s; display: flex; align-items: center; gap: 6px;
+    }
+    .call-btn-accept { background: var(--green); color: #000; }
+    .call-btn-accept:hover { box-shadow: 0 0 16px var(--green-glow); transform: scale(1.04); }
+    .call-btn-decline { background: var(--red); color: #fff; }
+    .call-btn-decline:hover { box-shadow: 0 0 16px var(--red-glow); transform: scale(1.04); }
+    .call-btn-mute, .call-btn-hold { background: var(--bg-5); color: var(--text-2); border: 1px solid var(--border); }
+    .call-btn-mute:hover, .call-btn-hold:hover { color: var(--text); border-color: var(--border-hi); }
+    .call-btn-mute.active { color: var(--amber); border-color: var(--amber); }
+    .call-btn-end { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+    .call-btn-end:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+
+    .call-btn-end { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+    .call-btn-end:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+
+    /* clickable contact name in call bar */
+    .call-contact-name.linked {
+      cursor: pointer; color: var(--accent);
+      text-decoration: underline; text-underline-offset: 3px;
+      text-decoration-style: dotted;
+    }
+    .call-contact-name.linked:hover { opacity: 0.8; }
+
+    /* unknown caller tray */
+    #call-unknown-tray {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding: 8px 16px; background: rgba(0,0,0,0.3);
+    }
+    #call-unknown-tray-inner {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    #call-unknown-tray-label {
+      font-size: 12px; color: var(--text-3); flex: 1; min-width: 120px;
+    }
+    .call-tray-btn {
+      font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 6px;
+      cursor: pointer; border: none; font-family: inherit; transition: all 0.15s;
+    }
+    .call-tray-btn.new  { background: var(--green); color: #000; }
+    .call-tray-btn.new:hover { opacity: 0.85; }
+    .call-tray-btn.add  { background: rgba(0,170,255,0.2); color: #00aaff; border: 1px solid rgba(0,170,255,0.4); }
+    .call-tray-btn.add:hover { background: rgba(0,170,255,0.35); }
+    .call-tray-btn.dismiss { background: transparent; color: var(--text-3); border: 1px solid var(--border); }
+    .call-tray-btn.dismiss:hover { color: var(--text); }
+    #call-tray-search-wrap { margin-top: 8px; }
+    #call-tray-search {
+      width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 6px;
+      background: var(--bg-3); border: 1px solid var(--border); color: var(--text);
+      font-size: 13px; font-family: inherit; outline: none;
+    }
+    #call-tray-search:focus { border-color: var(--accent); }
+    #call-tray-results {
+      margin-top: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto;
+    }
+    .call-tray-result {
+      padding: 7px 10px; border-radius: 6px; background: var(--bg-3);
+      cursor: pointer; font-size: 13px; color: var(--text);
+      display: flex; align-items: center; gap: 8px; transition: background 0.1s;
+    }
+    .call-tray-result:hover { background: var(--bg-5); }
+    .call-tray-result-stage { font-size: 10px; color: var(--text-3); margin-left: auto; }
+
+    /* ── MAIN LAYOUT ──────────────────────────────────────────── */
+    .app-body { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── SIDEBAR ──────────────────────────────────────────────── */
+    #sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      background: var(--bg-2); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+      transition: width 0.22s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* ── SIDEBAR COLLAPSED ───────────────────────────────────── */
+    #sidebar.collapsed {
+      width: 64px;
+    }
+    #sidebar.collapsed .sidebar-logo,
+    #sidebar.collapsed .sidebar-user,
+    #sidebar.collapsed .sidebar-nav,
+    #sidebar.collapsed .sidebar-bottom { display: none; }
+    #sidebar.collapsed #conn-status-bar {
+      flex: 1;
+      height: auto;
+    }
+    /* Toggle button always visible */
+    #sidebar-toggle-btn {
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      height: 40px; width: 100%;
+      background: none; border: none; border-top: 1px solid var(--border);
+      color: var(--text-3); cursor: pointer; font-size: 14px;
+      transition: color 0.15s, background 0.15s;
+    }
+    #sidebar-toggle-btn:hover { color: var(--text); background: var(--bg-3); }
+    #sidebar.collapsed #sidebar-toggle-btn {
+      border-top: none;
+      border-bottom: 1px solid var(--border);
+      height: 44px;
+    }
+    .sidebar-logo { padding: 20px 20px 16px; border-bottom: none; flex-shrink: 0; }
+    /* Connection status bar — 2px tall canvas organism */
+    #conn-status-bar {
+      height: 2px;
+      width: 100%;
+      flex-shrink: 0;
+      position: relative;
+      overflow: visible;
+      background: transparent;
+    }
+    #sidebar.collapsed #conn-status-bar {
+      flex: 1;
+      height: auto;
+    }
+    #jireh-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .sidebar-logo .wordmark { font-family: var(--font-disp); font-size: 26px; letter-spacing: 0.02em; line-height: 1; }
+    .sidebar-logo .wordmark span { color: var(--red); }
+    .sidebar-logo .sub { font-family: var(--font-cond); font-size: 10px; letter-spacing: 0.25em; color: var(--text-3); text-transform: uppercase; margin-top: 3px; }
+    .sidebar-user { padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text-2); position: relative; flex-shrink: 0; }
+    .user-avatar .status-dot { position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--bg-2); background: var(--text-3); }
+    .user-avatar .status-dot.available { background: var(--green); }
+    .user-avatar .status-dot.busy { background: var(--amber); }
+    .user-info { flex: 1; min-width: 0; }
+    .user-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .status-toggle { background: none; padding: 0; font-size: 11px; color: var(--text-3); transition: color 0.15s; text-align: left; }
+    .status-toggle:hover { color: var(--text-2); }
+    .status-toggle.available { color: var(--green); }
+    .status-toggle.busy { color: var(--amber); }
+    .sidebar-nav { flex: 1; overflow-y: auto; padding: 12px 0; }
+    .nav-section-label { padding: 4px 16px 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-3); }
+    .nav-item { display: flex; align-items: center; padding: 8px 16px; gap: 10px; color: var(--text-2); font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 0; transition: all 0.15s; border-left: 2px solid transparent; position: relative; }
+    .nav-item:hover { color: var(--text); background: var(--bg-3); }
+    .nav-item.active { color: var(--text); background: var(--red-dim); border-left-color: var(--red); }
+    .nav-item .nav-icon { width: 18px; text-align: center; font-size: 14px; flex-shrink: 0; opacity: 0.7; }
+    .nav-item.active .nav-icon { opacity: 1; }
+    .nav-badge { margin-left: auto; background: var(--bg-5); color: var(--text-2); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 100px; min-width: 20px; text-align: center; }
+    .nav-badge.urgent { background: var(--red-dim); color: var(--red); }
+    /* ── Upcoming Showings list ── */
+    @keyframes sl-row-flash { 0%,100%{background:rgba(232,0,58,0.07)} 50%{background:rgba(232,0,58,0.18)} }
+    tr.needs-contact { animation: sl-row-flash 1.4s ease-in-out infinite; }
+    tr.needs-contact td { border-bottom-color: rgba(232,0,58,0.15) !important; }
+    tr.needs-contact:hover { animation: none; background: rgba(232,0,58,0.12) !important; }
+    .showing-time-badge { display:inline-flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:9px; font-weight:700; letter-spacing:0.08em; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+    .showing-time-badge.soon  { background:rgba(232,0,58,0.15); color:#E8003A; border:1px solid rgba(232,0,58,0.3); }
+    .showing-time-badge.today { background:rgba(255,140,0,0.12); color:#ff8c00; border:1px solid rgba(255,140,0,0.3); }
+    .showing-time-badge.later { background:rgba(99,102,241,0.12); color:#a5b4fc; border:1px solid rgba(99,102,241,0.3); }
+    .contact-status-badge { display:inline-flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:9px; font-weight:700; letter-spacing:0.08em; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+    .contact-status-badge.contacted   { background:rgba(0,232,122,0.1); color:#00e87a; border:1px solid rgba(0,232,122,0.25); }
+    .contact-status-badge.uncontacted { background:rgba(232,0,58,0.12); color:#E8003A; border:1px solid rgba(232,0,58,0.3); }
+    .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
+    .smart-lists-header { padding: 8px 16px 4px; display: flex; align-items: center; justify-content: space-between; }
+    .smart-lists-label { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-3); }
+    .new-list-btn { background: none; padding: 2px 4px; color: var(--text-3); font-size: 16px; transition: color 0.15s; }
+    .new-list-btn:hover { color: var(--text-2); }
+    .sidebar-bottom { flex-shrink: 0; padding: 12px 0; border-top: 1px solid var(--border); }
+
+    /* ── MAIN CONTENT ─────────────────────────────────────────── */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); position: relative; }
+    .main-header { flex-shrink: 0; height: 56px; padding: 0 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+    .header-title { font-family: var(--font-cond); font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
+    .header-search { flex: 1; max-width: 360px; display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 100px; padding: 0 14px; gap: 8px; transition: border-color 0.2s, box-shadow 0.2s; }
+    .header-search:focus-within { border-color: var(--border-hi); box-shadow: 0 0 0 3px rgba(255,255,255,0.04); }
+    .header-search input { flex: 1; height: 34px; background: none; color: var(--text); font-size: 13px; }
+    .header-search input::placeholder { color: var(--text-3); }
+    .search-icon { color: var(--text-3); font-size: 14px; }
+    .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .btn-primary { height: 34px; padding: 0 16px; background: var(--red); color: #fff; border-radius: var(--radius); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: all 0.15s; }
+    .btn-primary:hover { background: #ff1a4e; box-shadow: 0 0 14px var(--red-glow); }
+    .btn-ghost { height: 34px; padding: 0 14px; background: var(--bg-4); color: var(--text-2); border-radius: var(--radius); border: 1px solid var(--border); font-size: 13px; font-weight: 500; transition: all 0.15s; }
+    .btn-ghost:hover { color: var(--text); border-color: var(--border-hi); }
+
+    /* ── VIEWS ────────────────────────────────────────────────── */
+    .view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+    .view.active { display: flex; }
+
+    /* ── PEOPLE LIST ──────────────────────────────────────────── */
+    #view-people { overflow: hidden; }
+    #view-people.active { flex-direction: row; }
+    .people-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── SMART LIST LIST HEADER ──────────────────────────── */
+    #sl-list-header { display: none; flex-shrink: 0; padding: 7px 18px 7px 16px; border-bottom: 2px solid var(--red); background: linear-gradient(90deg, #1a0008 0%, #120004 100%); box-shadow: 0 2px 16px rgba(232,0,58,0.22); align-items: center; gap: 10px; }
+    #sl-list-header.visible { display: flex; }
+    .sl-lh-icon { color: var(--red); font-family: var(--font-mono); font-size: 13px; opacity: 1; flex-shrink: 0; }
+    .sl-lh-name { font-family: var(--font-cond); font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff; text-shadow: 0 0 14px rgba(232,0,58,0.5); }
+    .sl-lh-count { font-family: var(--font-mono); font-size: 10px; color: #cc8899; letter-spacing: 0.08em; margin-left: 4px; }
+    .sl-lh-edit { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: #ddaaaa; background: rgba(232,0,58,0.08); border: 1px solid rgba(232,0,58,0.35); padding: 4px 12px; border-radius: 2px; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+    .sl-lh-edit:hover { color: #ffffff; border-color: var(--red); background: rgba(232,0,58,0.18); box-shadow: 0 0 10px rgba(232,0,58,0.3); }
+    /* Daylight override */
+    [data-theme="light"] #sl-list-header { background: linear-gradient(90deg, #fff0f3 0%, #fce8ed 100%); border-bottom-color: var(--red); box-shadow: 0 2px 10px rgba(232,0,58,0.12); }
+    [data-theme="light"] .sl-lh-name { color: #1c1c1e; text-shadow: none; }
+    [data-theme="light"] .sl-lh-count { color: #a0404a; }
+    [data-theme="light"] .sl-lh-icon { color: var(--red); }
+    [data-theme="light"] .sl-lh-edit { color: #8a2030; background: rgba(232,0,58,0.06); border-color: rgba(232,0,58,0.3); }
+    [data-theme="light"] .sl-lh-edit:hover { color: #fff; background: var(--red); border-color: var(--red); box-shadow: 0 2px 8px rgba(232,0,58,0.3); }
+
+    /* ── SMART LIST NAV ITEMS ─────────────────────────── */
+    .sl-nav-item { gap: 6px; }
+    .sl-nav-name { flex: 1; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── TACTICAL INTEL PANEL ─────────────────────────── */
+    /* ── INTEL FILTER PANEL ──────────────────────────── */
+    @keyframes sl-scanline {
+      0%   { transform: translateY(-100%); }
+      100% { transform: translateY(100vh); }
+    }
+    @keyframes sl-pulse-dot {
+      0%,100% { opacity: 1; } 50% { opacity: 0.15; }
+    }
+    @keyframes sl-flicker {
+      0%,100% { opacity: 1; } 92% { opacity: 1; } 93% { opacity: 0.7; } 94% { opacity: 1; }
+    }
+    .sl-panel {
+      width: 0; overflow: hidden; flex-shrink: 0;
+      border-left: 1px solid var(--tac-border);
+      background: var(--tac-bg);
+      display: flex; flex-direction: column;
+      transition: width 0.25s cubic-bezier(.4,0,.2,1);
+      position: relative;
+    }
+    /* CRT scanline sweep */
+    .sl-panel::after {
+      content: ''; pointer-events: none;
+      position: absolute; left: 0; right: 0; height: 60px; z-index: 10;
+      background: linear-gradient(transparent, var(--tac-scan) 50%, transparent);
+      animation: sl-scanline 4s linear infinite;
+    }
+    /* Subtle horizontal lines texture */
+    .sl-panel::before {
+      content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, var(--tac-scanline-h) 3px, var(--tac-scanline-h) 4px);
+    }
+    .sl-panel.open { width: 310px; }
+
+    /* Header */
+    .sl-panel-header {
+      position: relative; z-index: 2; flex-shrink: 0;
+      background: var(--tac-header);
+      border-bottom: 1px solid var(--red);
+      box-shadow: 0 2px 18px rgba(232,0,58,0.18);
+      padding: 10px 14px 11px;
+    }
+    .sl-header-top {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 7px;
+    }
+    .sl-header-badges {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sl-badge {
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.18em;
+      text-transform: uppercase; padding: 2px 6px;
+      border: 1px solid rgba(232,0,58,0.35); border-radius: 1px;
+      color: rgba(232,0,58,0.6);
+    }
+    .sl-live-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--red); flex-shrink: 0;
+      box-shadow: 0 0 6px var(--red);
+      animation: sl-pulse-dot 1.4s ease-in-out infinite;
+    }
+    .sl-close-btn {
+      background: none; border: 1px solid var(--tac-border-2); color: var(--tac-muted-2);
+      width: 20px; height: 20px; border-radius: 1px; cursor: pointer;
+      font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s; flex-shrink: 0;
+    }
+    .sl-close-btn:hover { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.08); }
+    .sl-panel-title {
+      font-family: var(--font-disp); font-size: 20px; letter-spacing: 0.16em;
+      text-transform: uppercase; color: var(--tac-name);
+      text-shadow: 0 0 24px var(--tac-name-glow);
+      animation: sl-flicker 8s infinite;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 220px;
+    }
+    /* Target counter pill */
+    .sl-target-counter {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;
+      color: var(--red); margin-top: 6px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sl-target-counter-bar {
+      flex: 1; height: 2px; background: var(--tac-count-bar);
+      border-radius: 1px; overflow: hidden;
+    }
+    .sl-target-counter-fill {
+      height: 100%; background: var(--red);
+      box-shadow: 0 0 4px var(--red);
+      transition: width 0.5s ease;
+    }
+
+    /* Body */
+    .sl-panel-body {
+      position: relative; z-index: 1;
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 14px 13px;
+      display: flex; flex-direction: column; gap: 0;
+    }
+    .sl-panel-body::-webkit-scrollbar { width: 2px; }
+    .sl-panel-body::-webkit-scrollbar-thumb { background: var(--tac-border-2); }
+
+    /* Section with corner-bracket HUD frame */
+    .sl-section {
+      position: relative; padding: 14px 12px 13px;
+      margin-bottom: 10px;
+    }
+    .sl-section::before, .sl-section::after {
+      content: ''; position: absolute;
+      width: 8px; height: 8px;
+      border-color: var(--tac-corner); border-style: solid;
+    }
+    .sl-section::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+    .sl-section::after  { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+    .sl-section-tl, .sl-section-br {
+      position: absolute; width: 8px; height: 8px;
+      border-color: var(--tac-corner); border-style: solid;
+    }
+    .sl-section-tl { top: 0; right: 0; border-width: 1px 1px 0 0; }
+    .sl-section-br { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
+
+    .sl-panel-label {
+      font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+      letter-spacing: 0.28em; text-transform: uppercase;
+      color: var(--red); opacity: 0.75;
+      margin-bottom: 9px;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .sl-panel-label::before { content: '▸'; font-size: 7px; }
+    .sl-panel-label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--tac-border-2), transparent); }
+
+    /* Name input */
+    .sl-input {
+      width: 100%; box-sizing: border-box;
+      background: var(--tac-input-bg); border: none;
+      border-bottom: 1px solid var(--tac-input-line);
+      color: var(--text); padding: 6px 2px 7px;
+      font-family: var(--font-mono); font-size: 13px;
+      letter-spacing: 0.06em; outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      caret-color: var(--red);
+    }
+    .sl-input:focus { border-bottom-color: var(--red); box-shadow: 0 2px 0 -1px rgba(232,0,58,0.2); }
+    .sl-input::placeholder { color: var(--tac-muted); letter-spacing: 0.08em; }
+    .sl-input-wrap { position: relative; }
+    .sl-input-cursor {
+      position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+      width: 1px; height: 13px; background: var(--red);
+      animation: sl-pulse-dot 0.8s step-end infinite;
+      pointer-events: none;
+    }
+    textarea.sl-input {
+      border: 1px solid var(--tac-border-3); border-radius: 1px;
+      padding: 8px 9px; resize: none; min-height: 76px;
+      line-height: 1.8; background: var(--tac-bg-2);
+    }
+    textarea.sl-input:focus { border-color: var(--red); }
+
+    /* Stage chips */
+    .sl-stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .sl-stage-chip {
+      display: flex; align-items: center; gap: 5px;
+      background: transparent;
+      border: 1px solid var(--tac-chip-border);
+      padding: 7px 8px;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--tac-chip-text);
+      cursor: pointer; transition: all 0.12s; user-select: none; line-height: 1;
+      position: relative; overflow: hidden;
+    }
+    .sl-stage-chip::before {
+      content: ''; width: 5px; height: 5px; border-radius: 50%;
+      background: var(--tac-chip-dot); flex-shrink: 0;
+      transition: background 0.12s, box-shadow 0.12s;
+    }
+    .sl-stage-chip:hover { border-color: var(--red); color: var(--tac-lh-sub); }
+    .sl-stage-chip:hover::before { background: var(--red); }
+    .sl-stage-chip.selected {
+      background: rgba(232,0,58,0.07); border-color: rgba(232,0,58,0.5);
+      color: var(--red);
+      box-shadow: inset 0 0 12px rgba(232,0,58,0.04), 0 0 8px rgba(232,0,58,0.08);
+    }
+    .sl-stage-chip.selected::before {
+      background: var(--red);
+      box-shadow: 0 0 5px var(--red);
+    }
+    .sl-stage-chip input { display: none; }
+
+    .sl-hint {
+      font-family: var(--font-mono); font-size: 8px; color: var(--tac-muted);
+      letter-spacing: 0.1em; margin-top: 5px; opacity: 0.7;
+    }
+
+    /* Footer */
+    .sl-panel-footer {
+      position: relative; z-index: 2; flex-shrink: 0;
+      padding: 11px 13px 13px;
+      border-top: 1px solid var(--tac-border);
+      background: var(--tac-footer-bg);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .sl-save-btn {
+      width: 100%; padding: 11px 10px;
+      background: linear-gradient(135deg, #cc0030 0%, #e8003a 60%, #cc0030 100%);
+      color: #fff; border: none;
+      font-family: var(--font-mono); font-size: 11px;
+      letter-spacing: 0.35em; cursor: pointer; text-transform: uppercase;
+      transition: all 0.18s; position: relative; overflow: hidden;
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+    }
+    .sl-save-btn::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+    }
+    .sl-save-btn:hover { box-shadow: 0 0 28px rgba(232,0,58,0.5), 0 0 8px rgba(232,0,58,0.3); letter-spacing: 0.5em; }
+    .sl-save-btn:active { transform: scale(0.98); }
+    .sl-del-btn {
+      width: 100%; padding: 7px; background: none;
+      color: var(--tac-muted); border: 1px solid var(--tac-chip-border);
+      font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+    }
+    .sl-del-btn:hover { color: var(--red); border-color: rgba(232,0,58,0.4); background: rgba(232,0,58,0.04); letter-spacing: 0.25em; }
+
+    /* ── SMART LIST NAVIGATOR BAR ─────────────────────── */
+    /* ── SMART LIST NAVIGATOR BAR ─────────────────────── */
+    .sl-nav-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 14px;
+      background: #060000;
+      border-bottom: 1px solid var(--red);
+      box-shadow: 0 1px 10px rgba(232,0,58,0.15);
+      flex-shrink: 0;
+    }
+    .sl-nav-bar button {
+      background: #0c0002; border: 1px solid #2a0008;
+      color: #884060; border-radius: 2px;
+      padding: 4px 12px; font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      cursor: pointer; transition: all 0.12s;
+    }
+    .sl-nav-bar button:hover:not(:disabled) { background: var(--red-dim); color: var(--red); border-color: var(--red); box-shadow: 0 0 8px rgba(232,0,58,0.2); }
+    .sl-nav-bar button:disabled { opacity: 0.2; cursor: default; }
+    .sl-nav-info { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--red); letter-spacing: 0.1em; }
+    .sl-nav-label { font-family: var(--font-mono); font-size: 9px; color: var(--tac-nav-label); letter-spacing: 0.12em; text-transform: uppercase; }
+
+    .people-toolbar { flex-shrink: 0; padding: 12px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+    .people-count { font-size: 12px; color: var(--text-2); }
+    .people-count strong { color: var(--text); }
+    .filter-btn { height: 28px; padding: 0 12px; background: var(--bg-4); color: var(--text-2); border: 1px solid var(--border); border-radius: 100px; font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 5px; transition: all 0.15s; }
+    .filter-btn:hover { color: var(--text); }
+    .filter-btn.active { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+    .bulk-actions { margin-left: auto; display: flex; gap: 6px; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+    .bulk-actions.visible { opacity: 1; pointer-events: auto; }
+    .people-table-wrap { flex: 1; overflow-y: auto; }
+    .people-table { width: 100%; border-collapse: collapse; }
+    .people-table th { position: sticky; top: 0; background: var(--bg-2); padding: 10px 16px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
+    .people-table th:hover { color: var(--text-2); }
+    .people-table td { padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+    .people-table tr:hover td { background: var(--bg-2); }
+    .people-table tr { cursor: pointer; transition: background 0.1s; }
+    .person-row-name { display: flex; align-items: center; gap: 10px; }
+    .person-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text-2); flex-shrink: 0; }
+    .person-full-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .person-email { font-size: 12px; color: var(--text-2); }
+    .phone-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); letter-spacing: 0.03em; }
+    .stage-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 100px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+    /* ── Stage Banner (top of center panel) ── */
+    #stage-banner {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: all 0.3s;
+    }
+    #stage-banner.banner-hidden { display: none; }
+    .stage-banner-text {
+      font-family: var(--font-cond);
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      padding: 6px 32px;
+      border-radius: 8px;
+      border: 2px solid;
+    }
+    .stage-banner-text.banner-delinquent {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 8px 28px;
+      flex-wrap: wrap;
+    }
+    .banner-delinquent-label {
+      font-family: var(--font-disp);
+      font-size: 26px;
+      letter-spacing: 0.3em;
+    }
+    .banner-delinquent-stats {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      opacity: 0.92;
+    }
+    .banner-delinquent-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1.1;
+      border: 1px solid rgba(59,158,255,0.4);
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: rgba(59,158,255,0.06);
+    }
+    .banner-delinquent-stat-val {
+      font-size: 15px;
+      font-weight: 900;
+    }
+    .banner-delinquent-stat-lbl {
+      font-size: 8px;
+      letter-spacing: 0.18em;
+      opacity: 0.65;
+      text-transform: uppercase;
+      margin-top: 1px;
+    }
+    .banner-delinquent-divider {
+      width: 1px;
+      height: 28px;
+      background: rgba(59,158,255,0.3);
+    }
+    .banner-resident {
+      color: #00e8f0;
+      border-color: #00e8f0;
+      background: rgba(0,232,240,0.07);
+      box-shadow: 0 0 18px rgba(0,232,240,0.25), inset 0 0 18px rgba(0,232,240,0.05);
+      text-shadow: 0 0 14px rgba(0,232,240,0.7);
+      animation: banner-pulse-cyan 2.5s ease-in-out infinite;
+    }
+    .banner-evicting {
+      color: #ff3b3b;
+      border-color: #ff3b3b;
+      background: rgba(255,59,59,0.08);
+      box-shadow: 0 0 18px rgba(255,59,59,0.3), inset 0 0 18px rgba(255,59,59,0.06);
+      text-shadow: 0 0 14px rgba(255,59,59,0.8);
+      animation: banner-pulse-red 1.8s ease-in-out infinite;
+    }
+    .banner-delinquent {
+      color: #3b9eff;
+      border-color: #3b9eff;
+      background: rgba(59,158,255,0.07);
+      box-shadow: 0 0 18px rgba(59,158,255,0.25), inset 0 0 18px rgba(59,158,255,0.05);
+      text-shadow: 0 0 14px rgba(59,158,255,0.7);
+      animation: banner-pulse-blue 2.5s ease-in-out infinite;
+    }
+    @keyframes banner-pulse-cyan {
+      0%,100% { box-shadow: 0 0 14px rgba(0,232,240,0.2), inset 0 0 14px rgba(0,232,240,0.04); }
+      50%      { box-shadow: 0 0 28px rgba(0,232,240,0.45), inset 0 0 24px rgba(0,232,240,0.1); }
+    }
+    @keyframes banner-pulse-red {
+      0%,100% { box-shadow: 0 0 14px rgba(255,59,59,0.25), inset 0 0 14px rgba(255,59,59,0.05); }
+      50%      { box-shadow: 0 0 32px rgba(255,59,59,0.55), inset 0 0 24px rgba(255,59,59,0.12); }
+    }
+    @keyframes banner-pulse-blue {
+      0%,100% { box-shadow: 0 0 14px rgba(59,158,255,0.2), inset 0 0 14px rgba(59,158,255,0.04); }
+      50%      { box-shadow: 0 0 28px rgba(59,158,255,0.45), inset 0 0 24px rgba(59,158,255,0.1); }
+    }
+    .stage-lead       { background: var(--blue-dim); color: var(--blue); }
+    .stage-active     { background: var(--green-dim); color: var(--green); }
+    .stage-past       { background: var(--bg-5); color: var(--text-2); }
+    .stage-delinquent { background: rgba(59,158,255,0.12); color: #3b9eff; }
+    .stage-resident   { background: rgba(0,232,240,0.1);  color: #00e8f0; }
+    .stage-evicting    { background: rgba(255,59,59,0.12); color: #ff3b3b; animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    .stage-caseworker  { background: rgba(168,85,247,0.12); color: #a855f7; }
+    .stage-contractor  { background: rgba(251,146,60,0.12); color: #fb923c; }
+    .stage-owner       { background: rgba(250,204,21,0.1);  color: #facc15; }
+    .tag-chip { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; margin: 1px; background: var(--bg-5); color: var(--text-2); }
+    .tag-eviction { background: var(--red-dim); color: var(--red); }
+    .tag-delinquent { background: rgba(255,140,0,0.12); color: var(--amber); }
+    .tag-committed { background: var(--green-dim); color: var(--green); }
+    .last-activity { font-size: 12px; color: var(--text-2); }
+    .quick-call-btn { height: 28px; padding: 0 12px; background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,232,122,0.25); border-radius: 100px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 5px; transition: all 0.15s; white-space: nowrap; }
+    .quick-call-btn:hover { background: var(--green); color: #000; box-shadow: 0 0 12px var(--green-glow); }
+    .people-empty { text-align: center; padding: 80px 20px; color: var(--text-3); }
+    .people-empty .empty-icon { font-size: 40px; margin-bottom: 16px; }
+    .loader-row td { text-align: center; padding: 60px; }
+    .spinner { width: 28px; height: 28px; border: 2px solid var(--border); border-top-color: var(--red); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+
+    /* Presence bubbles */
+    #presence-strip { transition: all 0.3s ease; }
+    #presence-strip > div { transition: transform 0.2s ease; }
+    #presence-strip > div:hover { transform: scale(1.15); }
+
+    /* Notification panel */
+    #notif-panel { animation: fade-in 0.15s ease; }
+
+    /* Timeline email type */
+    .ti-email { background: rgba(99,102,241,0.15); color: #818cf8; }
+
+    /* Settings modal avatar hover */
+    #settings-avatar-preview:hover { opacity: 0.85; }
+
+    /* @mention highlight in notes */
+    .note-content { white-space: pre-wrap; line-height: 1.6; }
+
+    /* Email compose animation */
+    #email-modal > div { transform-origin: bottom right; }
+
+    /* ── CONTACT RECORD ───────────────────────────────────────── */
+    #view-contact { flex-direction: column; overflow: hidden; }
+    /* ── CONTACT RECORD — TACTICAL OPS ──────────────────────── */
+    .contact-scroll-wrap { flex: 1; display: flex; flex-direction: row; overflow: hidden; }
+    .back-btn { display: flex; align-items: center; gap: 5px; color: var(--tac-muted-2); font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; cursor: pointer; transition: color 0.15s; }
+    .back-btn:hover { color: var(--red); }
+
+    /* Left panel */
+    .contact-left {
+      width: 276px; flex-shrink: 0;
+      background: var(--tac-bg);
+      border-right: 1px solid var(--tac-border);
+      overflow-y: auto; overflow-x: hidden;
+      display: flex; flex-direction: column;
+      position: relative;
+    }
+    .contact-left::after {
+      content: ''; position: fixed; pointer-events: none; z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, var(--tac-scanline-h) 3px, var(--tac-scanline-h) 4px);
+      inset: 0;
+    }
+
+    /* Dossier header */
+    .contact-card-top {
+      position: relative; z-index: 1;
+      padding: 18px 14px 15px;
+      background: var(--tac-header);
+      border-bottom: 1px solid var(--red);
+      box-shadow: 0 3px 20px rgba(232,0,58,0.18);
+      text-align: center;
+    }
+
+    /* Hexagonal avatar */
+    .contact-avatar-wrap { position: relative; width: 72px; height: 72px; margin: 0 auto 11px; }
+    .contact-avatar-ring {
+      position: absolute; inset: -6px; border-radius: 50%;
+      border: 1px solid rgba(232,0,58,0.18);
+      animation: spin 8s linear infinite;
+      border-top-color: rgba(232,0,58,0.5);
+    }
+    .contact-big-avatar {
+      width: 72px; height: 72px;
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      background: #180008;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-disp); font-size: 24px; letter-spacing: 0.05em;
+      color: rgba(232,0,58,0.7);
+      transition: all 0.3s;
+    }
+    .contact-big-avatar.stage-delinquent { background: #1a0004; color: var(--red); filter: drop-shadow(0 0 8px rgba(232,0,58,0.6)); }
+    .contact-big-avatar.stage-evicting   { background: #1a0000; color: #ff3b3b; filter: drop-shadow(0 0 10px rgba(255,59,59,0.8)); animation: glow-breathe-red 1.8s ease-in-out infinite; }
+    .contact-big-avatar.stage-resident   { background: #001a1c; color: #00e8f0; filter: drop-shadow(0 0 8px rgba(0,232,240,0.5)); }
+    .contact-big-avatar.stage-caseworker { background: #160020; color: #a855f7; filter: drop-shadow(0 0 8px rgba(168,85,247,0.5)); }
+    .contact-big-avatar.stage-contractor { background: #1a0e00; color: #fb923c; filter: drop-shadow(0 0 8px rgba(251,146,60,0.5)); }
+    .contact-big-avatar.stage-owner      { background: #001018; color: #38bdf8; filter: drop-shadow(0 0 8px rgba(56,189,248,0.4)); }
+
+    .contact-subject-id {
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.28em;
+      text-transform: uppercase; color: rgba(232,0,58,0.4); margin-bottom: 3px;
+    }
+    .contact-record-name {
+      font-family: var(--font-disp); font-size: 20px; letter-spacing: 0.13em;
+      text-transform: uppercase; color: var(--tac-name);
+      text-shadow: 0 0 18px var(--tac-name-glow);
+      margin-bottom: 5px; line-height: 1.1;
+    }
+    .contact-stage-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.18em;
+      text-transform: uppercase; color: rgba(232,0,58,0.65);
+      border: 1px solid rgba(232,0,58,0.25); padding: 3px 8px;
+      margin-bottom: 10px;
+    }
+    .contact-stage-badge::before {
+      content: ''; width: 5px; height: 5px; border-radius: 50%;
+      background: var(--red); box-shadow: 0 0 5px var(--red);
+      animation: sl-pulse-dot 1.4s ease-in-out infinite; flex-shrink: 0;
+    }
+
+    /* Action buttons */
+    .contact-quick-actions { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; padding-top: 2px; }
+    .cqa-btn {
+      height: 26px; padding: 0 10px;
+      background: transparent; border: 1px solid var(--tac-border-2); color: var(--tac-muted-2);
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase;
+      display: flex; align-items: center; gap: 4px; cursor: pointer; transition: all 0.15s;
+      clip-path: polygon(0 0,calc(100% - 5px) 0,100% 5px,100% 100%,5px 100%,0 calc(100% - 5px));
+    }
+    .cqa-btn:hover { border-color: var(--red); color: var(--red); background: rgba(232,0,58,0.07); }
+    .cqa-call  { border-color: rgba(0,200,100,0.3); color: #00c864; }
+    .cqa-call:hover  { border-color: #00c864; background: rgba(0,200,100,0.08); color: #00c864; }
+    .cqa-text  { border-color: rgba(0,153,255,0.3); color: #0099ff; }
+    .cqa-text:hover  { border-color: #0099ff; background: rgba(0,153,255,0.08); color: #0099ff; }
+    .cqa-note  { border-color: rgba(255,140,0,0.3); color: var(--amber); }
+    .cqa-note:hover  { border-color: var(--amber); background: rgba(255,140,0,0.08); }
+    .contact-record-phone { font-family: var(--font-mono); font-size: 11px; color: var(--tac-muted-2); margin-bottom: 8px; cursor: pointer; transition: color 0.15s; }
+    .contact-record-phone:hover { color: #00c864; }
+
+    /* Sections */
+    .contact-section {
+      position: relative; z-index: 1;
+      padding: 12px 13px 11px;
+      border-bottom: 1px solid var(--tac-border);
+    }
+    .contact-section::before { content: ''; position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; border-top: 1px solid var(--tac-corner); border-left: 1px solid var(--tac-corner); }
+    .contact-section::after  { content: ''; position: absolute; bottom: 5px; right: 5px; width: 6px; height: 6px; border-bottom: 1px solid var(--tac-corner); border-right: 1px solid var(--tac-corner); }
+    .contact-section-title {
+      font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+      letter-spacing: 0.28em; text-transform: uppercase;
+      color: var(--red); opacity: 0.7; margin-bottom: 9px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .contact-section-title::before { content: '▸'; font-size: 7px; opacity: 1; }
+    .contact-section-title::after  { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--tac-border-2), transparent); }
+    .detail-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+    .detail-row:last-child { margin-bottom: 0; }
+    .detail-label { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--tac-muted-2); width: 64px; flex-shrink: 0; padding-top: 2px; }
+    .detail-value { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; color: var(--text); flex: 1; word-break: break-word; line-height: 1.5; }
+    .stage-select { background: var(--tac-bg-2); border: none; border-bottom: 1px solid var(--tac-input-line); color: var(--text); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; width: 100%; cursor: pointer; padding: 3px 2px; outline: none; }
+    .stage-select:focus { border-bottom-color: var(--red); }
+    /* Phone rows */
+    .phone-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .phone-row:last-child { border-bottom: none; }
+    .phone-row.bad-number { opacity: 0.45; }
+    .phone-label-badge { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; background: var(--bg-4); color: var(--text-3); border-radius: 4px; padding: 2px 5px; flex-shrink: 0; }
+    .phone-primary-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .phone-bad-icon { font-size: 11px; color: var(--red); flex-shrink: 0; }
+    .phone-num-text { font-family: var(--font-mono); font-size: 12px; color: var(--text); flex: 1; cursor: pointer; }
+    .phone-num-text:hover { color: var(--green); }
+    .phone-action-btn { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 4px; transition: color 0.15s, background 0.15s; }
+    .phone-action-btn:hover { color: var(--text); background: var(--bg-4); }
+    .add-phone-row { display: flex; gap: 6px; margin-top: 8px; }
+    .add-phone-row input, .add-phone-row select { background: var(--bg-4); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--text); font-size: 12px; }
+    .add-phone-row input { flex: 1; }
+    .add-phone-row select { width: 80px; }
+    /* Phone picker modal */
+    .phone-picker-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 90000; display: flex; align-items: center; justify-content: center; }
+    .phone-picker-box { background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 280px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+    .phone-picker-title { font-family: var(--font-cond); font-size: 15px; font-weight: 700; margin-bottom: 14px; color: var(--text); }
+    .phone-picker-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.12s; margin-bottom: 4px; }
+    .phone-picker-option:hover { background: var(--bg-3); }
+    .phone-picker-option.bad { opacity: 0.4; pointer-events: none; }
+    /* Household section */
+    .household-member { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; }
+    .household-member:last-child { border-bottom: none; }
+    .household-member:hover .hh-name { color: var(--blue); }
+    .hh-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--bg-5); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+    .hh-name { font-size: 13px; font-weight: 600; flex: 1; transition: color 0.15s; }
+    .hh-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; }
+    .hh-remove { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 4px; }
+    .hh-remove:hover { color: var(--red); background: rgba(220,38,38,0.1); }
+    /* Address autocomplete */
+    .pac-container { z-index: 99999 !important; background: var(--bg-2) !important; border: 1px solid var(--border) !important; border-radius: 8px !important; box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important; }
+    .pac-item { padding: 8px 12px !important; color: var(--text) !important; font-size: 12px !important; cursor: pointer !important; border-top: 1px solid var(--border) !important; }
+    .pac-item:hover { background: var(--bg-3) !important; }
+    .pac-item-query { color: var(--text) !important; font-weight: 600 !important; }
+    .pac-matched { color: var(--blue) !important; }
+    .tags-container { display: flex; flex-wrap: wrap; gap: 4px; }
+
+    /* ── TIMELINE — TACTICAL OPS ─────────────────────────────── */
+    .contact-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--bg); }
+    .timeline-header { flex-shrink: 0; padding: 10px 16px; border-bottom: 1px solid var(--tac-border); background: var(--tac-bg); }
+    .compose-area { background: var(--tac-bg); border: 1px solid var(--tac-border-2); overflow: hidden; transition: border-color 0.2s; }
+    .compose-area:focus-within { border-color: rgba(232,0,58,0.4); box-shadow: 0 0 0 1px rgba(232,0,58,0.08); }
+    .compose-tabs { display: flex; border-bottom: 1px solid var(--tac-border); background: var(--tac-bg-2); }
+    .compose-tab { padding: 8px 14px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--tac-muted-2); cursor: pointer; transition: all 0.15s; border-bottom: 2px solid transparent; }
+    .compose-tab.active { color: var(--red); border-bottom-color: var(--red); }
+    .compose-tab:hover:not(.active) { color: var(--text-2); }
+    .compose-body { padding: 10px 12px; }
+    .compose-input { width: 100%; min-height: 60px; max-height: 150px; background: none; color: var(--text); font-size: 13px; resize: none; border: none; outline: none; font-family: var(--font-body); caret-color: var(--red); }
+    .compose-input::placeholder { color: var(--tac-muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; }
+    .compose-footer { padding: 7px 12px; display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--tac-border); background: var(--tac-bg-2); }
+    .compose-submit {
+      height: 28px; padding: 0 18px;
+      background: linear-gradient(135deg, #cc0030 0%, #e8003a 60%, #cc0030 100%);
+      color: #fff; border: none;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.3em; text-transform: uppercase;
+      clip-path: polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+      cursor: pointer; transition: all 0.18s;
+    }
+    .compose-submit:hover { box-shadow: 0 0 18px rgba(232,0,58,0.5); letter-spacing: 0.4em; }
+    .compose-submit:disabled { opacity: 0.35; cursor: not-allowed; }
+    .timeline-filters { display: flex; gap: 4px; margin-top: 9px; flex-wrap: wrap; }
+    .filter-pill { height: 24px; padding: 0 10px; font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.15em; text-transform: uppercase; background: transparent; color: var(--tac-muted-2); border: 1px solid var(--tac-border-2); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
+    .filter-pill:hover { color: var(--text-2); border-color: var(--tac-border-2); }
+    .filter-pill.active { background: var(--red-dim); color: var(--red); border-color: rgba(232,0,58,0.35); }
+    .filter-pill .pill-count { font-family: var(--font-mono); font-size: 8px; opacity: 0.7; }
+    .timeline-scroll { flex: 1; overflow-y: auto; padding: 14px 18px; }
+    .timeline-item { display: flex; gap: 12px; margin-bottom: 16px; animation: fade-in 0.3s ease forwards; }
+    .ti-icon-wrap { flex-shrink: 0; position: relative; }
+    .ti-icon { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+    .ti-call     { background: var(--green-dim); color: var(--green); }
+    .ti-call-inbound { background: var(--blue-dim) !important; color: var(--blue) !important; }
+    .ti-text     { background: var(--blue-dim); color: var(--blue); }
+    .ti-note     { background: var(--amber-dim); color: var(--amber); }
+    .ti-activity { background: var(--bg-5); color: var(--text-3); }
+    .ti-connector { position: absolute; top: 36px; left: 50%; transform: translateX(-50%); width: 1px; background: var(--border); }
+    .ti-body { flex: 1; min-width: 0; }
+    .ti-header { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+    .ti-type { font-size: 13px; font-weight: 600; }
+    .ti-agent { font-size: 12px; color: var(--text-2); }
+    .ti-time { font-size: 11px; color: var(--text-3); margin-left: auto; }
+    .ti-content { font-size: 13px; color: var(--text-2); line-height: 1.55; }
+    .ti-content.note-content { background: rgba(255,140,0,0.06); border-left: 2px solid var(--amber); padding: 8px 10px; border-radius: 0 var(--radius) var(--radius) 0; color: var(--text); }
+
+    /* ── CALL CARDS ───────────────────────────────────────────── */
+    .call-summary-card { background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-top: 4px; }
+    .call-summary-meta { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+    .call-direction { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border-radius: 100px; }
+    .call-inbound  { background: var(--blue-dim); color: var(--blue); }
+    .call-outbound { background: var(--green-dim); color: var(--green); }
+    .call-missed   { background: var(--red-dim); color: var(--red); }
+    .call-duration { font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+    /* AI Summary block */
+    .ai-summary-block { padding: 8px 12px 10px; border-top: 1px solid var(--border); }
+    .ai-summary-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); margin-bottom: 5px; display: flex; align-items: center; gap: 5px; }
+    .ai-summary-text { font-size: 13px; color: var(--text); line-height: 1.6; }
+    .ai-thinking-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--red-dim); border-radius: var(--radius); margin-bottom: 8px; animation: glow-breathe-red 2s ease-in-out infinite; }
+    .ai-thinking-text { font-size: 12px; color: var(--red); font-weight: 500; }
+    .thinking-dots span { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--red); margin: 0 1px; animation: dot-bounce 1.2s ease-in-out infinite; }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+    /* Action row — Play Audio + View Transcript buttons */
+    .call-actions-row { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg-4); }
+    .call-action-btn { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border-hi); background: var(--bg-3); color: var(--text-2); cursor: pointer; transition: all 0.15s; }
+    .call-action-btn:hover { background: var(--bg-5); color: var(--text); border-color: var(--text-3); }
+    .call-action-btn.active { background: rgba(99,102,241,0.15); color: #818cf8; border-color: rgba(99,102,241,0.4); }
+    /* Expandable sections */
+    .call-audio-section { display: none; padding: 10px 12px; border-top: 1px solid var(--border); }
+    .call-audio-section.open { display: block; }
+    .call-audio-section audio { width: 100%; height: 36px; border-radius: var(--radius); display: block; }
+    .call-transcript-section { display: none; border-top: 1px solid var(--border); }
+    .call-transcript-section.open { display: block; }
+    .transcript-content { font-size: 12px; color: var(--text-2); line-height: 1.7; max-height: 220px; overflow-y: auto; padding: 10px 12px; background: var(--bg-4); }
+    .transcript-line { margin-bottom: 4px; }
+    .transcript-speaker { font-weight: 700; color: var(--text); }
+
+    /* ── TEXT BUBBLES ─────────────────────────────────────────── */
+    .text-thread { margin-top: 4px; }
+    .bubble-wrap { display: flex; margin-bottom: 6px; }
+    .bubble-wrap.outbound { justify-content: flex-end; }
+    .bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.4; }
+    .bubble-inbound { background: var(--bg-4); color: var(--text); border-radius: 4px 16px 16px 16px; }
+    .bubble-outbound { background: var(--blue-dim); border: 1px solid rgba(0,153,255,0.2); color: var(--text); border-radius: 16px 4px 16px 16px; }
+    .bubble-time { font-size: 10px; color: var(--text-3); text-align: center; margin-bottom: 8px; }
+
+    /* ── SMS DELIVERY STATUS ──────────────────────────────────── */
+    .sms-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 5px;
+      margin-top: 4px;
+      padding-right: 2px;
+    }
+    .sms-status-icon {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .sms-status-icon.sending {
+      color: var(--text-3);
+    }
+    .sms-status-icon.sending::before {
+      content: '';
+      display: inline-block;
+      width: 9px; height: 9px;
+      border: 1.5px solid var(--text-3);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: sms-status-spin 0.8s linear infinite;
+    }
+    .sms-status-icon.sent {
+      color: var(--text-3);
+    }
+    .sms-status-icon.sent::before { content: '✓'; }
+    .sms-status-icon.delivered {
+      color: var(--green);
+    }
+    .sms-status-icon.delivered::before { content: '✓✓'; }
+    .sms-status-icon.failed {
+      color: var(--red);
+    }
+    .sms-status-icon.failed::before { content: '✕'; }
+    .sms-retry-btn {
+      height: 20px;
+      padding: 0 8px;
+      border-radius: 100px;
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(232,0,58,0.3);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .sms-retry-btn:hover {
+      background: var(--red);
+      color: #fff;
+      box-shadow: 0 0 8px var(--red-glow);
+    }
+    .sms-retry-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .sms-error-msg {
+      font-size: 10px;
+      color: var(--red);
+      margin-top: 2px;
+      text-align: right;
+    }
+
+    /* ── RIGHT PANEL — TACTICAL OPS ──────────────────────────── */
+    .contact-right { width: 264px; flex-shrink: 0; background: var(--tac-bg); border-left: 1px solid var(--tac-border); overflow-y: auto; }
+    .right-section { position: relative; padding: 12px 13px 11px; border-bottom: 1px solid var(--tac-border); }
+    .right-section::before { content: ''; position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; border-top: 1px solid var(--tac-corner); border-left: 1px solid var(--tac-corner); }
+    .right-section::after  { content: ''; position: absolute; bottom: 5px; right: 5px; width: 6px; height: 6px; border-bottom: 1px solid var(--tac-corner); border-right: 1px solid var(--tac-corner); }
+    .right-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+    .right-section-title {
+      font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+      letter-spacing: 0.28em; text-transform: uppercase; color: var(--red); opacity: 0.7;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .right-section-title::before { content: '▸'; font-size: 7px; opacity: 1; }
+    .add-btn { background: none; border: 1px solid var(--tac-border-2); color: var(--tac-muted-2); width: 18px; height: 18px; font-size: 14px; line-height: 1; transition: all 0.15s; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .add-btn:hover { color: var(--red); border-color: rgba(232,0,58,0.4); }
+    .task-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .task-item:last-child { border-bottom: none; }
+    .task-check { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border-hi); flex-shrink: 0; margin-top: 1px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
+    .task-check:hover { border-color: var(--green); }
+    .task-check.done { background: var(--green); border-color: var(--green); color: #000; font-size: 9px; }
+    .task-text { flex: 1; font-size: 12px; color: var(--text); line-height: 1.4; }
+    .task-text.done { text-decoration: line-through; color: var(--text-3); }
+    .task-due { font-size: 10px; color: var(--text-3); display: block; margin-top: 2px; }
+    .task-due.overdue { color: var(--red); }
+    .no-tasks { font-size: 12px; color: var(--text-3); text-align: center; padding: 12px 0; }
+
+    /* ── SHOWINGS VIEW ─────────────────────────────────────────── */
+    .sh-header { padding:16px 20px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-shrink:0; background:var(--bg-2); }
+    .sh-title { font-family:var(--font-disp); font-size:22px; letter-spacing:0.12em; color:var(--text); }
+    .sh-subtitle { font-family:var(--font-mono); font-size:10px; color:var(--text-3); letter-spacing:0.1em; }
+    .sh-upload-btn { background:var(--red); color:#fff; border:none; padding:7px 16px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.15s; display:inline-block; }
+    .sh-upload-btn:hover { background:#c00030; box-shadow:0 0 12px rgba(232,0,58,0.4); }
+    @keyframes sh-flash { 0%,100%{box-shadow:0 0 0 0 rgba(232,0,58,0.8);background:var(--red)} 50%{box-shadow:0 0 0 6px rgba(232,0,58,0);background:#c00030} }
+    .sh-btn-flash { animation:sh-flash 1.6s ease-in-out infinite !important; }
+    .sh-body { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+    .sh-props-wrap { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+    .sh-panel-wrap { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+
+    /* Property cards */
+    .sh-prop-card { background:var(--bg-2); border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:all 0.15s; }
+    .sh-prop-card:hover { border-color:var(--border-hi); transform:translateY(-1px); box-shadow:0 4px 16px rgba(0,0,0,0.2); }
+    .sh-prop-card.active { border-color:var(--red); box-shadow:0 0 0 1px var(--red); }
+    .sh-prop-header { padding:12px 16px; display:flex; align-items:center; gap:10px; }
+    .sh-prop-address { flex:1; min-width:0; }
+    .sh-prop-name { font-family:var(--font-cond); font-size:14px; font-weight:700; letter-spacing:0.06em; color:var(--text); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sh-prop-meta { font-family:var(--font-mono); font-size:9px; color:var(--text-3); margin-top:1px; }
+    .sh-prop-stats { display:flex; gap:8px; flex-shrink:0; }
+    .sh-stat { display:flex; flex-direction:column; align-items:center; padding:4px 10px; border-radius:4px; border:1px solid; font-family:var(--font-mono); }
+    .sh-stat-val { font-size:16px; font-weight:900; line-height:1; }
+    .sh-stat-lbl { font-size:7px; letter-spacing:0.15em; text-transform:uppercase; margin-top:2px; opacity:0.7; }
+    .sh-stat.total  { border-color:rgba(255,255,255,0.1); color:var(--text-2); }
+    .sh-stat.go     { border-color:rgba(0,232,122,0.3); color:var(--green); background:var(--green-dim); }
+    .sh-stat.nogo   { border-color:rgba(232,0,58,0.3);  color:var(--red);   background:var(--red-dim); }
+    .sh-stat.maybe  { border-color:rgba(255,140,0,0.3); color:var(--amber); background:var(--amber-dim); }
+    [data-theme="light"] .sh-stat.total { border-color:var(--border); color:var(--text-2); }
+
+    /* Showings list panel */
+    .sh-list-panel { background:var(--bg-2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+    .sh-list-header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; background:var(--bg-3); }
+    .sh-list-title { font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--text-2); flex:1; }
+    .sh-showing-row { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; transition:background 0.1s; cursor:pointer; }
+    .sh-showing-row:last-child { border-bottom:none; }
+    .sh-showing-row:hover { background:var(--bg-3); }
+    .sh-showing-name { font-size:13px; font-weight:600; color:var(--text); flex:1; min-width:0; }
+    .sh-showing-meta { font-family:var(--font-mono); font-size:9px; color:var(--text-3); margin-top:2px; }
+    .sh-verdict-chip { font-family:var(--font-mono); font-size:8px; font-weight:800; letter-spacing:0.15em; padding:3px 8px; border-radius:20px; text-transform:uppercase; flex-shrink:0; }
+    .sh-verdict-chip.go    { background:var(--green-dim); color:var(--green); border:1px solid rgba(0,232,122,0.3); }
+    .sh-verdict-chip.nogo  { background:var(--red-dim);   color:var(--red);   border:1px solid rgba(232,0,58,0.3); }
+    .sh-verdict-chip.maybe { background:var(--amber-dim); color:var(--amber); border:1px solid rgba(255,140,0,0.3); }
+    .sh-verdict-chip.none  { background:var(--bg-4); color:var(--text-3); border:1px solid var(--border); }
+    .sh-type-badge { font-family:var(--font-mono); font-size:8px; padding:2px 6px; border-radius:3px; background:var(--bg-4); color:var(--text-3); border:1px solid var(--border); flex-shrink:0; }
+
+    /* Trends panel */
+    .sh-trends { padding:14px 16px; border-top:1px solid var(--border); background:var(--bg-3); }
+    .sh-trends-title { font-family:var(--font-mono); font-size:9px; letter-spacing:0.18em; text-transform:uppercase; color:var(--text-3); margin-bottom:10px; }
+    .sh-trend-bar { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+    .sh-trend-label { font-family:var(--font-mono); font-size:10px; color:var(--text-2); width:130px; flex-shrink:0; text-transform:capitalize; }
+    .sh-trend-track { flex:1; height:6px; background:var(--bg-5); border-radius:3px; overflow:hidden; }
+    .sh-trend-fill  { height:100%; background:var(--red); border-radius:3px; transition:width 0.4s; }
+    .sh-trend-count { font-family:var(--font-mono); font-size:10px; color:var(--text-3); width:24px; text-align:right; }
+
+    /* Feedback modal */
+    .sh-modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
+    .sh-modal { background:var(--bg-2); border:1px solid var(--border); border-radius:12px; width:480px; max-width:95vw; overflow:hidden; }
+    .sh-modal-head { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .sh-modal-title { font-family:var(--font-cond); font-size:16px; font-weight:800; letter-spacing:0.1em; text-transform:uppercase; color:var(--text); }
+    .sh-modal-close { background:none; border:none; color:var(--text-3); font-size:18px; cursor:pointer; padding:0 4px; }
+    .sh-modal-body { padding:20px; }
+    .sh-verdict-row { display:flex; gap:10px; margin-bottom:20px; }
+    .sh-verdict-btn { flex:1; padding:12px; border:2px solid var(--border); border-radius:8px; background:transparent; cursor:pointer; font-family:var(--font-cond); font-size:16px; font-weight:800; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-2); transition:all 0.15s; display:flex; flex-direction:column; align-items:center; gap:4px; }
+    .sh-verdict-btn .sh-vb-emoji { font-size:24px; }
+    .sh-verdict-btn:hover { transform:translateY(-2px); }
+    .sh-verdict-btn.go.selected   { border-color:var(--green); color:var(--green); background:var(--green-dim); box-shadow:0 0 16px rgba(0,232,122,0.2); }
+    .sh-verdict-btn.nogo.selected { border-color:var(--red);   color:var(--red);   background:var(--red-dim);   box-shadow:0 0 16px rgba(232,0,58,0.2); }
+    .sh-verdict-btn.maybe.selected{ border-color:var(--amber); color:var(--amber); background:var(--amber-dim); box-shadow:0 0 16px rgba(255,140,0,0.2); }
+    .sh-cat-label { font-family:var(--font-mono); font-size:9px; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-3); margin-bottom:8px; }
+    .sh-cat-grid { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; }
+    .sh-cat-chip { padding:5px 10px; border:1px solid var(--border); border-radius:20px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.08em; cursor:pointer; background:var(--bg-3); color:var(--text-2); transition:all 0.12s; text-transform:capitalize; }
+    .sh-cat-chip.selected { border-color:var(--red); color:var(--red); background:var(--red-dim); }
+    .sh-notes-input { width:100%; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-body); font-size:13px; padding:10px 12px; resize:vertical; min-height:72px; box-sizing:border-box; margin-bottom:16px; }
+    .sh-notes-input:focus { outline:none; border-color:var(--border-hi); }
+    .sh-modal-footer { display:flex; gap:10px; justify-content:flex-end; }
+    .sh-save-btn { background:var(--red); color:#fff; border:none; padding:9px 24px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:6px; transition:all 0.15s; }
+    .sh-save-btn:hover { background:#c00030; }
+    .sh-cancel-btn { background:transparent; color:var(--text-3); border:1px solid var(--border); padding:9px 16px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:6px; }
+
+    /* Light theme overrides */
+    [data-theme="light"] .sh-prop-card { background:#fff; }
+    [data-theme="light"] .sh-list-panel { background:#fff; }
+    [data-theme="light"] .sh-modal { background:#fff; }
+    [data-theme="light"] .sh-notes-input { background:var(--bg-3); }
+
+    /* ── MISSION CONTROL DASHBOARD ────────────────────────────── */
+    #view-dashboard { overflow-y:auto; background:#0a0a0a; }
+    #view-dashboard.active { display:flex !important; flex-direction:column; }
+    [data-theme="light"] #view-dashboard { background:#f0f0f0; }
+
+    .mc-wrap { padding:20px 24px; min-height:100%; font-family:var(--font-mono); }
+    .mc-masthead { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid #1e1e1e; }
+    .mc-title { font-family:var(--font-cond); font-size:22px; font-weight:900; letter-spacing:0.18em; color:#eee; text-transform:uppercase; }
+    .mc-title span { color:var(--red); }
+    .mc-clock { font-family:var(--font-mono); font-size:13px; color:#555; letter-spacing:0.12em; }
+
+    /* Grid layout */
+    .mc-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+    .mc-grid-wide { grid-column:span 2; }
+    .mc-grid-full { grid-column:span 3; }
+
+    /* Panels */
+    .mc-panel { background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:14px 16px; position:relative; overflow:hidden; }
+    .mc-panel::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--panel-accent,#333); }
+    .mc-panel-title { font-size:8px; letter-spacing:0.2em; text-transform:uppercase; color:#555; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+    [data-theme="light"] .mc-panel { background:#fff; border-color:#ddd; }
+    [data-theme="light"] .mc-panel-title { color:#999; }
+    [data-theme="light"] .mc-masthead { border-color:#ddd; }
+    [data-theme="light"] .mc-title { color:#111; }
+
+    /* Caution lights */
+    .mc-caution-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .mc-light { display:flex; flex-direction:column; align-items:center; gap:5px; min-width:70px; }
+    .mc-bulb { width:28px; height:28px; border-radius:50%; position:relative; transition:all 0.3s; }
+    .mc-bulb::after { content:''; position:absolute; top:25%; left:25%; width:25%; height:25%; border-radius:50%; background:rgba(255,255,255,0.6); }
+    .mc-bulb.green  { background:#00e87a; box-shadow:0 0 12px rgba(0,232,122,0.9),0 0 28px rgba(0,232,122,0.4); }
+    .mc-bulb.amber  { background:#ff8c00; box-shadow:0 0 12px rgba(255,140,0,0.9),0 0 28px rgba(255,140,0,0.4); }
+    .mc-bulb.red    { background:#e8003a; box-shadow:0 0 12px rgba(232,0,58,0.9),0 0 28px rgba(232,0,58,0.4); }
+    .mc-bulb.grey   { background:#2a2a2a; box-shadow:none; }
+    .mc-bulb.flash  { animation:mc-flash 1.2s ease-in-out infinite; }
+    @keyframes mc-flash { 0%,100%{opacity:1} 50%{opacity:0.15} }
+    .mc-bulb-label { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; color:#555; text-align:center; line-height:1.3; }
+    [data-theme="light"] .mc-bulb.grey { background:#ddd; }
+    [data-theme="light"] .mc-bulb-label { color:#aaa; }
+
+    /* Toggle switches */
+    .mc-toggle-row { display:flex; flex-direction:column; gap:8px; }
+    .mc-toggle-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #1a1a1a; }
+    .mc-toggle-item:last-child { border-bottom:none; }
+    .mc-toggle-label { font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:#888; flex:1; }
+    .mc-toggle-val { font-size:9px; letter-spacing:0.1em; color:#555; margin-right:8px; }
+    .mc-switch { width:34px; height:18px; background:#1e1e1e; border:1px solid #333; border-radius:9px; position:relative; cursor:pointer; flex-shrink:0; transition:background 0.2s; }
+    .mc-switch.on { background:#004d20; border-color:#00e87a; }
+    .mc-switch::after { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; background:#333; border-radius:50%; transition:all 0.2s; }
+    .mc-switch.on::after { left:18px; background:#00e87a; box-shadow:0 0 6px #00e87a; }
+    [data-theme="light"] .mc-switch { background:#e0e0e0; border-color:#ccc; }
+    [data-theme="light"] .mc-switch::after { background:#bbb; }
+
+    /* Upload module */
+    .mc-upload-row { display:flex; flex-direction:column; gap:8px; }
+    .mc-upload-item { display:flex; align-items:center; gap:10px; padding:8px 10px; background:#0d0d0d; border:1px solid #1e1e1e; border-radius:4px; }
+    [data-theme="light"] .mc-upload-item { background:#f8f8f8; border-color:#e0e0e0; }
+    .mc-upload-status { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .mc-upload-info { flex:1; min-width:0; }
+    .mc-upload-name { font-size:9px; letter-spacing:0.15em; text-transform:uppercase; color:#888; }
+    .mc-upload-time { font-size:8px; color:#555; margin-top:2px; }
+    .mc-upload-btn-wrap label { display:inline-flex; align-items:center; gap:6px; font-size:8px; letter-spacing:0.15em; text-transform:uppercase; padding:5px 10px; border:1px solid #333; border-radius:3px; cursor:pointer; color:#888; transition:all 0.15s; white-space:nowrap; }
+    .mc-upload-btn-wrap label:hover { border-color:#666; color:#ccc; }
+    .mc-upload-btn-wrap label.stale { border-color:rgba(255,140,0,0.6); color:#ff8c00; animation:mc-flash 1.4s ease-in-out infinite; }
+    /* ── Work Order Meter ── */
+    .wo-meter-row { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid #0f0f0f; }
+    .wo-meter-row:last-child { border-bottom:none; }
+    [data-theme="light"] .wo-meter-row { border-bottom-color:#eee; }
+    .wo-meter-prop { font-family:var(--font-mono); font-size:8px; letter-spacing:0.05em; color:#888; flex:0 0 110px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .wo-meter-bars { flex:1; display:flex; flex-direction:column; gap:2px; }
+    .wo-meter-track { background:#111; border-radius:2px; height:6px; overflow:hidden; position:relative; }
+    [data-theme="light"] .wo-meter-track { background:#eee; }
+    .wo-meter-fill { height:100%; border-radius:2px; transition:width 0.6s ease; }
+    .wo-meter-fill.green { background:#00e87a; }
+    .wo-meter-fill.amber { background:#ff8c00; animation:wo-bar-pulse 2s ease-in-out infinite; }
+    .wo-meter-fill.red   { background:#e8003a; animation:wo-bar-pulse 0.9s ease-in-out infinite; }
+    @keyframes wo-bar-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+    .wo-meter-avg-line { position:absolute; top:0; bottom:0; width:2px; background:rgba(255,255,255,0.25); border-radius:1px; }
+    .wo-meter-count { font-family:var(--font-mono); font-size:9px; font-weight:700; flex:0 0 22px; text-align:right; }
+    .wo-meter-trend { font-size:9px; flex:0 0 14px; text-align:center; }
+    .wo-meter-legend { display:flex; gap:10px; font-family:var(--font-mono); font-size:7px; letter-spacing:0.08em; color:#444; padding-top:6px; }
+
+    /* Big numbers */
+    .mc-stat-row { display:flex; gap:10px; flex-wrap:wrap; }
+    .mc-stat { flex:1; min-width:60px; }
+    .mc-stat-val { font-size:28px; font-weight:900; line-height:1; color:#eee; letter-spacing:-0.02em; }
+    .mc-stat-lbl { font-size:7px; letter-spacing:0.15em; text-transform:uppercase; color:#555; margin-top:3px; }
+    [data-theme="light"] .mc-stat-val { color:#111; }
+    [data-theme="light"] .mc-stat-lbl { color:#aaa; }
+
+    /* Agent roster */
+    .mc-agent-grid { display:flex; flex-direction:column; gap:6px; }
+    .mc-agent-row { display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:3px; background:#0d0d0d; }
+    [data-theme="light"] .mc-agent-row { background:#f5f5f5; }
+    .mc-agent-avatar { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#fff; flex-shrink:0; }
+    .mc-agent-name { flex:1; font-size:10px; letter-spacing:0.06em; color:#ccc; text-transform:uppercase; }
+    [data-theme="light"] .mc-agent-name { color:#333; }
+    .mc-agent-status { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; padding:2px 8px; border-radius:10px; font-weight:700; white-space:nowrap; }
+    .mc-agent-status.available { background:rgba(0,232,122,0.12); color:#00e87a; border:1px solid rgba(0,232,122,0.3); }
+    .mc-agent-status.busy      { background:rgba(255,140,0,0.12); color:#ff8c00; border:1px solid rgba(255,140,0,0.3); }
+    .mc-agent-status.offline   { background:#1a1a1a; color:#444; border:1px solid #222; }
+    .mc-led { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .mc-led.on  { background:#00e87a; box-shadow:0 0 6px #00e87a; animation:mc-led-pulse 2.5s ease-in-out infinite; }
+    .mc-led.off { background:#1e1e1e; box-shadow:none; }
+    @keyframes mc-led-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    .mc-agent-photo { width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
+    .mc-agent-photo:hover { border-color:#00e87a; }
+    .mc-agent-initials { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#fff; flex-shrink:0; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
+    .mc-agent-initials:hover { border-color:#00e87a; }
+    .mc-agent-calls { font-size:9px; color:#555; font-family:var(--font-mono); white-space:nowrap; }
+
+    /* Response time gauge */
+    .mc-gauge-track { height:6px; background:#1a1a1a; border-radius:3px; overflow:hidden; margin:8px 0; }
+    .mc-gauge-fill  { height:100%; border-radius:3px; transition:width 0.6s; }
+    .mc-response-row { display:flex; justify-content:space-between; font-size:9px; color:#555; }
+
+    /* Divider scanline */
+    .mc-scanline { height:1px; background:repeating-linear-gradient(90deg,#1a1a1a 0,#1a1a1a 4px,transparent 4px,transparent 8px); margin:6px 0; }
+
+    /* ── RENT ROLL STYLES ──────────────────────────────────────── */
+    .sh-rented-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(0,232,122,0.12);border:1px solid rgba(0,232,122,0.4);color:var(--green);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
+    .sh-vacant-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(232,0,58,0.1);border:1px solid rgba(232,0,58,0.3);color:var(--red);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
+    .sh-notice-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(255,140,0,0.1);border:1px solid rgba(255,140,0,0.3);color:var(--amber);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
+    .rr-rent-pill { font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--green);background:rgba(0,232,122,0.08);border:1px solid rgba(0,232,122,0.2);padding:2px 8px;border-radius:12px;display:inline-block; }
+    [data-theme="light"] .sh-rented-badge { background:rgba(0,160,80,0.08); }
+    [data-theme="light"] .rr-rent-pill { background:rgba(0,160,80,0.08); }
+    /* ── SHOWING IN-PROGRESS BANNER ──────────────────────────── */
+    #sh-inprogress-banner { position:fixed; bottom:0; left:0; right:0; z-index:800; transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events:none; }
+    #sh-inprogress-banner.visible { transform:translateY(0); pointer-events:all; }
+    @keyframes sh-banner-pulse { 0%,100%{background:#7a4200} 50%{background:#b36000} }
+    @keyframes sh-banner-critical { 0%,100%{background:#7a0015;box-shadow:0 -2px 30px rgba(232,0,58,0.5)} 50%{background:#c0002a;box-shadow:0 -2px 50px rgba(232,0,58,0.9)} }
+    #sh-inprogress-banner.visible { animation:sh-banner-pulse 2s ease-in-out infinite; background:#7a4200; }
+    #sh-inprogress-banner.critical { animation:sh-banner-critical 0.7s ease-in-out infinite !important; }
+    .sh-banner-inner { display:flex; align-items:center; gap:14px; padding:10px 20px; }
+    .sh-banner-critical-row { background:rgba(0,0,0,0.3); border-top:1px solid rgba(255,255,255,0.1); padding:7px 20px; display:flex; align-items:center; gap:10px; }
+    .sh-banner-dot { width:10px; height:10px; border-radius:50%; background:#fff; flex-shrink:0; animation:sl-pulse-dot 1.2s ease-in-out infinite; box-shadow:0 0 8px #fff; }
+    .sh-banner-dot.red { background:#ff4466; box-shadow:0 0 12px #ff4466; }
+    .sh-banner-text { flex:1; font-family:var(--font-cond); font-size:14px; font-weight:800; letter-spacing:0.08em; color:#fff; text-transform:uppercase; }
+    .sh-banner-sub { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.75); letter-spacing:0.06em; }
+    .sh-banner-btn { background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.35); color:#fff; padding:6px 14px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:4px; flex-shrink:0; transition:background 0.15s; }
+    .sh-banner-btn:hover { background:rgba(0,0,0,0.6); }
+    .sh-mute-btn { background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.7); padding:5px 10px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.08em; cursor:pointer; border-radius:4px; flex-shrink:0; transition:all 0.15s; display:flex; align-items:center; gap:5px; }
+    .sh-mute-btn:hover { background:rgba(0,0,0,0.6); color:#fff; }
+    .sh-mute-btn.muted { background:rgba(100,0,20,0.4); border-color:rgba(232,0,58,0.4); color:rgba(255,100,100,0.9); }
+    .sh-banner-btn.alert { background:rgba(232,0,58,0.3); border-color:rgba(255,100,130,0.7); color:#fff; animation:sl-pulse-dot 0.8s ease-in-out infinite; font-weight:800; }
+    .sh-banner-critical-label { font-family:var(--font-mono); font-size:8px; letter-spacing:0.18em; text-transform:uppercase; color:#ff8fa8; font-weight:800; flex-shrink:0; }
+    .sh-banner-critical-msg { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.9); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    /* ── INBOX VIEW ───────────────────────────────────────────── */
+    #view-inbox { overflow: hidden; }
+    .inbox-list { flex: 1; overflow-y: auto; }
+    .inbox-item { padding: 14px 20px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; display: flex; align-items: center; gap: 12px; }
+    .inbox-item:hover { background: var(--bg-2); }
+    .inbox-item.unread { background: rgba(232,0,58,0.04); }
+    .inbox-type-icon { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+    .inbox-missed  { background: var(--red-dim); color: var(--red); }
+    .inbox-text-in { background: var(--blue-dim); color: var(--blue); }
+    .inbox-info { flex: 1; min-width: 0; }
+    .inbox-contact-name { font-size: 14px; font-weight: 600; }
+    .inbox-preview { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .inbox-time { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+
+    /* ── ADMIN VIEW ───────────────────────────────────────────── */
+    #view-admin { overflow-y: auto !important; padding: 24px; }
+    #view-admin.active { display: block !important; }
+    .admin-section { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 20px; overflow: hidden; }
+    .admin-section-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .admin-section-title { font-family: var(--font-cond); font-size: 16px; font-weight: 700; }
+    .admin-table { width: 100%; border-collapse: collapse; }
+    .admin-table th { padding: 10px 20px; text-align: left; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); border-bottom: 1px solid var(--border); }
+    .admin-table td { padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; }
+    .admin-table tr:last-child td { border-bottom: none; }
+    .role-badge { display: inline-block; padding: 2px 8px; border-radius: 100px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .role-admin { background: var(--red-dim); color: var(--red); }
+    .role-agent { background: var(--bg-5); color: var(--text-2); }
+    .online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; }
+    .offline-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); margin-right: 6px; }
+
+    /* ── MODALS ───────────────────────────────────────────────── */
+    .modal-overlay { position: fixed; inset: 0; z-index: 800; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { width: 480px; max-width: 94vw; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; animation: fade-in 0.2s ease forwards; }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .modal-title { font-family: var(--font-cond); font-size: 17px; font-weight: 700; }
+    .modal-close { background: none; color: var(--text-2); font-size: 18px; padding: 2px 6px; transition: color 0.15s; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 20px; }
+    .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+    .form-field { margin-bottom: 16px; }
+    .form-field:last-child { margin-bottom: 0; }
+    .form-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); margin-bottom: 6px; }
+    .form-input { width: 100%; height: 40px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; font-size: 13px; transition: border-color 0.2s; }
+    .form-input:focus { border-color: var(--border-hi); }
+    .form-select { width: 100%; height: 40px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; font-size: 13px; cursor: pointer; }
+    .form-row { display: flex; gap: 12px; }
+    .form-row .form-field { flex: 1; }
+
+    /* ── TOAST ────────────────────────────────────────────────── */
+    #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 16px; background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: fade-in 0.25s ease forwards; max-width: 320px; min-width: 240px; }
+    .toast.success { border-left: 3px solid var(--green); }
+    .toast.error   { border-left: 3px solid var(--red); }
+    .toast.info    { border-left: 3px solid var(--blue); }
+
+    /* ── AI GLOW ──────────────────────────────────────────────── */
+    body.ai-thinking #main::before { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0; animation: app-glow-pulse 2s ease-in-out infinite; border-radius: inherit; }
+    @keyframes app-glow-pulse { 0%,100% { box-shadow: inset 0 0 0 1px transparent; } 50% { box-shadow: inset 0 0 30px rgba(232,0,58,0.08); } }
+    /* ── NEON BORDER GLOW SYSTEM ─────────────────────────────────────── */
+    #app-glow-border {
+      position: fixed; inset: 0; pointer-events: none; z-index: 99999;
+      opacity: 0; transition: opacity 0.3s ease;
+    }
+    #app-glow-border.glow-ringing {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #00c8ff, inset 0 0 40px rgba(0,200,255,0.25), 0 0 0 3px #00c8ff, 0 0 40px rgba(0,200,255,0.4);
+      animation: glow-ring-pulse 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes glow-ring-pulse {
+      from { box-shadow: inset 0 0 0 3px #00c8ff, inset 0 0 30px rgba(0,200,255,0.2), 0 0 0 3px #00c8ff, 0 0 30px rgba(0,200,255,0.35); }
+      to   { box-shadow: inset 0 0 0 4px #00eeff, inset 0 0 60px rgba(0,238,255,0.4), 0 0 0 4px #00eeff, 0 0 60px rgba(0,238,255,0.6); }
+    }
+    #app-glow-border.glow-active-call {
+      opacity: 1;
+      box-shadow: inset 0 0 0 2px #00c8ff, inset 0 0 20px rgba(0,200,255,0.15), 0 0 0 2px #00c8ff, 0 0 20px rgba(0,200,255,0.3);
+    }
+    #app-glow-border.glow-sms-sent {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #00ff88, inset 0 0 50px rgba(0,255,136,0.3), 0 0 0 3px #00ff88, 0 0 50px rgba(0,255,136,0.5);
+      animation: glow-flash 2s ease-out forwards;
+    }
+    #app-glow-border.glow-sms-failed {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #ff3355, inset 0 0 50px rgba(255,51,85,0.3), 0 0 0 3px #ff3355, 0 0 50px rgba(255,51,85,0.5);
+      animation: glow-flash 2s ease-out forwards;
+    }
+    #app-glow-border.glow-sms-received {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #bb44ff, inset 0 0 50px rgba(187,68,255,0.3), 0 0 0 3px #bb44ff, 0 0 50px rgba(187,68,255,0.5);
+      animation: glow-flash 2s ease-out forwards;
+    }
+    @keyframes glow-flash {
+      0%   { opacity: 1; }
+      65%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+
+    /* ── MISC ─────────────────────────────────────────────────── */
+    .text-red   { color: var(--red); }
+    .text-green { color: var(--green); }
+    .text-muted { color: var(--text-2); }
+    .text-mono  { font-family: var(--font-mono); }
+  </style>
+  <!-- Google Maps Places Autocomplete — key loaded from server -->
+  <script>
+    function initGoogleMaps() { window._googleMapsReady = true; }
+    async function loadGoogleMaps() {
+      try {
+        const r = await fetch('/api/config/maps-key');
+        if (!r.ok) return;
+        const { key } = await r.json();
+        if (!key) return;
+        const sc = document.createElement('script');
+        sc.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initGoogleMaps`;
+        sc.async = true; sc.defer = true;
+        document.head.appendChild(sc);
+      } catch(e) {}
+    }
+    loadGoogleMaps();
+  </script>
+  <!-- SheetJS — client-side Excel parsing, no server dependency -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
-<div class="card">
-  <div class="logo">OKCREAL</div>
-  <div id="form-wrap">
-    <h1>How did your tour go?</h1>
-    <div class="sub">Your feedback helps us improve every showing.</div>
-    <div class="verdict-row">
-      <button class="vbtn go" onclick="setV('go',this)"><span class="emoji">✅</span>I'm Interested</button>
-      <button class="vbtn maybe" onclick="setV('maybe',this)"><span class="emoji">🤔</span>Maybe</button>
-      <button class="vbtn nogo" onclick="setV('no-go',this)"><span class="emoji">❌</span>Not for Me</button>
+<div id="app-glow-border"></div>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="wordmark">OKC<span>REAL</span> <span style="color:#fff;font-size:0.75em;opacity:0.6">CONNECT</span></div>
+      <div class="sub">Property Management · Command Center</div>
     </div>
-    <label>Anything to flag? (optional)</label>
-    <div class="cats" id="cats">
-      ${['smell','paint / walls','cleanliness','carpet / flooring','appliances','kitchen','bathroom','lighting','layout','curb appeal','parking','noise','neighborhood','price'].map(c=>`<div class="cat" onclick="toggleCat('${c}',this)">${c}</div>`).join('')}
+    <div class="login-field">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="you@okcreal.com" />
     </div>
-    <label>Other comments</label>
-    <textarea id="notes" placeholder="Tell us what you think..."></textarea>
-    <button class="submit" id="submit-btn" onclick="submitFeedback()" disabled>Select a rating above to continue</button>
-  </div>
-  <div id="thanks" class="thanks" style="display:none">
-    <div class="big">🎉</div>
-    <h2>Thank you!</h2>
-    <p style="color:#888;font-size:14px;margin-top:8px">We appreciate you taking the time to share your thoughts. Our team will be in touch soon!</p>
+    <div class="login-field">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="••••••••••" />
+    </div>
+    <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
   </div>
 </div>
+
+<!-- FLOATING CALL BAR -->
+<div id="call-bar">
+  <div class="call-bar-inner">
+    <div class="call-pulse-ring">
+      <div class="call-avatar" id="call-avatar">?</div>
+    </div>
+    <div class="call-info">
+      <div class="call-status-label" id="call-status-label">Incoming Call</div>
+      <!-- Clickable name if matched, plain if not -->
+      <div class="call-contact-name" id="call-contact-name">Unknown Caller</div>
+      <div class="call-number" id="call-number"></div>
+    </div>
+    <div class="call-timer" id="call-timer" style="display:none">0:00</div>
+    <div class="call-actions" id="call-actions-incoming">
+      <button class="call-btn call-btn-accept" onclick="acceptCall()">📞 Answer</button>
+      <button class="call-btn call-btn-decline" onclick="declineCall()">✕ Decline</button>
+    </div>
+    <div class="call-actions" id="call-actions-active" style="display:none">
+      <button class="call-btn call-btn-mute" id="mute-btn" onclick="toggleMute()">🎤 Mute</button>
+      <button class="call-btn call-btn-hold" id="hold-btn" onclick="toggleHold()">⏸ Hold</button>
+      <button class="call-btn call-btn-end" onclick="endCall()">✕ End</button>
+    </div>
+  </div>
+  <!-- Unknown caller action tray — shown after answering an unmatched number -->
+  <div id="call-unknown-tray" style="display:none">
+    <div id="call-unknown-tray-inner">
+      <span id="call-unknown-tray-label">📵 Caller not in Connect</span>
+      <button class="call-tray-btn new" onclick="callTrayCreateNew()">➕ New Contact</button>
+      <button class="call-tray-btn add" onclick="callTrayAddToExisting()">🔗 Add to Existing</button>
+      <button class="call-tray-btn dismiss" onclick="callTrayDismiss()">✕</button>
+    </div>
+    <!-- Add-to-existing search inline -->
+    <div id="call-tray-search-wrap" style="display:none">
+      <input id="call-tray-search" type="text" placeholder="Search contact name…" oninput="callTraySearch(this.value)" autocomplete="off">
+      <div id="call-tray-results"></div>
+    </div>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+  <!-- PRIVACY BLUR OVERLAY — toggle with backtick ` -->
+  <div id="privacy-overlay" onclick="togglePrivacyBlur()">
+    <div class="priv-stamp">
+      <div class="priv-stamp-word">CLASSIFIED</div>
+      <div class="priv-stamp-sub">OKCREAL · CONFIDENTIAL RECORD</div>
+    </div>
+  </div>
+  <div id="privacy-indicator" onclick="togglePrivacyBlur()" title="Privacy mode ON — click or press ` to unlock">🔒 PRIVACY</div>
+
+<div id="app">
+  <div class="app-body">
+
+    <!-- SIDEBAR -->
+    <nav id="sidebar">
+      <!-- Collapse / Expand toggle -->
+      <button id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar">‹‹</button>
+      <div class="sidebar-logo">
+        <div class="wordmark">OKC<span style="color:var(--red)">REAL</span></div>
+        <div class="sub">Connect</div>
+      </div>
+      <!-- Connection status bar -->
+      <div id="conn-status-bar" title="Offline"><canvas id="jireh-canvas" width="256" height="2"></canvas></div>
+      <div class="sidebar-user">
+        <div class="user-avatar" id="sidebar-avatar">
+          <span id="sidebar-initials">?</span>
+          <span class="status-dot" id="status-dot"></span>
+        </div>
+        <div class="user-info">
+          <div class="user-name" id="sidebar-name">Loading...</div>
+          <button class="status-toggle" id="status-toggle" onclick="cycleStatus()">● Offline</button>
+        </div>
+      </div>
+      <div class="sidebar-nav" id="sidebar-nav">
+        <div class="nav-item active" data-view="dashboard" onclick="navigate('dashboard')" id="nav-dashboard">
+          <span class="nav-icon">⚡</span><span class="nav-label">Mission Control</span>
+        </div>
+        <div class="nav-item" data-view="inbox" onclick="navigate('inbox')">
+          <span class="nav-icon">📥</span>
+          Inbox
+          <span class="nav-badge urgent" id="inbox-badge" style="display:none">0</span>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="nav-section-label">People</div>
+        <div class="nav-item" data-view="people" data-list-id="all" onclick="navigate('people','all')">
+          <span class="nav-icon">👥</span>
+          All People
+          <span class="nav-badge" id="badge-all">—</span>
+        </div>
+        <div class="smart-lists-header">
+          <span class="smart-lists-label">Smart Lists</span>
+          <button class="new-list-btn" title="New list" onclick="openNewListModal()">+</button>
+        </div>
+        <div id="smart-lists-nav"></div>
+        <div class="nav-divider"></div>
+        <div class="nav-item" data-view="admin" onclick="navigate('admin')">
+          <span class="nav-icon">⚙️</span>
+          Admin
+        </div>
+        <div class="nav-item" data-view="security" onclick="navigate('security')" id="nav-security">
+          <span class="nav-icon">🚨</span>
+          Security Alerts
+          <span id="sec-alert-badge" style="display:none;margin-left:auto;background:#ff3b3b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.05em"></span>
+        </div>
+        <div class="nav-item" data-view="showings" onclick="navigate('showings')" id="nav-showings">
+          <span class="nav-icon">🏠</span>
+          Showings
+        </div>
+      </div>
+      <div class="sidebar-bottom">
+        <!-- Privacy blur shortcut hint -->
+        <div onclick="togglePrivacyBlur()" title="Press ` to toggle privacy blur"
+          style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0.04em;transition:background 0.15s;margin:0 4px 2px"
+          onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='transparent'">
+          <span>🔒</span>
+          <span>BLUR SCREEN</span>
+          <span style="margin-left:auto;background:var(--bg-4);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:10px">` </span>
+        </div>
+        <!-- Theme toggle -->
+        <div class="theme-toggle-wrap" onclick="toggleTheme()" title="Switch theme">
+          <span class="theme-toggle-icon" id="theme-icon">🌙</span>
+          <span class="theme-toggle-label" id="theme-label">Stealth</span>
+          <div class="theme-toggle-track">
+            <div class="theme-toggle-thumb"></div>
+          </div>
+        </div>
+        <div class="nav-item" onclick="doLogout()" style="color:var(--text-3)">
+          <span class="nav-icon">↩</span>
+          Sign Out
+        </div>
+      </div>
+    </nav>
+
+    <!-- MAIN -->
+    <div id="main">
+      <div class="main-header">
+        <div class="header-title" id="header-title">All People</div>
+        <div class="header-search" style="position:relative">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="global-search" placeholder="Search name, phone, email…"
+            oninput="handleSearch(this.value)" autocomplete="off"
+            onkeydown="searchKeyNav(event)" onfocus="handleSearchFocus()" />
+          <div id="search-dropdown" style="display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;
+            background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+            box-shadow:0 8px 32px rgba(0,0,0,0.5);z-index:8000;overflow:hidden;max-height:320px;overflow-y:auto"></div>
+        </div>
+        <div class="header-actions">
+          <!-- Notification Bell -->
+          <div style="position:relative;display:inline-flex">
+            <button id="notif-bell-btn" onclick="toggleNotifPanel()" title="Notifications"
+              style="width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--bg-3);
+                     cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .15s"
+              onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='var(--bg-3)'">
+              🔔
+            </button>
+            <span id="notif-badge" style="display:none;position:absolute;top:-4px;right:-4px;
+              background:var(--red);color:#fff;font-size:9px;font-weight:800;padding:2px 5px;
+              border-radius:10px;min-width:16px;text-align:center;pointer-events:none"></span>
+            <!-- Notification panel -->
+            <div id="notif-panel" style="display:none;position:absolute;top:44px;right:0;width:340px;
+              background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
+              box-shadow:0 12px 40px rgba(0,0,0,0.5);z-index:9000;overflow:hidden">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)">
+                <span style="font-size:13px;font-weight:700;color:var(--text)">Notifications</span>
+                <button onclick="markAllNotifsRead()" style="font-size:11px;color:var(--text-3);background:none;border:none;cursor:pointer;padding:2px 6px">Mark all read</button>
+              </div>
+              <div id="notif-list" style="max-height:380px;overflow-y:auto"></div>
+            </div>
+          </div>
+          <!-- Agent Profile Button -->
+          <div id="my-avatar-btn" onclick="openSettings()" title="My Settings"
+            style="width:36px;height:36px;border-radius:50%;cursor:pointer;overflow:hidden;
+                   border:2px solid var(--border);transition:border-color .15s;flex-shrink:0;
+                   display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700"
+            onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--border)'">
+            ?
+          </div>
+          <button class="btn-primary" onclick="openNewContactModal()">+ Add Contact</button>
+        </div>
+      </div>
+
+      <!-- VIEW: People List -->
+      <div class="view active" id="view-people">
+        <div class="people-main">
+          <!-- Smart List Header Bar (shows when in a list, hidden for All People) -->
+          <div id="sl-list-header">
+            <span class="sl-lh-icon">◈</span>
+            <span class="sl-lh-name" id="sl-lh-name">LIST</span>
+            <span class="sl-lh-count" id="sl-lh-count"></span>
+            <button class="sl-lh-edit" onclick="openSmartListPanel(currentListId)">// Edit Parameters</button>
+          </div>
+          <div class="people-toolbar">
+            <span class="people-count" id="people-count"><strong>0</strong> people</span>
+            <div id="filter-tags-bar"></div>
+            <div class="bulk-actions" id="bulk-actions">
+              <button class="filter-btn" onclick="bulkCall()">📞 Call Selected</button>
+              <button class="filter-btn" onclick="bulkText()">💬 Text Selected</button>
+            </div>
+          </div>
+          <div class="people-table-wrap">
+            <table class="people-table" id="people-table">
+              <thead>
+                <tr>
+                  <th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+                  <th onclick="sortPeople('name')" style="min-width:180px">Name <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('phone')" style="min-width:140px">Phone <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('stage')" style="min-width:110px">Stage <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('past_due_balance')" style="min-width:110px;display:none" id="th-past-due">Past Due <span class="sort-arrow">↕</span></th>
+                  <th onclick="sortPeople('past_due_days')" style="min-width:100px;display:none" id="th-past-due-days">Days Late <span class="sort-arrow">↕</span></th>
+                  <th style="min-width:140px">Tags</th>
+                  <th onclick="sortPeople('last_activity')" style="min-width:120px">Last Activity <span class="sort-arrow">↕</span></th>
+                  <th style="min-width:120px">Assigned</th>
+                  <th style="width:80px"></th>
+                </tr>
+              </thead>
+              <tbody id="people-tbody">
+                <tr class="loader-row"><td colspan="8"><div class="spinner"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- Tactical Intel Panel -->
+        <div class="sl-panel" id="sl-panel">
+
+          <!-- HEADER -->
+          <div class="sl-panel-header">
+            <div class="sl-header-top">
+              <div class="sl-header-badges">
+                <div class="sl-live-dot"></div>
+                <span class="sl-badge">INTEL FILTER</span>
+                <span class="sl-badge">OKCREAL</span>
+              </div>
+              <button class="sl-close-btn" onclick="closeSmartListPanel()" title="Close">✕</button>
+            </div>
+            <div class="sl-panel-title" id="sl-panel-title">NEW LIST</div>
+            <!-- Live target counter -->
+            <div class="sl-target-counter">
+              <span id="sl-target-label">TARGETS: —</span>
+              <div class="sl-target-counter-bar"><div class="sl-target-counter-fill" id="sl-target-fill" style="width:0%"></div></div>
+            </div>
+          </div>
+
+          <!-- BODY -->
+          <div class="sl-panel-body">
+            <input type="hidden" id="sl-editing-id">
+
+            <!-- DESIGNATION -->
+            <div class="sl-section">
+              <span class="sl-section-tl"></span><span class="sl-section-br"></span>
+              <div class="sl-panel-label">Designation</div>
+              <div class="sl-input-wrap">
+                <input type="text" class="sl-input" id="sl-name-input" placeholder="LIST_NAME" autocomplete="off" spellcheck="false">
+                <span class="sl-input-cursor"></span>
+              </div>
+            </div>
+
+            <!-- TARGET CLASSIFICATION -->
+            <div class="sl-section">
+              <span class="sl-section-tl"></span><span class="sl-section-br"></span>
+              <div class="sl-panel-label">Target Classification</div>
+              <div class="sl-stage-grid" id="sl-stage-grid">
+                <label class="sl-stage-chip"><input type="checkbox" value="Lead" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Lead</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Resident" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Resident</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Delinquent" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Delinquent</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Evicting" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Evicting</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Past Tenant" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Past Tenant</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Property Owner" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Owner</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Contractor" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Contractor</label>
+                <label class="sl-stage-chip"><input type="checkbox" value="Caseworker" onchange="this.closest('.sl-stage-chip').classList.toggle('selected',this.checked);slUpdateCounter()">Caseworker</label>
+              </div>
+            </div>
+
+            <!-- INTEL TAGS -->
+            <div class="sl-section">
+              <span class="sl-section-tl"></span><span class="sl-section-br"></span>
+              <div class="sl-panel-label">Intel Tags</div>
+              <textarea class="sl-input" id="sl-tags-input"
+                placeholder="ONE TAG PER LINE&#10;&#10;ON PAYMENT PLAN&#10;EVICTION ALERT&#10;NO ANSWER"
+                oninput="slUpdateCounter()"></textarea>
+              <div class="sl-hint">▸ MATCH ANY TAG IN LIST</div>
+            </div>
+
+          </div>
+
+          <!-- FOOTER -->
+          <div class="sl-panel-footer">
+            <button class="sl-save-btn" onclick="saveSmartListPanel()">◈ &nbsp;COMMIT TO DATABASE</button>
+            <button class="sl-del-btn" id="sl-del-btn" onclick="deleteSmartListFromPanel()" style="display:none">⌫ &nbsp;PURGE LIST</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- VIEW: Contact Record -->
+      <div class="view" id="view-contact"></div>
+
+      <!-- VIEW: Inbox -->
+      <div class="view" id="view-inbox">
+        <div class="people-toolbar">
+          <span class="header-title" style="font-size:15px">Inbox</span>
+          <div style="display:flex;gap:6px;margin-left:12px">
+            <button class="filter-pill active" id="inbox-filter-all" onclick="setInboxFilter('all')">All</button>
+            <button class="filter-pill" id="inbox-filter-missed" onclick="setInboxFilter('missed')">📞 Missed Calls</button>
+            <button class="filter-pill" id="inbox-filter-texts" onclick="setInboxFilter('texts')">💬 Unread Texts</button>
+          </div>
+          <button onclick="clearInbox()" style="margin-left:auto;height:28px;padding:0 12px;background:var(--bg-4);color:var(--text-3);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-3)'">✓ Clear All</button>
+        </div>
+        <div class="inbox-list" id="inbox-list">
+          <div style="text-align:center;padding:80px;color:var(--text-3)"><div class="empty-icon">📭</div><p>Loading inbox…</p></div>
+        </div>
+      </div>
+
+      <!-- VIEW: Admin -->
+      <div class="view" id="view-admin">
+        <!-- Agents and Call Lines — filled dynamically by loadAdmin() -->
+        <div id="admin-dynamic"></div>
+
+        <!-- ── FUB IMPORT — static HTML so file input works ──────────── -->
+        <div class="admin-section" id="admin-import-section">
+          <div class="admin-section-header">
+            <div class="admin-section-title">📥 Import Contacts (Follow Up Boss)</div>
+          </div>
+          <div style="padding:20px">
+            <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
+              Export your contacts from Follow Up Boss (Contacts → ··· → Export), then upload the CSV here.
+              Run a <strong>dry run</strong> first to preview what will be imported before committing.
+            </p>
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+              <div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2);overflow:hidden">
+                📂 <span id="import-filename">Choose CSV file…</span>
+                <input type="file" accept=".csv" id="import-file-input" onchange="importFileChosen(this)"
+                  style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer">
+              </div>
+              <button class="btn-ghost" onclick="runImport(false)" id="import-dryrun-btn" style="opacity:0.4">🔍 Dry Run Preview</button>
+              <button class="btn-primary" onclick="runImport(true)" id="import-commit-btn" style="opacity:0.4;background:var(--bg-5);color:var(--text-2);border:1px solid var(--border)">🚀 Commit Import</button>
+            </div>
+            <div id="import-status" style="display:none;font-size:13px;color:var(--text-3);margin-bottom:12px"></div>
+            <div id="import-preview" style="display:none">
+              <div id="import-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px"></div>
+              <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+                <table class="admin-table" id="import-preview-table">
+                  <thead><tr><th>Action</th><th>Name</th><th>Stage</th><th>Phone</th><th>Email</th><th>FUB Stage</th><th>Blocked?</th></tr></thead>
+                  <tbody id="import-preview-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: Security Alerts -->
+      <div class="view" id="view-showings">
+        <div id="showings-root" style="height:100%;overflow:hidden;display:flex;flex-direction:column"></div>
+      </div>
+      <div class="view" id="view-dashboard"></div>
+      <div class="view" id="view-security">
+        <div class="people-toolbar" style="border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0">
+          <div style="font-size:13px;font-weight:700;color:#ff3b3b;letter-spacing:0.05em;text-transform:uppercase">🚨 Watchlist — Last 30 Days</div>
+          <div style="flex:1"></div>
+          <button onclick="clearSecurityAlerts()" style="height:28px;padding:0 12px;background:var(--bg-4);color:var(--text-3);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-3)'">✓ Clear All</button>
+          <button onclick="loadSecurityAlertHistory()" style="font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-2);cursor:pointer;font-family:inherit">↻ Refresh</button>
+        </div>
+        <div id="sec-history-list" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px">
+          <div style="color:var(--text-3);font-size:13px">Loading…</div>
+        </div>
+      </div>
+
+    </div><!-- /main -->
+  </div><!-- /app-body -->
+</div><!-- /app -->
+
+<!-- ── POWER DIALER OVERLAY ──────────────────────────────────────────────── -->
+<style>
+  #power-dialer {
+    display: none;
+    position: fixed;
+    bottom: 90px; right: 24px;
+    width: 320px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    z-index: 9000;
+    overflow: hidden;
+    font-family: inherit;
+  }
+  #power-dialer.visible { display: block; }
+  .pd-header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 12px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .pd-title { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
+  .pd-progress { font-size: 11px; color: var(--text-3); }
+  .pd-progress strong { color: var(--text); }
+  .pd-contact {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .pd-contact-name { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .pd-contact-phone { font-size: 12px; color: var(--text-3); font-family: monospace; }
+  .pd-status {
+    padding: 8px 16px;
+    font-size: 12px; font-weight: 600;
+    min-height: 32px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .pd-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .pd-status-dot.calling { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pd-pulse 1s infinite; }
+  .pd-status-dot.paused  { background: var(--amber); }
+  .pd-status-dot.waiting { background: var(--text-3); }
+  @keyframes pd-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .pd-bar {
+    height: 3px; background: var(--bg-4); margin: 0 16px 10px;
+    border-radius: 2px; overflow: hidden;
+  }
+  .pd-bar-fill { height: 100%; background: var(--red); border-radius: 2px; transition: width 0.4s; }
+  .pd-actions {
+    display: flex; gap: 8px; padding: 10px 16px 14px; flex-wrap: wrap;
+  }
+  .pd-btn {
+    flex: 1; min-width: 70px;
+    padding: 7px 10px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-4); color: var(--text-2);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap; text-align: center;
+  }
+  .pd-btn:hover { background: var(--bg-5); color: var(--text); }
+  .pd-btn.danger { background: rgba(232,0,58,0.12); color: var(--red); border-color: rgba(232,0,58,0.3); }
+  .pd-btn.danger:hover { background: rgba(232,0,58,0.22); }
+  .pd-btn.primary { background: var(--red); color: #fff; border-color: var(--red); }
+  .pd-btn.primary:hover { opacity: 0.85; }
+  .pd-btn.success { background: rgba(0,200,100,0.15); color: #00c864; border-color: rgba(0,200,100,0.3); }
+  .pd-btn.success:hover { background: rgba(0,200,100,0.25); }
+  .pd-queue-list {
+    max-height: 110px; overflow-y: auto;
+    padding: 0 16px 12px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .pd-queue-item {
+    font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    display: flex; align-items: center; gap: 6px; color: var(--text-3);
+  }
+  .pd-queue-item.current { background: rgba(232,0,58,0.1); color: var(--text); font-weight: 600; }
+  .pd-queue-item.done    { text-decoration: line-through; opacity: 0.4; }
+  .pd-queue-item.skipped { opacity: 0.4; font-style: italic; }
+</style>
+
+<div id="power-dialer">
+  <div class="pd-header">
+    <span class="pd-title">⚡ Power Dialer</span>
+    <span class="pd-progress"><strong id="pd-current-num">1</strong> of <strong id="pd-total-num">0</strong></span>
+  </div>
+  <div class="pd-contact">
+    <div class="pd-contact-name" id="pd-contact-name">—</div>
+    <div class="pd-contact-phone" id="pd-contact-phone">—</div>
+  </div>
+  <div class="pd-status" id="pd-status">
+    <div class="pd-status-dot waiting" id="pd-status-dot"></div>
+    <span id="pd-status-text">Ready</span>
+  </div>
+  <div class="pd-bar"><div class="pd-bar-fill" id="pd-bar-fill" style="width:0%"></div></div>
+  <div class="pd-actions">
+    <button class="pd-btn success" id="pd-call-btn"    onclick="pdCall()">📞 Call</button>
+    <button class="pd-btn"         id="pd-pause-btn"   onclick="pdTogglePause()">⏸ Pause After</button>
+    <button class="pd-btn danger"  id="pd-skip-btn"    onclick="pdSkip()">⏭ Skip</button>
+    <button class="pd-btn danger"  id="pd-end-btn"     onclick="pdEnd()" style="flex:0;min-width:auto;padding:7px 10px">✕ End</button>
+  </div>
+  <div class="pd-queue-list" id="pd-queue-list"></div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modal-new-contact">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Add Contact</div>
+      <button class="modal-close" onclick="closeModal('modal-new-contact')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-field"><label class="form-label">First Name</label><input class="form-input" id="nc-first" type="text" placeholder="First" /></div>
+        <div class="form-field"><label class="form-label">Last Name</label><input class="form-input" id="nc-last" type="text" placeholder="Last" /></div>
+      </div>
+      <div class="form-field"><label class="form-label">Phone</label><input class="form-input" id="nc-phone" type="tel" placeholder="+1 (405) 555-0000" /></div>
+      <div class="form-field"><label class="form-label">Email</label><input class="form-input" id="nc-email" type="email" placeholder="tenant@email.com" /></div>
+      <div class="form-field">
+        <label class="form-label">Stage</label>
+        <select class="form-select" id="nc-stage">
+          <option value="Lead">Lead</option>
+          <option value="Resident">Resident</option>
+              <option value="Evicting">Evicting</option>
+          <option value="Past Tenant">Past Tenant</option>
+          <option value="Property Owner">Property Owner</option>
+          <option value="Vendor">Vendor</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="closeModal('modal-new-contact')">Cancel</button>
+      <button class="btn-primary" onclick="createContact()">Add Contact</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-new-task">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Add Task</div>
+      <button class="modal-close" onclick="closeModal('modal-new-task')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field"><label class="form-label">Task</label><input class="form-input" id="task-text-input" type="text" placeholder="Follow up on payment…" /></div>
+      <div class="form-field"><label class="form-label">Due Date</label><input class="form-input" id="task-due-input" type="date" /></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="closeModal('modal-new-task')">Cancel</button>
+      <button class="btn-primary" onclick="submitTask()">Add Task</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
 <script>
-  let verdict=null, cats=[];
-  function setV(v, el) {
-    verdict=v;
-    document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('sel'));
-    el.classList.add('sel');
-    const btn=document.getElementById('submit-btn');
-    btn.disabled=false; btn.textContent='Submit Feedback';
-  }
-  function toggleCat(c, el) {
-    if (cats.includes(c)) { cats=cats.filter(x=>x!==c); el.classList.remove('sel'); }
-    else { cats.push(c); el.classList.add('sel'); }
-  }
-  async function submitFeedback() {
-    const btn=document.getElementById('submit-btn');
-    btn.disabled=true; btn.textContent='Submitting...';
-    try {
-      const r = await fetch('/api/showings/${req.params.showingId}/public-feedback', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ verdict, categories: cats, notes: document.getElementById('notes').value })
-      });
-      if (!r.ok) throw new Error('Failed');
-      document.getElementById('form-wrap').style.display='none';
-      document.getElementById('thanks').style.display='';
-    } catch(e) { btn.disabled=false; btn.textContent='Try Again'; alert('Something went wrong. Please try again.'); }
-  }
-</script>
-</body></html>`);
-});
+// ── STATE ──────────────────────────────────────────────────────────
+const API = '';
+let authToken = localStorage.getItem('connect_token') || null;
+let currentUser = (() => { try { return JSON.parse(localStorage.getItem('connect_user') || 'null'); } catch(e) { localStorage.removeItem('connect_user'); return null; } })();
+let currentView = 'people';
+let currentListId = 'all';
+let currentPersonId = null;
+let peopleData = [];
+let smartLists = [];
+let slNavPeople = [];   // ordered people when navigating a smart list
+let slNavIndex  = -1;   // current position in slNavPeople
+let myAgent = null;
+let agentsList = [];
+let _mentionQuery = '';
+let _mentionStart = -1;
+let _mentionSelectedIdx = 0;
+let _agentSse = null;
+let sortField = 'last_activity';
+let sortDir = 'desc';
+let _isDelinqList = false; // tracks whether current list is delinquent
+let searchQuery = '';
+let twilioDevice = null;
+let twilioReady = false;
+let activeCall = null;
+let callTimerInterval = null;
+let callSeconds = 0;
+let isMuted = false;
+let isOnHold = false;
+let inboxFilter = 'all';
+let currentTaskPersonId = null;
+// ── TAB ALERT — phone icon + title flash when call comes in ─────────────
+const TabAlert = (() => {
+  let _interval  = null;
+  let _origTitle = document.title;
+  let _origIcon  = null;
 
-// Public feedback endpoint (no auth)
-app.post('/api/showings/:id/public-feedback', async (req, res) => {
-  try {
-    const { verdict, categories = [], notes = '' } = req.body;
-    if (!verdict) return res.status(400).json({ error: 'verdict required' });
-    await pool.query(
-      `INSERT INTO showing_feedback (showing_id, agent_id, agent_name, verdict, categories, notes, source)
-       VALUES ($1, 'prospect', 'Prospect via SMS link', $2, $3, $4, 'prospect')
-       ON CONFLICT (showing_id, agent_id) DO UPDATE SET
-         verdict=EXCLUDED.verdict, categories=EXCLUDED.categories, notes=EXCLUDED.notes,
-         source='prospect', created_at=NOW()`,
-      [req.params.id, verdict, JSON.stringify(categories), notes]
-    );
-    broadcastToAll({ type: 'showing_feedback', showingId: req.params.id, verdict, source: 'prospect' });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
+  // Inline SVG favicons as data URIs — no server round-trip
+  const ICONS = {
+    default: null, // restored from original link tag
+    phone: `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='10' fill='%230a0a0f'/><text x='32' y='44' font-family='Arial Black,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23e6e6e6'>OK<tspan fill='%23e63946'>C</tspan></text></svg>`,
+    ringing: `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='10' fill='%2300cc55'/><text x='32' y='46' font-family='Arial' font-size='38' text-anchor='middle' fill='%23fff'>📞</text></svg>`,
+    active:  `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='10' fill='%23005522'/><text x='32' y='46' font-family='Arial' font-size='38' text-anchor='middle' fill='%2300ff88'>📞</text></svg>`,
+  };
 
-// In-progress showings endpoint (for bottom banner)
-// Returns showing + any inbound call/sms activity from that person in last 20 min
-app.get('/api/showings/in-progress', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        s.id, s.property, s.unit, s.guest_name, s.phone, s.showing_time,
-        s.showing_type, s.connect_person_id,
-        -- Most recent inbound activity from this person during the showing window
-        act.type        AS alert_type,
-        act.body        AS alert_body,
-        act.created_at  AS alert_at
-      FROM showings s
-      LEFT JOIN LATERAL (
-        SELECT a.type, a.body, a.created_at
-        FROM activities a
-        WHERE a.person_id::text = s.connect_person_id
-          AND a.direction = 'inbound'
-          AND a.created_at > NOW() - INTERVAL '20 minutes'
-        ORDER BY a.created_at DESC
-        LIMIT 1
-      ) act ON TRUE
-      WHERE s.status = 'Scheduled'
-        AND s.showing_time BETWEEN NOW() - INTERVAL '15 minutes' AND NOW()
-      ORDER BY act.created_at DESC NULLS LAST, s.showing_time ASC
-    `);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Background poller — texts leads 15 min after showing
-async function pollShowingFollowups() {
-  try {
-    const twilio = initTwilioFull() || initTwilio();
-    if (!twilio) return;
-    const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
-    const appUrl = process.env.APP_URL || 'https://connect.okcreal.com';
-    // Find completed showings from last 2 min window (14-16 min after start) not yet texted
-    const { rows } = await pool.query(`
-      SELECT id, guest_name, phone, property
-      FROM showings
-      WHERE status = 'Scheduled'
-        AND phone IS NOT NULL
-        AND feedback_sent = FALSE
-        AND showing_time BETWEEN NOW() - INTERVAL '16 minutes' AND NOW() - INTERVAL '14 minutes'
-    `);
-    for (const s of rows) {
-      try {
-        const phone = s.phone.replace(/\D/g,'').replace(/^1/,'');
-        if (phone.length !== 10) continue;
-        const link = `${appUrl}/feedback/${s.id}`;
-        const firstName = (s.guest_name||'').split(',')[1]?.trim().split(' ')[0] || (s.guest_name||'').split(' ')[0] || 'there';
-        const msg = `Hi ${firstName}! Thanks so much for touring ${(s.property||'').split(' - ')[0]} — we're excited to hear how it went! Your feedback helps us improve the experience for everyone: ${link}`;
-        await twilio.messages.create({ body: msg, from: fromNum, to: `+1${phone}` });
-        await pool.query(`UPDATE showings SET feedback_sent=TRUE WHERE id=$1`, [s.id]);
-        console.log(`[Showings] Feedback text sent to ${firstName} (showing ${s.id})`);
-      } catch(e) { console.error('[Showings] Text error:', e.message); }
+  function setIcon(type) {
+    let link = document.querySelector("link[rel='shortcut icon']");
+    if (!link) { link = document.createElement('link'); link.rel = 'shortcut icon'; document.head.appendChild(link); }
+    if (type === 'default') {
+      link.href = '/favicon.ico';
+    } else {
+      link.href = ICONS[type];
+      link.type = 'image/svg+xml';
     }
-  } catch(e) { console.error('[Showings Poller]', e.message); }
+  }
+
+  return {
+    ringing(name) {
+      clearInterval(_interval);
+      _origTitle = document.title;
+      let flash = false;
+      setIcon('ringing');
+      _interval = setInterval(() => {
+        flash = !flash;
+        document.title = flash ? `📞 Incoming — ${name || 'Unknown'}` : `☎ OKCREAL Connect`;
+      }, 900);
+    },
+    active(name) {
+      clearInterval(_interval);
+      setIcon('active');
+      document.title = `📞 On Call — ${name || ''}`;
+    },
+    clear() {
+      clearInterval(_interval);
+      _interval = null;
+      setIcon('default');
+      document.title = _origTitle || 'OKCREAL Connect';
+    }
+  };
+})();
+
+// ── THEME ──────────────────────────────────────────────────────────────────
+// Default = daylight. Once the user toggles, their choice is remembered.
+(function() {
+  const saved = localStorage.getItem('okcreal_theme') || 'light';
+  applyTheme(saved, false);
+})();
+
+function applyTheme(mode, save = true) {
+  const root = document.documentElement;
+  const icon  = document.getElementById('theme-icon');
+  const label = document.getElementById('theme-label');
+  if (mode === 'light') {
+    root.setAttribute('data-theme', 'light');
+    if (icon)  icon.textContent  = '☀️';
+    if (label) label.textContent = 'Daylight';
+  } else {
+    root.setAttribute('data-theme', 'dark');   // must SET not remove for CSS selectors
+    if (icon)  icon.textContent  = '🌙';
+    if (label) label.textContent = 'Stealth';
+  }
+  if (save) localStorage.setItem('okcreal_theme', mode);
 }
 
-// =============================================================================
-// RENT ROLL API
-// =============================================================================
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'light' ? 'dark' : 'light');
+}
 
-// Upload rent roll (browser-parsed JSON)
-app.post('/api/rent-roll/upload', auth, async (req, res) => {
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const btn = document.getElementById('sidebar-toggle-btn');
+  const collapsed = sidebar.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '›› ' : '‹‹';
+  btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  localStorage.setItem('sidebar_collapsed', collapsed ? '1' : '0');
+}
+
+// Restore sidebar state on load
+(function() {
+  if (localStorage.getItem('sidebar_collapsed') === '1') {
+    const sidebar = document.getElementById('sidebar');
+    const btn = document.getElementById('sidebar-toggle-btn');
+    if (sidebar) { sidebar.classList.add('collapsed'); }
+    if (btn) { btn.textContent = '›› '; btn.title = 'Expand sidebar'; }
+  }
+})();
+
+let userStatus = 'available';
+
+// ── API HELPERS ─────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (authToken) opts.headers['Authorization'] = `Bearer ${authToken}`;
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  if (res.status === 401) { doLogout(); throw new Error('Unauthorized'); }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const e = new Error(err.error || `HTTP ${res.status}`);
+    e.status = res.status;
+    e.data = err;
+    throw e;
+  }
+  return res.json();
+}
+
+// ── AUTH ────────────────────────────────────────────────────────────
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if (!email || !password) { errEl.textContent = 'Please enter your email and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
   try {
-    const { rows, filename } = req.body;
-    if (!rows || !Array.isArray(rows) || !rows.length)
-      return res.status(400).json({ error: 'No rows provided' });
+    const data = await api('/api/auth/login', 'POST', { email, password });
+    authToken = data.token; currentUser = data.agent;
+    localStorage.setItem('connect_token', authToken);
+    localStorage.setItem('connect_user', JSON.stringify(currentUser));
+    launchApp();
+  } catch(e) {
+    errEl.textContent = e.message || 'Invalid email or password.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+}
 
-    const batchId = crypto.randomUUID();
-    let upserted = 0;
-    for (const r of rows) {
-      if (!r.property || !r.unit) continue;
-      const toDate = v => v ? new Date(v) : null;
-      await pool.query(
-        `INSERT INTO rent_roll
-           (property,unit,tenant_name,status,bedrooms,sqft,market_rent,rent,deposit,
-            lease_from,lease_to,move_in,move_out,past_due,nsf_count,late_count,upload_batch,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
-         ON CONFLICT (property,unit) DO UPDATE SET
-           tenant_name=EXCLUDED.tenant_name, status=EXCLUDED.status,
-           bedrooms=EXCLUDED.bedrooms, sqft=EXCLUDED.sqft,
-           market_rent=EXCLUDED.market_rent, rent=EXCLUDED.rent, deposit=EXCLUDED.deposit,
-           lease_from=EXCLUDED.lease_from, lease_to=EXCLUDED.lease_to,
-           move_in=EXCLUDED.move_in, move_out=EXCLUDED.move_out,
-           past_due=EXCLUDED.past_due, nsf_count=EXCLUDED.nsf_count,
-           late_count=EXCLUDED.late_count, upload_batch=EXCLUDED.upload_batch,
-           updated_at=NOW()`,
-        [ r.property, r.unit, r.tenant_name||null, r.status||null, r.bedrooms||null,
-          r.sqft||null, r.market_rent||null, r.rent||null, r.deposit||null,
-          toDate(r.lease_from), toDate(r.lease_to), toDate(r.move_in), toDate(r.move_out),
-          r.past_due||0, r.nsf_count||0, r.late_count||0, batchId ]
-      );
-      upserted++;
+function doLogout() {
+  authToken = null; currentUser = null;
+  localStorage.removeItem('connect_token'); localStorage.removeItem('connect_user');
+  if (twilioDevice) { try { twilioDevice.destroy(); } catch(e){} twilioDevice = null; }
+  twilioReady = false;
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+// ── APP INIT ────────────────────────────────────────────────────────
+async function launchApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('visible');
+  updateSidebarUser();
+  await Promise.all([loadSmartLists(), loadInboxCount()]);
+  startShowingAlertPoller();
+  const _path = window.location.pathname;
+  const _fileMatch = _path.match(/^\/file\/(\d+)$/);
+  const _listMatch = _path.match(/^\/list\/(\d+)$/);
+  if (_fileMatch) {
+    navigate('people', 'all');
+    openContact(_fileMatch[1]);
+  } else if (_listMatch) {
+    navigate('people', _listMatch[1]);
+  } else if (_path === '/inbox') {
+    navigate('inbox');
+  } else if (_path === '/admin') {
+    navigate('admin');
+  } else if (_path === '/security') {
+    navigate('security');
+  } else if (_path === '/showings') {
+    navigate('showings');
+  } else if (_path === '/dashboard') {
+    navigate('dashboard');
+  } else {
+    navigate('dashboard');
+  }
+  initTwilio();
+  JirehOrganic.init();
+  // Load my profile + team, then connect agent SSE
+  loadMyProfile().then(() => connectAgentSse());
+  startNotifPoller();
+}
+
+function updateSidebarUser() {
+  if (!currentUser) return;
+  const initials = ((currentUser.name || '?').split(' ').map(n=>n[0]).join('').substring(0,2)).toUpperCase();
+  document.getElementById('sidebar-initials').textContent = initials;
+  document.getElementById('sidebar-name').textContent = currentUser.name || currentUser.email;
+  setStatus('available');
+  // Defer so JirehSecurity const is fully initialized before calling
+  setTimeout(() => { JirehSecurity.connect(); initSecBadge(); }, 0);
+}
+
+if (authToken && currentUser) launchApp();
+
+// ── STATUS ──────────────────────────────────────────────────────────
+function setStatus(s) {
+  userStatus = s;
+  const dot = document.getElementById('status-dot');
+  const toggle = document.getElementById('status-toggle');
+  dot.className = 'status-dot ' + s;
+  if (s === 'available') { toggle.textContent = '● Available'; toggle.className = 'status-toggle available'; }
+  else if (s === 'busy')  { toggle.textContent = '● Busy';      toggle.className = 'status-toggle busy'; }
+  else                    { toggle.textContent = '● Offline';   toggle.className = 'status-toggle'; }
+  updateConnBarForStatus(s);
+  // Persist to server + broadcast to all agents
+  const avail = s === 'available' ? 'online' : s === 'busy' ? 'busy' : 'offline';
+  fetch('/api/me/availability', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', Authorization:'Bearer '+authToken },
+    body: JSON.stringify({ availability: avail })
+  }).catch(()=>{});
+}
+
+function updateConnBarForStatus(s) {
+  const bar = document.getElementById('conn-status-bar');
+  if (!bar) return;
+  bar.classList.remove('status-busy', 'status-offline');
+  if (s === 'busy') {
+    bar.classList.remove('connected');
+    bar.classList.add('status-busy');
+    JirehOrganic.setMode('busy');
+  } else if (s === 'offline') {
+    bar.classList.remove('connected');
+    bar.classList.add('status-offline');
+    JirehOrganic.setMode('offline');
+  } else {
+    fetch('/health', { method: 'GET', cache: 'no-store' })
+      .then(r => {
+        if (r.ok) { bar.classList.add('connected'); JirehOrganic.setMode('idle'); }
+        else JirehOrganic.setMode('offline');
+      }).catch(() => { JirehOrganic.setMode('offline'); });
+  }
+}
+function cycleStatus() {
+  const states = ['available', 'busy', 'offline'];
+  setStatus(states[(states.indexOf(userStatus) + 1) % states.length]);
+}
+
+// ── NAVIGATION ──────────────────────────────────────────────────────
+function navigate(view, listId = null) {
+  try {
+    if (view === 'people' && (!listId || listId === 'all')) {
+      history.pushState({ view: 'people', listId: 'all' }, '', '/');
+    } else if (view === 'people' && listId) {
+      history.pushState({ view: 'people', listId }, '', '/list/' + listId);
+    } else if (view === 'inbox') {
+      history.pushState({ view: 'inbox' }, '', '/inbox');
+    } else if (view === 'admin') {
+      history.pushState({ view: 'admin' }, '', '/admin');
+    } else if (view === 'security') {
+      history.pushState({ view: 'security' }, '', '/security');
+    } else if (view === 'showings') {
+      history.pushState({ view: 'showings' }, '', '/showings');
+    } else if (view === 'dashboard') {
+      history.pushState({ view: 'dashboard' }, '', '/dashboard');
     }
-    const uploader = req.agent?.name || req.agent?.id || null;
-    await pool.query(
-      `INSERT INTO rent_roll_uploads (filename,uploaded_by,unit_count) VALUES ($1,$2,$3)`,
-      [filename||'rent_roll.xlsx', uploader, upserted]
-    );
-    broadcastToAll({ type: 'rent_roll_updated', unitCount: upserted });
-    res.json({ ok: true, upserted });
-  } catch(e) { console.error('[Rent Roll Upload]', e.message); res.status(500).json({ error: e.message }); }
-});
+  } catch(e) {}
+  currentView = view;
+  if (listId) currentListId = listId;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.remove('active');
+    if (el.dataset.view === view && (!listId || el.dataset.listId === listId)) el.classList.add('active');
+  });
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const viewEl = document.getElementById('view-' + view);
+  if (viewEl) viewEl.classList.add('active');
+  if (view === 'people') {
+    loadPeople(listId);
+    // Auto-close the filter panel when switching lists (let user open manually)
+    if (!listId || listId === 'all') closeSmartListPanel();
+  }
+  else if (view === 'inbox') { loadInbox(); document.getElementById('header-title').textContent = 'Inbox'; }
+  else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
+  else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
+  else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
+  else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Mission Control'; setTimeout(renderDashboard, 0); }
+  // Cancel galaxy animation when leaving dashboard
+  if (view !== 'dashboard' && typeof _mcAnimFrame !== 'undefined' && _mcAnimFrame) {
+    cancelAnimationFrame(_mcAnimFrame); _mcAnimFrame = null;
+    if (typeof _mcInterval !== 'undefined' && _mcInterval) { clearInterval(_mcInterval); _mcInterval = null; }
+    if (typeof _mcClockInterval !== 'undefined' && _mcClockInterval) { clearInterval(_mcClockInterval); _mcClockInterval = null; }
+  }
+}
 
-// Last upload timestamp
-app.get('/api/rent-roll/last-upload', auth, async (req, res) => {
+// ── SMART LISTS ─────────────────────────────────────────────────────
+async function loadSmartLists() {
   try {
-    const { rows } = await pool.query(
-      `SELECT filename, uploaded_by, unit_count, created_at FROM rent_roll_uploads ORDER BY created_at DESC LIMIT 1`
-    );
-    res.json(rows[0] || null);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
+    smartLists = await api('/api/smart-lists');
+    renderSmartListsNav();
+    // Pre-populate badge counts without waiting for each list to be clicked
+    loadSmartListCounts();
+  } catch(e) { console.warn('Smart lists:', e.message); }
+}
 
-// Rent roll status for all units of a property (for showings view)
-app.get('/api/rent-roll/by-property', auth, async (req, res) => {
+async function loadSmartListCounts() {
   try {
-    const { property } = req.query;
-    if (!property) return res.status(400).json({ error: 'property required' });
-    const { rows } = await pool.query(
-      `SELECT unit, tenant_name, status, rent, market_rent, lease_from, lease_to, move_in, late_count, past_due
-       FROM rent_roll WHERE property = $1 ORDER BY unit`,
-      [property]
-    );
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Rent info for a specific person (for contact record)
-// Matches by tenant name (last, first format) or fuzzy
-app.get('/api/rent-roll/by-person', auth, async (req, res) => {
-  try {
-    const { name, personId } = req.query;
-    if (!name) return res.json(null);
-    // Try exact match first, then fuzzy
-    const clean = name.toLowerCase().trim();
-    const { rows } = await pool.query(
-      `SELECT rr.*, rr.property, rr.unit
-       FROM rent_roll rr
-       WHERE LOWER(REPLACE(tenant_name, '  ', ' ')) LIKE $1
-          OR LOWER(REVERSE(SPLIT_PART(REVERSE(LOWER(tenant_name)), ' ', 1)) || ' ' || TRIM(LEADING FROM REPLACE(LOWER(tenant_name), REVERSE(SPLIT_PART(REVERSE(LOWER(tenant_name)), ' ', 1)), ''))) LIKE $1
-       LIMIT 3`,
-      ['%' + clean.split(' ').filter(Boolean).join('%') + '%']
-    );
-    res.json(rows[0] || null);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Occupancy summary per property (for showings tab)
-app.get('/api/rent-roll/occupancy', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT property,
-        COUNT(*) FILTER (WHERE status='Current')::int            AS occupied,
-        COUNT(*) FILTER (WHERE status LIKE 'Vacant%')::int       AS vacant,
-        COUNT(*) FILTER (WHERE status LIKE 'Notice%')::int       AS on_notice,
-        COUNT(*)::int                                             AS total_units,
-        MIN(updated_at)                                           AS last_updated
-      FROM rent_roll
-      GROUP BY property
-      ORDER BY property
-    `);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// =============================================================================
-// GALAXY MAP — unit-level rent roll data for live space visualization
-// =============================================================================
-app.get('/api/dashboard/galaxy', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        property,
-        json_agg(json_build_object(
-          'unit', unit,
-          'status', status,
-          'past_due', COALESCE(past_due, 0),
-          'tenant_name', tenant_name,
-          'rent', rent
-        ) ORDER BY unit) AS units,
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE status='Current' AND COALESCE(past_due,0) <= 0)::int AS occupied,
-        COUNT(*) FILTER (WHERE status='Current' AND COALESCE(past_due,0) > 0)::int  AS delinquent,
-        COUNT(*) FILTER (WHERE status LIKE 'Vacant%' OR status LIKE 'Notice%')::int AS vacant,
-        SUM(COALESCE(past_due,0))::numeric AS total_past_due,
-        updated_at
-      FROM rent_roll
-      WHERE property NOT ILIKE '%accounting%'
-      GROUP BY property, updated_at
-      ORDER BY COUNT(*) DESC
-    `);
-    res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// =============================================================================
-// WORK ORDERS API
-// =============================================================================
-
-app.post('/api/work-orders/upload', auth, async (req, res) => {
-  try {
-    const { rows, filename } = req.body;
-    if (!rows || !Array.isArray(rows) || rows.length === 0)
-      return res.status(400).json({ error: 'No rows provided' });
-    const batchId = crypto.randomUUID();
-    let inserted = 0, skipped = 0;
-    for (const r of rows) {
-      if (!r.wo_number && !r.job_description) { skipped++; continue; }
-      try {
-        await pool.query(
-          `INSERT INTO work_orders
-             (property, wo_number, priority, wo_type, job_description, status,
-              vendor, unit, resident, created_at, scheduled_start, completed_on,
-              amount, upload_batch)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           ON CONFLICT (wo_number) DO UPDATE SET
-             status=EXCLUDED.status, vendor=EXCLUDED.vendor,
-             scheduled_start=EXCLUDED.scheduled_start,
-             completed_on=EXCLUDED.completed_on,
-             amount=EXCLUDED.amount, upload_batch=EXCLUDED.upload_batch`,
-          [ r.property||null, r.wo_number||null, r.priority||null, r.wo_type||null,
-            r.job_description||null, r.status||null, r.vendor||null,
-            r.unit||null, r.resident||null,
-            r.created_at ? new Date(r.created_at) : null,
-            r.scheduled_start ? new Date(r.scheduled_start) : null,
-            r.completed_on ? new Date(r.completed_on) : null,
-            r.amount ? parseFloat(r.amount) : null, batchId ]
-        );
-        inserted++;
-      } catch(e) { console.warn('[WO Upload] skip:', e.message); skipped++; }
+    const counts = await api('/api/smart-lists/counts');
+    for (const [listId, count] of Object.entries(counts)) {
+      const badge = document.getElementById('badge-' + listId);
+      if (!badge) continue;
+      if (count === null) { badge.textContent = '—'; continue; }
+      badge.textContent = count > 999 ? '999+' : count;
+      const list = smartLists.find(l => String(l.id) === String(listId));
+      const name = (list?.name || '').toLowerCase();
+      const isUrgent = name.includes('delinquent') || name.includes('evict') || list?.filters?.type === 'toured_no_followup';
+      if (isUrgent && count > 0) {
+        badge.style.background = 'var(--red)';
+        badge.style.color = '#fff';
+        badge.classList.add('urgent');
+      }
     }
-    const uploader = req.agent?.name || req.agent?.id || null;
-    await pool.query(`INSERT INTO work_order_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
-      [filename||'work_orders.xlsx', uploader, inserted]);
-    res.json({ ok:true, inserted, skipped, batchId });
-  } catch(e) { console.error('[WO Upload]', e.message); res.status(500).json({ error: e.message }); }
+  } catch(e) { /* counts are cosmetic — fail silently */ }
+}
+
+function renderSmartListsNav() {
+  const nav = document.getElementById('smart-lists-nav');
+  if (!smartLists.length) { nav.innerHTML = '<div style="padding:4px 16px;font-size:12px;color:var(--text-3)">No lists yet</div>'; return; }
+  const MAX = 10;
+  const visible = smartLists.slice(0, MAX);
+  const rest = smartLists.slice(MAX);
+  const makeItem = list => {
+    const isUrgent = (list.name||'').toLowerCase().includes('delinquent') || (list.name||'').toLowerCase().includes('eviction');
+    const isShowings = (list.filters?.type === 'upcoming_showings_72h') || (list.name||'').includes('Upcoming Showings');
+    return `<div class="nav-item sl-nav-item" data-view="people" data-list-id="${list.id}" onclick="navigate('people','${list.id}')">
+      <span class="nav-icon">▸</span><span class="sl-nav-name">${esc(list.name)}</span>
+      <span class="${isUrgent||isShowings?'nav-badge urgent':'nav-badge'}" id="badge-${list.id}">—</span>
+    </div>`;
+  };
+  let html = visible.map(makeItem).join('');
+  if (rest.length) {
+    html += `<div id="smart-lists-overflow" style="display:none">` + rest.map(makeItem).join('') + `</div>`;
+    html += `<div onclick="toggleMoreLists(this)" style="padding:4px 16px;font-size:11px;color:var(--text-3);cursor:pointer;user-select:none" data-open="false">
+      + ${rest.length} more lists ▾
+    </div>`;
+  }
+  nav.innerHTML = html;
+}
+
+function toggleMoreLists(el) {
+  const overflow = document.getElementById('smart-lists-overflow');
+  const open = el.dataset.open === 'true';
+  overflow.style.display = open ? 'none' : 'block';
+  el.dataset.open = open ? 'false' : 'true';
+  el.textContent = open ? `+ ${overflow.children.length} more lists ▾` : '▴ show less';
+}
+
+// ── PEOPLE LIST ──────────────────────────────────────────────────────
+async function loadPeople(listId = 'all') {
+  const tbody = document.getElementById('people-tbody');
+  tbody.innerHTML = '<tr class="loader-row"><td colspan="8"><div class="spinner"></div></td></tr>';
+  let url = '/api/people?limit=5000';
+  if (listId && listId !== 'all') url += `&smartListId=${listId}`;
+  if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
+  try {
+    const data = await api(url);
+    peopleData = Array.isArray(data) ? data : (data.people || []);
+    const total = data.total ?? peopleData.length;
+    const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
+    _isDelinqList = listName.toLowerCase().includes('delinquent');
+    const _listMeta = smartLists.find(l=>String(l.id)===String(listId));
+    window._isShowingsList     = _listMeta?.filters?.type === 'upcoming_showings_72h';
+    window._isTourFollowupList = _listMeta?.filters?.type === 'toured_no_followup';
+    const _isTourList = _listMeta?.filters?.type === 'toured_no_followup';
+    ['th-past-due','th-past-due-days'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display=_isDelinqList?'':'none'; });
+    if (_isDelinqList && sortField !== 'past_due_days') { sortField='past_due_balance'; sortDir='desc'; }
+    else if (!_isDelinqList && sortField==='past_due_balance') { sortField='name'; sortDir='asc'; }
+    document.getElementById('header-title').textContent = listName;
+    document.getElementById('people-count').innerHTML = `<strong>${total.toLocaleString()}</strong> people`;
+    const badge = document.getElementById('badge-' + listId);
+    if (badge) {
+      badge.textContent = total;
+      // Urgent red badge for actionable lists
+      if (_isDelinqList || _isTourList) {
+        badge.style.background = 'var(--red)';
+        badge.style.color = '#fff';
+      }
+    }
+    // Show/hide the tactical list header bar
+    const hdr = document.getElementById('sl-list-header');
+    if (listId && listId !== 'all') {
+      document.getElementById('sl-lh-name').textContent = listName;
+      document.getElementById('sl-lh-count').textContent = `// ${total} CONTACTS`;
+      hdr.classList.add('visible');
+    } else {
+      hdr.classList.remove('visible');
+    }
+    // Store ordered list for prev/next navigation
+    slNavPeople = [...peopleData];
+    slNavIndex = -1;
+    renderPeopleTable();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</td></tr>`;
+  }
+}
+
+function renderPeopleTable() {
+  const tbody = document.getElementById('people-tbody');
+  if (!peopleData.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="people-empty"><div class="empty-icon">👥</div><p>No contacts found</p></div></td></tr>';
+    return;
+  }
+  const _debtFields = ['past_due_balance','past_due_days'];
+  const sorted = [...peopleData].sort((a, b) => {
+    let va, vb;
+    if (sortField === 'name') {
+      va = ((a.first_name||'')+(a.last_name||'')).toLowerCase();
+      vb = ((b.first_name||'')+(b.last_name||'')).toLowerCase();
+    } else if (_debtFields.includes(sortField)) {
+      const getCF = (p,k) => { const cf=p.custom_fields||{}; const v=p[k]!=null?p[k]:cf[k]; return (v!=null&&v!=='')?parseFloat(v):-1; };
+      va = getCF(a,sortField); vb = getCF(b,sortField);
+    } else {
+      va = a[sortField]||''; vb = b[sortField]||'';
+    }
+    return sortDir==='asc'?(va>vb?1:-1):(va<vb?1:-1);
+  });
+  tbody.innerHTML = sorted.map(p => {
+    const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown';
+    const initials = name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    const stage = p.stage || 'Lead';
+    const tags = parseTags(p.tags);
+    const lastAct = p.last_activity ? timeAgo(p.last_activity) : '—';
+    // ── Upcoming Showings list extras ──
+    let showingTimeBadge = '';
+    let contactBadge = '';
+    if (window._isShowingsList && p.next_showing_time) {
+      const dt   = new Date(p.next_showing_time);
+      const now  = Date.now();
+      const diff = dt - now;
+      const hrs  = diff / 3600000;
+      const timeStr = dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})
+                    + ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+      const cls  = hrs < 24 ? 'soon' : hrs < 48 ? 'today' : 'later';
+      const icon = hrs < 24 ? '🔴' : hrs < 48 ? '🟡' : '🟣';
+      const propShort = (p.showing_property||'').split(' - ')[0].substring(0,28);
+      showingTimeBadge = `<div style="margin-top:3px"><span class="showing-time-badge ${cls}">${icon} ${timeStr}</span></div>
+        <div style="margin-top:2px;font-size:9px;color:var(--text-3);font-family:var(--font-mono)">${propShort}${p.showing_unit?' · Unit '+p.showing_unit:''}</div>`;
+      contactBadge = p.needs_contact
+        ? `<span class="contact-status-badge uncontacted">⚠ NEEDS CONTACT</span>`
+        : `<span class="contact-status-badge contacted">✓ CONTACTED</span>`;
+    }
+    // ── Tours No Follow-Up list extras ──
+    if (window._isTourFollowupList) {
+      const tourDt = p.last_tour_at ? new Date(p.last_tour_at) : null;
+      const daysAgo = tourDt ? Math.floor((Date.now() - tourDt) / 86400000) : null;
+      const propShort = (p.showing_property||'').split(' - ')[0].substring(0,28);
+      const tourCount = p.tour_count > 1 ? ` · ${p.tour_count} tours` : '';
+      const agingColor = daysAgo >= 30 ? '#e8003a' : daysAgo >= 14 ? '#ff8c00' : '#6366f1';
+      if (tourDt) {
+        showingTimeBadge = `<div style="margin-top:3px">
+          <span style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.08em;color:${agingColor};background:${agingColor}18;padding:2px 7px;border-radius:3px">
+            🏠 TOURED ${daysAgo}D AGO${tourCount}
+          </span></div>
+          <div style="margin-top:2px;font-size:9px;color:var(--text-3);font-family:var(--font-mono)">${esc(propShort)}${p.showing_unit?' · Unit '+p.showing_unit:''}</div>`;
+      }
+      contactBadge = `<span class="contact-status-badge uncontacted">⚠ NO FOLLOW-UP</span>`;
+    }
+    const rowClass = ((window._isShowingsList || window._isTourFollowupList) && p.needs_contact) ? 'needs-contact' : '';
+
+    return `<tr class="${rowClass}" onclick="openContact('${p.id}')">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="row-check" value="${p.id}" onchange="updateBulkActions()"></td>
+      <td><div class="person-row-name">
+        <div class="person-avatar">${initials}</div>
+        <div>
+          <div class="person-full-name">${esc(name)}</div>
+          ${p.email?`<div class="person-email">${esc(p.email)}</div>`:''}
+          ${showingTimeBadge}
+        </div>
+      </div></td>
+      <td><span class="phone-mono">${formatPhone(p.phone)}</span></td>
+      <td>${contactBadge || `<span class="stage-badge ${stageClass(stage)}">${esc(stage)}</span>`}</td>
+      <td class="debt-cell" style="${_isDelinqList?'':' display:none'}">${(() => { const cf=p.custom_fields||{}; const bal=p.past_due_balance!=null?p.past_due_balance:cf.past_due_balance; if(bal==null||bal==='') return '<span style="color:var(--text-3)">—</span>'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:var(--red)">$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`; })()}</td>
+      <td class="debt-cell" style="${_isDelinqList?'':' display:none'}">${(() => { const cf=p.custom_fields||{}; const days=p.past_due_days!=null?p.past_due_days:cf.past_due_days; if(days==null||days==='') return '<span style="color:var(--text-3)">—</span>'; const d=parseInt(days); const color=d>=30?'#E8003A':d>=15?'#FF8C00':'var(--text-2)'; const bg=d>=30?'rgba(232,0,58,0.1)':d>=15?'rgba(255,140,0,0.1)':'transparent'; return `<span style="font-family:var(--font-mono);font-weight:700;font-size:12px;color:${color};background:${bg};padding:2px 7px;border-radius:4px">${d}d</span>`; })()}</td>
+      <td>${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join(' ')}</td>
+      <td><span class="last-activity">${lastAct}</span></td>
+      <td><span class="text-muted" style="font-size:12px">${esc(p.assigned_agent||'—')}</span></td>
+      <td onclick="event.stopPropagation()">
+        <button class="quick-call-btn" onclick="quickCall('${p.id}','${p.phone}','${esc(name)}')">📞 Call</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function sortPeople(field) {
+  if (sortField === field) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortField = field; sortDir = 'asc'; }
+  renderPeopleTable();
+}
+
+let searchTimer;
+let _searchDropdownIdx = -1;
+
+function handleSearch(val) {
+  searchQuery = val;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    loadPeople(currentListId);
+    updateSearchDropdown(val);
+  }, 250);
+}
+
+function handleSearchFocus() {
+  const val = document.getElementById('global-search')?.value?.trim();
+  if (val && val.length >= 1) updateSearchDropdown(val);
+}
+
+async function updateSearchDropdown(val) {
+  const dd = document.getElementById('search-dropdown');
+  if (!dd) return;
+  if (!val || val.length < 1) { dd.style.display = 'none'; return; }
+  try {
+    const data = await api(`/api/people?search=${encodeURIComponent(val)}&limit=8`);
+    const people = data.people || data || [];
+    if (!people.length) { dd.style.display = 'none'; return; }
+    _searchDropdownIdx = -1;
+    dd.innerHTML = people.map((p, i) => {
+      const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown';
+      const phone = p.phone || '';
+      const stage = p.stage || '';
+      const initials = name.substring(0,2).toUpperCase();
+      const stageColor = getStageColor(stage);
+      return `<div class="search-dd-item" data-id="${p.id}" data-idx="${i}"
+        onclick="searchSelectContact(${p.id})"
+        onmouseenter="searchDDHover(${i})"
+        style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;transition:background 0.1s">
+        <div style="width:32px;height:32px;border-radius:50%;background:${stageColor}22;border:1px solid ${stageColor}44;
+          display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${stageColor};flex-shrink:0">${initials}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</div>
+          <div style="font-size:11px;color:var(--text-3)">${phone ? formatPhone(phone) + (stage ? ' · ' : '') : ''}${stage ? esc(stage) : ''}</div>
+        </div>
+      </div>`;
+    }).join('') +
+    `<div style="padding:8px 14px;font-size:11px;color:var(--text-3);border-top:1px solid var(--border);text-align:center">
+      Press Enter to see all results
+    </div>`;
+    dd.style.display = 'block';
+  } catch(e) { dd.style.display = 'none'; }
+}
+
+function getStageColor(stage) {
+  const s = (stage||'').toLowerCase();
+  if (s === 'resident') return '#22c55e';
+  if (s === 'lead') return '#3b82f6';
+  if (s === 'delinquent') return '#f59e0b';
+  if (s === 'evicting') return '#ef4444';
+  if (s === 'past tenant') return '#8b5cf6';
+  if (s === 'property owner') return '#06b6d4';
+  if (s === 'contractor') return '#f97316';
+  if (s === 'caseworker') return '#a855f7';
+  return 'var(--text-3)';
+}
+
+function searchSelectContact(id) {
+  closeSearchDropdown();
+  document.getElementById('global-search').value = '';
+  searchQuery = '';
+  openContact(id);
+}
+
+function searchDDHover(idx) {
+  _searchDropdownIdx = idx;
+  document.querySelectorAll('.search-dd-item').forEach((el, i) => {
+    el.style.background = i === idx ? 'var(--bg-3)' : '';
+  });
+}
+
+function searchKeyNav(e) {
+  const dd = document.getElementById('search-dropdown');
+  if (!dd || dd.style.display === 'none') return;
+  const items = dd.querySelectorAll('.search-dd-item');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _searchDropdownIdx = Math.min(_searchDropdownIdx + 1, items.length - 1);
+    searchDDHover(_searchDropdownIdx);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _searchDropdownIdx = Math.max(_searchDropdownIdx - 1, -1);
+    searchDDHover(_searchDropdownIdx);
+  } else if (e.key === 'Enter') {
+    if (_searchDropdownIdx >= 0 && items[_searchDropdownIdx]) {
+      const id = items[_searchDropdownIdx].dataset.id;
+      if (id) { searchSelectContact(Number(id)); return; }
+    }
+    closeSearchDropdown();
+  } else if (e.key === 'Escape') {
+    closeSearchDropdown();
+  }
+}
+
+function closeSearchDropdown() {
+  const dd = document.getElementById('search-dropdown');
+  if (dd) dd.style.display = 'none';
+  _searchDropdownIdx = -1;
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  if (!e.target.closest('.header-search')) closeSearchDropdown();
 });
 
-app.get('/api/work-orders/last-upload', auth, async (req, res) => {
+function toggleSelectAll(cb) {
+  document.querySelectorAll('.row-check').forEach(el => el.checked = cb.checked);
+  updateBulkActions();
+}
+function updateBulkActions() {
+  document.getElementById('bulk-actions').classList.toggle('visible', document.querySelectorAll('.row-check:checked').length > 0);
+}
+
+// ── CONTACT RECORD ───────────────────────────────────────────────────
+let _presencePersonId = null;
+
+async function openContact(personId, fromNav=false) {
+  // Update URL so this contact file is directly shareable
+  if (!fromNav) {
+    history.pushState({ view: 'contact', personId }, '', '/file/' + personId);
+  }
+  // Leave previous presence
+  if (_presencePersonId && _presencePersonId !== personId) {
+    api(`/api/presence/leave`, 'POST', { personId: _presencePersonId }).catch(()=>{});
+  }
+  _presencePersonId = personId;
+  currentPersonId = personId;
+
+  // Track position in smart list for prev/next nav
+  if (!fromNav && slNavPeople.length) {
+    const idx = slNavPeople.findIndex(p => String(p.id) === String(personId));
+    if (idx >= 0) slNavIndex = idx;
+  }
+
+  const viewEl = document.getElementById('view-contact');
+  viewEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:height:100%;color:var(--text-3)"><div class="spinner" style="margin:auto;margin-top:120px"></div></div>';
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  viewEl.classList.add('active');
   try {
-    const r = await pool.query(`SELECT filename, uploaded_by, record_count, created_at FROM work_order_uploads ORDER BY created_at DESC LIMIT 1`);
-    res.json(r.rows[0] || null);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/work-orders/stats', auth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      WITH monthly AS (
-        SELECT property,
-               DATE_TRUNC('month', created_at) AS month,
-               COUNT(*)::int                   AS cnt
-        FROM work_orders
-        WHERE created_at > NOW() - INTERVAL '6 months'
-        GROUP BY property, DATE_TRUNC('month', created_at)
-      ),
-      avg3 AS (
-        SELECT property,
-               ROUND(AVG(cnt),1) AS avg_monthly,
-               MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END) AS this_month,
-               MAX(CASE WHEN month = DATE_TRUNC('month', NOW() - INTERVAL '1 month') THEN cnt END) AS last_month,
-               MAX(CASE WHEN month = DATE_TRUNC('month', NOW() - INTERVAL '2 months') THEN cnt END) AS month2_ago
-        FROM monthly GROUP BY property
-      )
-      SELECT property,
-             COALESCE(this_month,0)  AS this_month,
-             COALESCE(last_month,0)  AS last_month,
-             COALESCE(month2_ago,0)  AS month2_ago,
-             COALESCE(avg_monthly,0) AS avg_monthly
-      FROM avg3
-      WHERE COALESCE(this_month,0) + COALESCE(last_month,0) + COALESCE(month2_ago,0) > 0
-      ORDER BY COALESCE(this_month,0) DESC LIMIT 12
-    `);
-    const open = await pool.query(`
-      SELECT priority, COUNT(*)::int AS cnt FROM work_orders
-      WHERE status NOT IN ('Completed','Cancelled','Canceled')
-      GROUP BY priority
-    `);
-    res.json({ byProperty: rows, openByPriority: open.rows });
-  } catch(e) { console.error('[WO Stats]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// =============================================================================
-// DASHBOARD — mission control stats
-// =============================================================================
-app.get('/api/dashboard/stats', auth, async (req, res) => {
-  try {
-    // Who is online (has active SSE connection)
-    const onlineIds = Array.from(agentConnections.keys());
-
-    // All agents with online flag
-    const agentsR = await pool.query(`
-      SELECT id, name, email, role, avatar_color, avatar_b64, availability
-      FROM agents WHERE is_active=true ORDER BY name
-    `);
-    const agents = agentsR.rows.map(a => ({
-      ...a,
-      online: onlineIds.includes(String(a.id))
-    }));
-
-    // Call stats today
-    const callsToday = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE direction='inbound')::int              AS inbound_total,
-        COUNT(*) FILTER (WHERE direction='outbound')::int             AS outbound_total,
-        COUNT(*) FILTER (WHERE direction='inbound' AND status='completed')::int  AS inbound_answered,
-        COUNT(*) FILTER (WHERE direction='inbound' AND status IN ('no-answer','busy','canceled','missed'))::int AS missed,
-        ROUND(AVG(duration_seconds) FILTER (WHERE status='completed'))::int AS avg_duration,
-        COUNT(*) FILTER (WHERE direction='inbound' AND status='completed' AND duration_seconds >= 60)::int AS qualified_calls
-      FROM calls
-      WHERE started_at > NOW() - INTERVAL '24 hours'
-    `);
-    const ct = callsToday.rows[0];
-
-    // Call stats last 7 days per agent
-    const agentCallStats = await pool.query(`
-      SELECT
-        c.agent_id,
-        a.name AS agent_name,
-        a.avatar_color,
-        COUNT(*) FILTER (WHERE c.direction='inbound' AND c.status='completed')::int  AS inbound_answered,
-        COUNT(*) FILTER (WHERE c.direction='outbound' AND c.status='completed')::int AS outbound_made,
-        COUNT(*) FILTER (WHERE c.status='completed')::int AS total_calls,
-        ROUND(AVG(c.duration_seconds) FILTER (WHERE c.status='completed'))::int      AS avg_duration
-      FROM calls c
-      JOIN agents a ON a.id::text = c.agent_id
-      WHERE c.started_at > NOW() - INTERVAL '7 days'
-      GROUP BY c.agent_id, a.name, a.avatar_color
-      ORDER BY total_calls DESC
-    `);
-
-    // Lead response time — time from lead created to first outbound call/sms, business hours only
-    const responseTime = await pool.query(`
-      SELECT
-        ROUND(AVG(EXTRACT(EPOCH FROM (first_contact - p.created_at))/60))::int AS avg_minutes,
-        COUNT(*)::int AS sample_size,
-        COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM (first_contact - p.created_at)) <= 300)::int AS under_5min,
-        COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM (first_contact - p.created_at)) BETWEEN 300 AND 3600)::int AS under_1hr,
-        COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM (first_contact - p.created_at)) > 3600)::int AS over_1hr
-      FROM people p
-      JOIN (
-        SELECT person_id, MIN(created_at) AS first_contact
-        FROM activities
-        WHERE direction='outbound' AND type IN ('call','sms')
-          AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') BETWEEN 8 AND 19
-        GROUP BY person_id
-      ) fc ON fc.person_id::text = p.id::text
-      WHERE p.created_at > NOW() - INTERVAL '30 days'
-        AND EXTRACT(HOUR FROM p.created_at AT TIME ZONE 'America/Chicago') BETWEEN 8 AND 19
-        AND first_contact > p.created_at
-    `);
-    const rt = responseTime.rows[0];
-
-    // Upload freshness
-    const [showingUpload, rrUpload, woUpload] = await Promise.all([
-      pool.query(`SELECT created_at, record_count FROM showing_uploads ORDER BY created_at DESC LIMIT 1`),
-      pool.query(`SELECT created_at, unit_count FROM rent_roll_uploads ORDER BY created_at DESC LIMIT 1`),
-      pool.query(`SELECT created_at, record_count FROM work_order_uploads ORDER BY created_at DESC LIMIT 1`)
+    const [person, activities, tasks] = await Promise.all([
+      api(`/api/people/${personId}`),
+      api(`/api/activities?personId=${personId}`),
+      api(`/api/tasks?personId=${personId}`)
     ]);
+    renderContactRecord(person, activities || [], tasks || []);
+    loadPhones(person.id);
+    loadHousehold(person.id);
+    loadSecurityDetections(personId);
+    loadCaseworkerPanel(personId, person.stage);
+    loadShowingRoster(person);
+    loadRentRollInfo(person);
+    // Announce presence
+    api(`/api/presence/enter`, 'POST', { personId }).catch(()=>{});
+    // Load current viewers
+    const presR = await api(`/api/presence/${personId}`).catch(()=>({viewers:[]}));
+    renderPresenceBubbles(personId, presR.viewers || []);
+  } catch(e) {
+    viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`;
+  }
+}
 
-    // SMS stats today
-    const smsToday = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE direction='outbound')::int AS sent,
-        COUNT(*) FILTER (WHERE direction='inbound')::int  AS received,
-        COUNT(*) FILTER (WHERE sms_status='failed')::int  AS failed
-      FROM activities
-      WHERE type='sms' AND created_at > NOW() - INTERVAL '24 hours'
-    `);
+// ── PRIVACY BLUR MODE ────────────────────────────────────────────────────────
+let _privacyActive = false;
 
-    res.json({
-      agents,
-      onlineCount: onlineIds.length,
-      calls: ct,
-      agentCallStats: agentCallStats.rows,
-      responseTime: rt,
-      sms: smsToday.rows[0],
-      uploads: {
-        showings: showingUpload.rows[0] || null,
-        rentRoll: rrUpload.rows[0] || null,
-        workOrders: woUpload.rows[0] || null
+function togglePrivacyBlur(force) {
+  _privacyActive = (force !== undefined) ? force : !_privacyActive;
+  const overlay   = document.getElementById('privacy-overlay');
+  const indicator = document.getElementById('privacy-indicator');
+  if (_privacyActive) {
+    overlay?.classList.add('active');
+    indicator?.classList.add('active');
+  } else {
+    overlay?.classList.remove('active');
+    indicator?.classList.remove('active');
+    // Reset idle timer whenever screen is manually unlocked
+    _idleReset();
+  }
+}
+
+// ── IDLE AUTO-BLUR — 60s of no mouse/keyboard activity ───────────────────────
+const IDLE_MS = 60 * 1000; // 1 minute
+let _idleTimer = null;
+
+function _idleReset() {
+  clearTimeout(_idleTimer);
+  // Don't restart timer if a call is active
+  if (activeCall) return;
+  _idleTimer = setTimeout(() => {
+    // Double-check no call is active before triggering
+    if (!activeCall && !_privacyActive) {
+      togglePrivacyBlur(true);
+    }
+  }, IDLE_MS);
+}
+
+// Listen on activity events for idle reset ONLY — never unlock on mouse/touch
+['mousemove', 'mousedown', 'touchstart', 'scroll', 'click'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    // Mouse/touch activity only resets the idle timer — never unlocks
+    if (!_privacyActive) _idleReset();
+  }, { passive: true });
+});
+
+// Start the timer on page load (after app is ready)
+document.addEventListener('DOMContentLoaded', _idleReset);
+// Also kick it off immediately in case DOMContentLoaded already fired
+setTimeout(_idleReset, 0);
+
+// Keyboard shortcut: backtick ` (fast single key, not in form fields)
+document.addEventListener('keydown', (e) => {
+  const tag = document.activeElement?.tagName?.toLowerCase();
+  const isEditable = tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable;
+
+  if (e.key === '`' && !isEditable) {
+    e.preventDefault();
+    togglePrivacyBlur();
+    return;
+  }
+
+  // Escape to EXIT privacy mode
+  if (e.key === 'Escape' && _privacyActive) {
+    togglePrivacyBlur(false);
+    return;
+  }
+
+  // Any other keypress (while not blurred) resets the idle timer
+  if (!_privacyActive) _idleReset();
+});
+
+// ── CASEWORKER PANEL ─────────────────────────────────────────────────────────
+
+async function loadCaseworkerPanel(personId, stage) {
+  const list = document.getElementById(`cw-list-${personId}`);
+  if (!list) return;
+  try {
+    const cws = await api(`/api/people/${personId}/caseworkers`);
+    if (!cws.length) {
+      const isCW = (stage||'').toLowerCase() === 'caseworker';
+      list.innerHTML = `<div style="color:var(--text-3);font-size:12px">${isCW ? 'No residents linked yet' : 'No caseworker assigned'}</div>`;
+      return;
+    }
+    list.innerHTML = cws.map(cw => {
+      const name = [cw.first_name, cw.last_name].filter(Boolean).join(' ');
+      const isCW = (cw.stage||'').toLowerCase() === 'caseworker';
+      const label = isCW ? '🤝 Caseworker' : '👤 Resident';
+      const stageCol = isCW ? '#a855f7' : '#00e8f0';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="width:30px;height:30px;border-radius:50%;background:var(--bg-4);border:2px solid ${stageCol};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">${name.substring(0,2).toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--text);cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-decoration-style:dotted"
+            onclick="openContact(${cw.id})">${esc(name)}</div>
+          <div style="font-size:10px;color:${stageCol}">${label}</div>
+        </div>
+        <button onclick="cwUnlink(${cw.rel_id}, ${personId})"
+          style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:14px;padding:2px 4px" title="Unlink">✕</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (list) list.innerHTML = '<div style="color:var(--text-3);font-size:12px">—</div>';
+  }
+}
+
+function cwShowSearch(personId) {
+  const wrap = document.getElementById(`cw-search-wrap-${personId}`);
+  if (!wrap) return;
+  const visible = wrap.style.display !== 'none';
+  wrap.style.display = visible ? 'none' : '';
+  if (!visible) document.getElementById(`cw-search-input-${personId}`)?.focus();
+}
+
+function cwSearchPeople(q, personId) {
+  const results = document.getElementById(`cw-search-results-${personId}`);
+  if (!results) return;
+  if (!q.trim()) { results.innerHTML = ''; return; }
+  const matches = peopleData
+    .filter(p => {
+      const full = [p.first_name, p.last_name].filter(Boolean).join(' ').toLowerCase();
+      return full.includes(q.toLowerCase()) && String(p.id) !== String(personId);
+    })
+    .slice(0, 8);
+  if (!matches.length) {
+    results.innerHTML = '<div style="font-size:11px;color:var(--text-3);padding:4px">No matches</div>';
+    return;
+  }
+  results.innerHTML = matches.map(p => {
+    const name = [p.first_name, p.last_name].filter(Boolean).join(' ');
+    const isCW = (p.stage||'').toLowerCase() === 'caseworker';
+    return `<div onclick="cwLink(${personId}, ${p.id})"
+      style="padding:6px 8px;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;background:var(--bg-3);transition:background 0.1s"
+      onmouseover="this.style.background='var(--bg-5)'" onmouseout="this.style.background='var(--bg-3)'">
+      <span style="color:${isCW?'#a855f7':'var(--text-2)'}">${isCW?'🤝':'👤'}</span>
+      <span style="font-weight:600">${esc(name)}</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--text-3)">${esc(p.stage||'')}</span>
+    </div>`;
+  }).join('');
+}
+
+async function cwLink(personAId, personBId) {
+  try {
+    await api(`/api/people/${personAId}/relationships`, 'POST', { relatedPersonId: personBId, label: 'caseworker' });
+    // Reset search
+    const wrap = document.getElementById(`cw-search-wrap-${personAId}`);
+    if (wrap) { wrap.style.display = 'none'; }
+    const inp = document.getElementById(`cw-search-input-${personAId}`);
+    if (inp) inp.value = '';
+    const res = document.getElementById(`cw-search-results-${personAId}`);
+    if (res) res.innerHTML = '';
+    // Reload panel
+    await loadCaseworkerPanel(personAId, '');
+    toast('Caseworker linked', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function cwUnlink(relId, personId) {
+  if (!confirm('Remove this caseworker link?')) return;
+  try {
+    await api(`/api/people/${personId}/relationships/${relId}`, 'DELETE');
+    await loadCaseworkerPanel(personId, '');
+    toast('Unlinked', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function logLeaseViolation(personId) {
+  const note = prompt('Describe the lease violation (optional):');
+  if (note === null) return; // cancelled
+  try {
+    await api(`/api/people/${personId}/lease-violation`, 'POST', { note });
+    toast('Lease violation logged — caseworker(s) notified via SMS', 'success');
+    loadActivities(personId);
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── JIREH SECURITY PROFILE ───────────────────────────────────────────────
+let _secPersonId = null;
+
+async function loadSecurityDetections(personId) {
+  _secPersonId = personId;
+  const wrap = document.getElementById('security-detections-wrap');
+  if (!wrap) return;
+  wrap.style.display = '';
+
+  // Load person data into fields
+  try {
+    const person = await api(`/api/people/${personId}`);
+    // ID photo
+    const img    = document.getElementById('sec-id-img');
+    const missing = document.getElementById('sec-id-missing');
+    const delBtn = document.getElementById('sec-id-del-btn');
+    if (person.id_photo_b64) {
+      const src = person.id_photo_b64.startsWith('data:') ? person.id_photo_b64 : 'data:image/jpeg;base64,' + person.id_photo_b64;
+      img.src = src; img.style.display = 'block'; missing.style.display = 'none'; delBtn.style.display = '';
+    } else {
+      img.style.display = 'none'; missing.style.display = 'flex'; delBtn.style.display = 'none';
+    }
+    // Text fields
+    document.getElementById('sec-bg-notes').value    = person.security_notes    || '';
+    document.getElementById('sec-criminal').value    = person.criminal_history  || '';
+    document.getElementById('sec-dv-notes').value    = person.dv_notes          || '';
+    // DV checkbox
+    const dvCheck = document.getElementById('sec-dv-check');
+    const dvBox   = document.getElementById('sec-dv-box');
+    dvCheck.checked = !!person.dv_victim;
+    dvBox.classList.toggle('active', !!person.dv_victim);
+  } catch(e) { console.warn('[Security] load person:', e.message); }
+
+  // Load camera detections
+  try {
+    const events = await api('/api/security/events');
+    const matched = (events || []).filter(e => String(e.person_id) === String(personId));
+    const camWrap = document.getElementById('sec-cam-detections-wrap');
+    const camList = document.getElementById('security-detections-list');
+    if (!matched.length) { camWrap.style.display = 'none'; return; }
+    camWrap.style.display = '';
+    camList.innerHTML = matched.slice(0, 8).map(e => {
+      const ago = timeAgo(new Date(e.triggered_at));
+      const thumbSrc = e.thumbnail_b64
+        ? (e.thumbnail_b64.startsWith('data:') ? e.thumbnail_b64 : `data:image/jpeg;base64,${e.thumbnail_b64}`)
+        : null;
+      const thumb = thumbSrc
+        ? `<img class="sec-det-thumb" src="${thumbSrc.substring(0, 100000)}" onerror="this.style.display='none'">`
+        : `<div style="width:38px;height:38px;border-radius:4px;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📷</div>`;
+      const link = e.event_link ? `<a class="sec-det-link" href="${e.event_link}" target="_blank">View Footage →</a>` : '';
+      return `<div class="sec-det-row">
+        ${thumb}
+        <div class="sec-det-info">
+          <div class="sec-det-cam">${esc((e.camera_name && e.camera_name !== e.camera_mac) ? e.camera_name : (e.camera_mac ? `Camera (${e.camera_mac.match(/.{2}/g).join(':')})` : 'Unknown Camera'))}</div>
+          <div class="sec-det-meta">${e.site ? esc(e.site) + ' · ' : ''}${ago}</div>
+          ${link}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.warn('[Security] load events:', e.message); }
+}
+
+function secToggleDV() {
+  const check = document.getElementById('sec-dv-check');
+  const box   = document.getElementById('sec-dv-box');
+  // If click came from checkbox it already toggled; if from parent div, toggle manually
+  const isActive = check.checked;
+  box.classList.toggle('active', isActive);
+}
+
+async function secHandleIdUpload(event) {
+  const file = event.target.files[0];
+  if (!file || !_secPersonId) return;
+  if (file.size > 10 * 1024 * 1024) { toast('Image too large — max 10MB', 'error'); return; }
+
+  // Compress via canvas before uploading
+  const compressImage = (file) => new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const maxW = 800, maxH = 600;
+      let w = img.width, h = img.height;
+      if (w > maxW || h > maxH) {
+        const ratio = Math.min(maxW / w, maxH / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.src = url;
+  });
+
+  try {
+    const b64 = await compressImage(file); // full data URL, compressed
+    await api(`/api/people/${_secPersonId}/id-photo`, 'POST', { photoB64: b64, photoName: file.name });
+    const img = document.getElementById('sec-id-img');
+    const missing = document.getElementById('sec-id-missing');
+    const delBtn = document.getElementById('sec-id-del-btn');
+    img.src = b64; img.style.display = 'block';
+    missing.style.display = 'none'; delBtn.style.display = '';
+    toast('ID photo saved', 'success');
+  } catch(err) {
+    toast('Upload failed: ' + (err.message || 'unknown error'), 'error');
+  }
+  event.target.value = '';
+}
+
+async function secDeleteIdPhoto() {
+  if (!_secPersonId) return;
+  if (!confirm('Remove ID photo?')) return;
+  try {
+    await api(`/api/people/${_secPersonId}/id-photo`, 'DELETE');
+    document.getElementById('sec-id-img').style.display = 'none';
+    document.getElementById('sec-id-missing').style.display = 'flex';
+    document.getElementById('sec-id-del-btn').style.display = 'none';
+    toast('ID photo removed', 'success');
+  } catch(e) { toast('Failed to remove photo', 'error'); }
+}
+
+async function secSaveProfile() {
+  if (!_secPersonId) return;
+  const btn = document.querySelector('.sec-save-btn');
+  const msg = document.getElementById('sec-saved-msg');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    await api(`/api/people/${_secPersonId}/security`, 'PATCH', {
+      securityNotes:   document.getElementById('sec-bg-notes').value,
+      criminalHistory: document.getElementById('sec-criminal').value,
+      dvVictim:        document.getElementById('sec-dv-check').checked,
+      dvNotes:         document.getElementById('sec-dv-notes').value
+    });
+    btn.textContent = 'Save Security Profile'; btn.disabled = false;
+    btn.classList.add('saved');
+    msg.classList.add('show');
+    setTimeout(() => { btn.classList.remove('saved'); msg.classList.remove('show'); }, 2500);
+  } catch(e) {
+    btn.textContent = 'Save Security Profile'; btn.disabled = false;
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
+
+function renderContactRecord(person, activities, tasks) {
+  window._currentPerson = person; // Store for banner updates
+  const viewEl = document.getElementById('view-contact');
+  const name = [person.first_name, person.last_name].filter(Boolean).join(' ') || 'Unknown';
+  window._currentContactName = name;
+  const initials = name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+  const stage = person.stage || 'Lead';
+  const tags = parseTags(person.tags);
+  document.getElementById('header-title').textContent = name;
+
+  // Smart list prev/next nav bar
+  const inList = currentListId !== 'all' && slNavPeople.length > 0 && slNavIndex >= 0;
+  const listName = inList ? (smartLists.find(l=>String(l.id)===String(currentListId))?.name || 'List') : '';
+  const navBar = inList ? `
+    <div class="sl-nav-bar">
+      <button onclick="slNavGo(-1)" ${slNavIndex === 0 ? 'disabled' : ''}>&lt; PREV</button>
+      <span style="text-align:center">
+        <div class="sl-nav-info">${slNavIndex + 1} / ${slNavPeople.length}</div>
+        <div class="sl-nav-label">${esc(listName)}</div>
+      </span>
+      <button onclick="slNavGo(1)" ${slNavIndex === slNavPeople.length - 1 ? 'disabled' : ''}>NEXT &gt;</button>
+    </div>` : '';
+
+  viewEl.innerHTML = navBar + `<div class="contact-scroll-wrap">
+    <div class="contact-left">
+      <div class="contact-card-top">
+        <div class="contact-avatar-wrap">
+          <div class="contact-avatar-ring"></div>
+          <div class="contact-big-avatar ${stageClass(stage)}">${initials}</div>
+        </div>
+        <div class="contact-subject-id">SUBJECT · ID-${String(person.id).padStart(6,'0')}</div>
+        <div class="contact-record-name">${esc(name)}</div>
+        <div class="contact-stage-badge">${esc(person.stage||'Lead')}</div>
+        <!-- Presence Bubbles -->
+        <div id="presence-strip" style="display:flex;align-items:center;justify-content:center;gap:4px;min-height:22px;margin-bottom:8px"></div>
+        <div class="contact-quick-actions">
+          <button class="cqa-btn cqa-call" onclick="pickPhoneAndCall('${person.id}','${esc(name)}')">▶ CALL</button>
+          <button class="cqa-btn cqa-text" onclick="pickPhoneAndText('${person.id}','${esc(name)}')">◈ TEXT</button>
+          <button class="cqa-btn" onclick="openEmailCompose('${person.id}','${esc(person.email||'')}','${esc(name)}')">✉ EMAIL</button>
+          <button class="cqa-btn cqa-note" onclick="openNoteCompose()">✎ NOTE</button>
+          <button class="cqa-btn" onclick="confirmDeleteLead('${person.id}','${esc(name)}')" style="border-color:rgba(232,0,58,0.3);color:rgba(232,0,58,0.5)">✕ DEL</button>
+        </div>
+      </div>
+
+      <!-- DETAILS -->
+      <div class="contact-section">
+        <div class="contact-section-title">Details</div>
+        <div class="detail-row">
+          <span class="detail-label">Stage</span>
+          <select class="stage-select" onchange="updatePersonStage('${person.id}',this.value)">
+            ${['Lead','Resident','Delinquent','Evicting','Past Tenant','Property Owner','Contractor','Caseworker'].map(st=>`<option value="${st}" ${stage===st?'selected':''}>${st}</option>`).join('')}
+          </select>
+        </div>
+        ${person.email ? `<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value" style="font-size:12px;word-break:break-all">${esc(person.email)}</span></div>` : ''}
+        <div class="detail-row"><span class="detail-label">Source</span><span class="detail-value" style="font-size:12px;color:var(--text-2)">${esc(person.source||'—')}</span></div>
+      </div>
+
+      <!-- PHONE NUMBERS -->
+      <div class="contact-section" id="phones-section-${person.id}">
+        <div class="contact-section-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Phone Numbers</span>
+          <button onclick="toggleAddPhone('${person.id}')" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-weight:600">+ Add</button>
+        </div>
+        <div id="phones-list-${person.id}"><div style="font-size:12px;color:var(--text-3)">Loading…</div></div>
+        <div id="add-phone-form-${person.id}" style="display:none;margin-top:8px">
+          <div class="add-phone-row">
+            <input id="new-phone-num-${person.id}" type="tel" placeholder="(405) 555-0100">
+            <select id="new-phone-label-${person.id}">
+              <option value="mobile">Mobile</option>
+              <option value="home">Home</option>
+              <option value="work">Work</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button onclick="addPhone('${person.id}')" class="btn-primary" style="font-size:11px;padding:5px 12px">Save</button>
+            <button onclick="toggleAddPhone('${person.id}')" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADDRESS -->
+      <div class="contact-section" id="address-section-${person.id}">
+        <div class="contact-section-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Address</span>
+          <button onclick="toggleEditAddress('${person.id}')" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-weight:600" id="edit-addr-btn-${person.id}">Edit</button>
+        </div>
+        <div id="address-display-${person.id}">
+          ${(person.address||person.city||person.state||person.zip) ? `
+            <div style="font-size:12px;color:var(--text-2);line-height:1.6">
+              ${person.address ? `<div>${esc(person.address)}</div>` : ''}
+              ${(person.city||person.state||person.zip) ? `<div>${[person.city,person.state,person.zip].filter(Boolean).map(esc).join(', ')}</div>` : ''}
+            </div>
+          ` : `<div style="font-size:12px;color:var(--text-3)">No address on file</div>`}
+        </div>
+        <div id="address-edit-${person.id}" style="display:none">
+          <input id="addr-street-${person.id}" type="text" placeholder="Street address" value="${esc(person.address||'')}"
+            style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;margin-bottom:5px;box-sizing:border-box">
+          <div style="display:grid;grid-template-columns:1fr 60px 80px;gap:5px;margin-bottom:6px">
+            <input id="addr-city-${person.id}" type="text" placeholder="City" value="${esc(person.city||'')}"
+              style="background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+            <input id="addr-state-${person.id}" type="text" placeholder="ST" value="${esc(person.state||'')}" maxlength="2"
+              style="background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;text-transform:uppercase">
+            <input id="addr-zip-${person.id}" type="text" placeholder="ZIP" value="${esc(person.zip||'')}" maxlength="10"
+              style="background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+          </div>
+          <div style="display:flex;gap:6px">
+            <button onclick="saveAddress('${person.id}')" class="btn-primary" style="font-size:11px;padding:5px 12px">Save</button>
+            <button onclick="toggleEditAddress('${person.id}')" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- HOUSEHOLD -->
+      <div class="contact-section" id="household-section-${person.id}">
+        <div class="contact-section-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Household</span>
+          <button onclick="toggleAddHousehold('${person.id}')" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-weight:600">+ Link</button>
+        </div>
+        <div id="household-list-${person.id}"><div style="font-size:12px;color:var(--text-3)">Loading…</div></div>
+        <div id="add-household-form-${person.id}" style="display:none;margin-top:8px">
+          <input id="hh-search-${person.id}" type="text" placeholder="Search by name or phone…"
+            oninput="searchHouseholdCandidates('${person.id}')"
+            style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;margin-bottom:5px;box-sizing:border-box">
+          <div id="hh-results-${person.id}" style="max-height:120px;overflow-y:auto"></div>
+          <button onclick="toggleAddHousehold('${person.id}')" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;margin-top:5px">Cancel</button>
+        </div>
+        <div style="margin-top:8px">
+          <button onclick="viewHouseholdTimeline('${person.id}')" id="hh-timeline-btn-${person.id}" style="display:none;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.25);color:#818cf8;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;width:100%">👥 View Household Timeline</button>
+        </div>
+      </div>
+
+      ${tags.length ? `<div class="contact-section"><div class="contact-section-title">Tags</div><div class="tags-container">${tags.map(t=>`<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`).join('')}</div></div>` : ''}
+      ${renderCustomFieldsHTML(person)}
+      <div class="contact-section" style="border-bottom:none">
+        <button onclick="navigate('people',currentListId)" class="back-btn">← Back to list</button>
+      </div>
+    </div>
+
+    <div class="contact-center">
+      <!-- Stage Banner -->
+      <div id="stage-banner" class="${getStageBannerClass(stage) ? '' : 'banner-hidden'}">
+        ${getStageBannerClass(stage) ? (() => {
+          const cls = getStageBannerClass(stage);
+          if (cls === 'banner-delinquent') {
+            const cf = person.custom_fields || {};
+            const bal = person.past_due_balance != null ? person.past_due_balance : cf.past_due_balance;
+            const days = person.past_due_days != null ? person.past_due_days : cf.past_due_days;
+            const balStr = (bal != null && bal !== '') ? `$${parseFloat(bal).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}` : null;
+            const daysStr = (days != null && days !== '') ? `${parseInt(days)} DAYS` : null;
+            return `<div class="stage-banner-text ${cls}">
+              <span class="banner-delinquent-label">⚠ DELINQUENT</span>
+              ${(balStr || daysStr) ? `<span class="banner-delinquent-divider"></span><span class="banner-delinquent-stats">
+                ${balStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${balStr}</span><span class="banner-delinquent-stat-lbl">PAST DUE</span></span>` : ''}
+                ${(balStr && daysStr) ? `<span style="opacity:0.3">|</span>` : ''}
+                ${daysStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${daysStr}</span><span class="banner-delinquent-stat-lbl">OVERDUE</span></span>` : ''}
+              </span>` : ''}
+            </div>`;
+          }
+          return `<div class="stage-banner-text ${cls}">${esc(stage)}</div>`;
+        })() : ''}
+      </div>
+      <div class="timeline-header">
+        <div class="compose-area" id="compose-area">
+          <div class="compose-tabs">
+            <div class="compose-tab active" id="ctab-note" onclick="setComposeTab('note')">📝 Note</div>
+            <div class="compose-tab" id="ctab-text" onclick="setComposeTab('text')">💬 Text</div>
+            <div class="compose-tab" id="ctab-logcall" onclick="setComposeTab('logcall')">📞 Log Call</div>
+          </div>
+          <div class="compose-body">
+            <textarea class="compose-input" id="compose-input" placeholder="Add a note… (type @ to mention a teammate)" rows="2"
+              oninput="handleComposeInput(event)" onkeydown="handleComposeKeydown(event)"></textarea>
+          </div>
+          <div class="compose-footer">
+            <button class="compose-submit" id="compose-submit" onclick="submitCompose()">Save Note</button>
+          </div>
+        </div>
+        <div class="timeline-filters">
+          <button class="filter-pill active" data-filter="all" onclick="filterTimeline('all',this)">All</button>
+          <button class="filter-pill" data-filter="call" onclick="filterTimeline('call',this)">📞 Calls <span class="pill-count">${activities.filter(a=>a.type==='call').length}</span></button>
+          <button class="filter-pill" data-filter="text" onclick="filterTimeline('text',this)">💬 Texts <span class="pill-count">${activities.filter(a=>a.type==='text'||a.type==='sms').length}</span></button>
+          <button class="filter-pill" data-filter="note" onclick="filterTimeline('note',this)">📝 Notes <span class="pill-count">${activities.filter(a=>a.type==='note').length}</span></button>
+          <button class="filter-pill" data-filter="email" onclick="filterTimeline('email',this)">✉️ Emails <span class="pill-count">${activities.filter(a=>a.type==='email').length}</span></button>
+        </div>
+      </div>
+      <div class="timeline-scroll" id="timeline-scroll">${renderTimelineHTML(activities)}</div>
+    </div>
+
+    <div class="contact-right">
+      <div class="right-section">
+        <div class="right-section-header">
+          <span class="right-section-title">Tasks</span>
+          <button class="add-btn" onclick="openAddTaskModal('${person.id}')">+</button>
+        </div>
+        <div id="tasks-list">${renderTasksHTML(tasks, person.id)}</div>
+      </div>
+      <div class="right-section">
+        <div class="right-section-header"><span class="right-section-title">Status Flags</span></div>
+        <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;display:flex;flex-direction:column;gap:5px">
+          ${(stage==='Evicting'||tags.some(t=>t.toLowerCase().includes('eviction'))) ? `<div style="color:#ff3b3b;display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:#ff3b3b;box-shadow:0 0 6px #ff3b3b;display:inline-block;animation:sl-pulse-dot 1.2s ease-in-out infinite;flex-shrink:0"></span>EVICTION IN PROGRESS</div>` : ''}
+          ${(stage==='Delinquent'||tags.some(t=>t.toLowerCase().includes('delinquent'))) ? `<div style="color:#3b9eff;display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:#3b9eff;box-shadow:0 0 6px #3b9eff;display:inline-block;flex-shrink:0"></span>DELINQUENT ACCOUNT</div>` : ''}
+          ${tags.some(t=>t.toLowerCase().includes('committed')) ? `<div style="color:var(--green);display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);display:inline-block;flex-shrink:0"></span>PAYMENT COMMITTED</div>` : ''}
+          ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--tac-muted-2)">-- NO ACTIVE FLAGS --</div>' : ''}
+        </div>
+      </div>
+            <!-- SHOWING ROSTER -->
+      <div class="right-section" id="sh-roster-${person.id}">
+        <div class="right-section-header"><span class="right-section-title" style="color:var(--amber)">🏠 Showings</span></div>
+        <div id="sh-roster-body-${person.id}" style="font-family:var(--font-mono);font-size:10px;color:var(--text-3)">Loading…</div>
+      </div>
+
+      <!-- CASEWORKER PANEL -->
+      <div class="right-section" id="cw-panel-wrap-${person.id}">
+        <div class="right-section-header">
+          <span class="right-section-title" style="color:rgba(168,85,247,0.7)">Caseworker</span>
+          <button onclick="cwShowSearch(${person.id})" style="background:none;border:1px solid rgba(168,85,247,0.3);color:rgba(168,85,247,0.6);font-family:var(--font-mono);font-size:8px;letter-spacing:0.15em;padding:2px 7px;cursor:pointer">+ LINK</button>
+        </div>
+        <div id="cw-list-${person.id}" style="font-size:12px;color:var(--text-3)">Loading…</div>
+        <div id="cw-search-wrap-${person.id}" style="display:none;margin-top:8px">
+          <input id="cw-search-input-${person.id}" type="text" placeholder="Search by name…"
+            oninput="cwSearchPeople(this.value, ${person.id})"
+            style="width:100%;box-sizing:border-box;padding:6px 10px;border-radius:6px;background:var(--bg-3);border:1px solid var(--border);color:var(--text);font-size:12px;font-family:inherit;outline:none">
+          <div id="cw-search-results-${person.id}" style="margin-top:5px;display:flex;flex-direction:column;gap:3px;max-height:140px;overflow-y:auto"></div>
+        </div>
+        ${(stage==='Resident'||stage==='Delinquent'||stage==='Evicting') ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <button onclick="logLeaseViolation(${person.id})"
+            style="width:100%;padding:7px;border-radius:6px;background:rgba(255,59,59,0.1);border:1px solid rgba(255,59,59,0.3);color:#ff3b3b;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit"
+            onmouseover="this.style.background='rgba(255,59,59,0.2)'" onmouseout="this.style.background='rgba(255,59,59,0.1)'">
+            🚨 Log Lease Violation
+          </button>
+        </div>` : ''}
+      </div>
+
+      <div class="right-section" id="security-detections-wrap">
+        <div class="right-section-header">
+          <span class="right-section-title" style="color:#ff3b3b">🔒 Security Profile</span>
+        </div>
+        <div class="sec-profile-section">
+
+          <!-- ID PHOTO -->
+          <div class="sec-field">
+            <div class="sec-label">ID / Bio Photo</div>
+            <div class="sec-id-photo-wrap" id="sec-id-photo-wrap" onclick="document.getElementById('sec-id-file').click()">
+              <div class="sec-id-missing" id="sec-id-missing">
+                <svg width="38" height="28" viewBox="0 0 38 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="36" height="26" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                  <rect x="5" y="5" width="10" height="12" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                  <circle cx="10" cy="9" r="2" stroke="currentColor" stroke-width="1.1"/>
+                  <path d="M5 17c0-2 2-3 5-3s5 1 5 3" stroke="currentColor" stroke-width="1.1"/>
+                  <line x1="19" y1="7" x2="33" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  <line x1="19" y1="11" x2="33" y2="11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  <line x1="19" y1="15" x2="27" y2="15" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+                <div class="sec-id-badge">ID Missing</div>
+                <div style="font-size:9px;margin-top:2px;color:var(--text-3)">Click to upload</div>
+              </div>
+              <img id="sec-id-img" style="display:none" src="" alt="ID Photo">
+            </div>
+            <div class="sec-id-btns" style="margin-top:6px">
+              <button class="sec-micro-btn" onclick="document.getElementById('sec-id-file').click()">📎 Upload</button>
+              <button class="sec-micro-btn del" id="sec-id-del-btn" style="display:none" onclick="secDeleteIdPhoto()">✕ Remove</button>
+            </div>
+            <input type="file" id="sec-id-file" accept="image/*" style="display:none" onchange="secHandleIdUpload(event)">
+          </div>
+
+          <!-- BACKGROUND NOTES — full width below ID -->
+          <div class="sec-field">
+            <div class="sec-label">Background Info</div>
+            <textarea class="sec-textarea" id="sec-bg-notes" placeholder="Staff notes about this person's background, history with property, concerns…" rows="5"></textarea>
+          </div>
+
+          <!-- CRIMINAL / LEGAL HISTORY -->
+          <div class="sec-field">
+            <div class="sec-label">⚖️ Criminal / Legal History</div>
+            <textarea class="sec-textarea" id="sec-criminal" placeholder="Known criminal record, active warrants, court cases, legal concerns…" rows="3"></textarea>
+          </div>
+
+          <!-- DV FLAG -->
+          <div class="sec-dv-box" id="sec-dv-box">
+            <div class="sec-dv-top" onclick="secToggleDV()">
+              <input type="checkbox" class="sec-dv-check" id="sec-dv-check" onclick="event.stopPropagation(); secToggleDV()">
+              <div>
+                <div class="sec-dv-title">🛡 Victim of Domestic Violence</div>
+              </div>
+            </div>
+            <div class="sec-dv-sub">Check if this resident is a known DV victim. Enables privacy protections.</div>
+            <div class="sec-dv-notes-wrap">
+              <textarea class="sec-textarea" id="sec-dv-notes" placeholder="DV case notes, safety plan details, protected address flag…" rows="2" style="margin-top:8px"></textarea>
+            </div>
+          </div>
+
+          <!-- SAVE -->
+          <div class="sec-save-row">
+            <button class="sec-save-btn" onclick="secSaveProfile()">Save Security Profile</button>
+            <span class="sec-saved-msg" id="sec-saved-msg">✓ Saved</span>
+          </div>
+
+          <!-- CAMERA DETECTIONS -->
+          <div id="sec-cam-detections-wrap" style="display:none">
+            <div class="sec-label" style="color:#ff3b3b;margin-bottom:6px">📷 Camera Detections</div>
+            <div class="sec-detections-list" id="security-detections-list"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>`; /* end contact-scroll-wrap */
+}
+
+function renderCustomFieldsHTML(person) {
+  const fields = [];
+  if (person.past_due_balance != null && person.past_due_balance !== '') fields.push({ label: 'Past Due', value: `$${parseFloat(person.past_due_balance).toFixed(2)}`, color: 'var(--red)' });
+  if (person.payment_commitment_date) fields.push({ label: 'Promised', value: formatDate(person.payment_commitment_date) });
+  if (!fields.length) return '';
+  return `<div class="contact-section"><div class="contact-section-title">Payment Info</div>${fields.map(f=>`<div class="detail-row"><span class="detail-label">${f.label}</span><span class="detail-value" style="${f.color?`color:${f.color};font-weight:700`:'font-size:12px'}">${f.value}</span></div>`).join('')}</div>`;
+}
+
+function renderTasksHTML(tasks, personId) {
+  if (!tasks.length) return '<div class="no-tasks">No tasks yet</div>';
+  return tasks.map(t => {
+    const done = t.completed;
+    const due = t.due_date ? new Date(t.due_date) : null;
+    const isOverdue = due && due < new Date() && !done;
+    return `<div class="task-item" id="task-${t.id}">
+      <div class="task-check ${done?'done':''}" onclick="toggleTask('${t.id}','${personId}',${done})">${done?'✓':''}</div>
+      <div class="task-text ${done?'done':''}">
+        ${esc(t.text||t.title||t.description||'')}
+        ${due ? `<span class="task-due ${isOverdue?'overdue':''}">${isOverdue?'Overdue: ':'Due: '}${formatDate(t.due_date)}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.renderTimelineHTML = function renderTimelineHTML(activities) {
+  if (!activities.length) return '<div class="people-empty"><div class="empty-icon">📋</div><p>No activity yet</p></div>';
+  return [...activities].sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+    .map((act, idx, arr) => renderTimelineItem(act, idx < arr.length - 1)).join('');
+}
+
+function renderTimelineItem(act, hasConnector) {
+  const type = act.type || 'activity';
+  const isInbound = act.direction === 'inbound';
+  const agent = isInbound
+    ? (window._currentContactName || 'Contact')
+    : (act.agent_name || act.agent || 'System');
+  const time = act.created_at ? timeAgo(act.created_at) : '';
+  let iconCls = 'ti-activity', iconChar = '•', typeLabel = 'Activity';
+  let bodyHtml = `<div class="ti-content">${esc(act.body||act.content||act.note||'')}</div>`;
+
+  if (type === 'call') {
+    const dir = act.direction || 'outbound';
+    iconCls = dir === 'inbound' ? 'ti-call ti-call-inbound' : 'ti-call';
+    iconChar = dir === 'inbound' ? '📲' : '📞';
+    typeLabel = 'Call';
+    const duration = (act.duration||act.duration_seconds) ? formatDuration(act.duration||act.duration_seconds) : '';
+    const cardId = 'call-card-' + act.id;
+    const noTranscript = !act.summary && !act.transcript;
+    const hasRecording = !!act.recording_url;
+    const _tok = localStorage.getItem('connect_token') || '';
+    const proxyUrl = act.call_id ? `/api/calls/${act.call_id}/recording` : null;
+    const callIdSafe = act.call_id || '';
+
+    // 1) AI Summary section
+    const summaryHtml = act.summary
+      ? `<div class="ai-summary-block">
+           <div class="ai-summary-label">🤖 AI Summary</div>
+           <div class="ai-summary-text">${esc(act.summary)}</div>
+         </div>`
+      : noTranscript
+        ? `<div class="ai-summary-block" style="padding:8px 12px 10px">
+             <span style="font-size:12px;color:var(--text-3);font-style:italic">${esc(act.body||act.content||'No summary available')}</span>
+             ${act.call_id ? `<button onclick="retryTranscript('${act.call_id}',this)" style="margin-left:8px;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:2px 9px;font-size:11px;font-weight:600;cursor:pointer">↻ Retry</button>` : ''}
+           </div>`
+        : '';
+
+    // 2) Action buttons row (only show buttons that have content)
+    const audioBtn  = hasRecording && proxyUrl
+      ? `<button class="call-action-btn" id="${cardId}-audio-btn" onclick="toggleCallSection('${cardId}','audio')">▶ Play Audio</button>`
+      : '';
+    const transcriptBtn = act.transcript
+      ? `<button class="call-action-btn" id="${cardId}-tx-btn" onclick="toggleCallSection('${cardId}','transcript')">📄 View Transcript</button>`
+      : '';
+    const actionsRow = (audioBtn || transcriptBtn)
+      ? `<div class="call-actions-row">${audioBtn}${transcriptBtn}</div>`
+      : '';
+
+    // 3) Expandable sections
+    const audioSection = hasRecording && proxyUrl
+      ? `<div class="call-audio-section" id="${cardId}-audio">
+           <audio controls id="${cardId}-audio-el" data-call-id="${callIdSafe}" style="width:100%;height:36px;border-radius:6px;display:block">
+             <source src="" type="audio/mpeg">
+           </audio>
+           <div id="${cardId}-audio-status" style="font-size:11px;color:var(--text-3);margin-top:4px;display:none"></div>
+         </div>`
+      : '';
+    const transcriptSection = act.transcript
+      ? `<div class="call-transcript-section" id="${cardId}-transcript">
+           <div class="transcript-content">${formatTranscript(act.transcript)}</div>
+         </div>`
+      : '';
+
+    bodyHtml = `<div class="call-summary-card" id="${cardId}">
+      <div class="call-summary-meta">
+        <span class="call-direction call-${dir === 'inbound' ? 'inbound' : dir === 'missed' ? 'missed' : 'outbound'}">${dir === 'inbound' ? 'Inbound' : dir === 'missed' ? 'Missed' : 'Outbound'}</span>
+        ${duration ? `<span class="call-duration">${duration}</span>` : ''}
+      </div>
+      ${summaryHtml}
+      ${actionsRow}
+      ${audioSection}
+      ${transcriptSection}
+    </div>`;
+
+  } else if (type === 'text' || type === 'sms') {
+    iconCls = 'ti-text'; iconChar = '💬'; typeLabel = 'Text';
+    const dir = act.direction || 'outbound';
+    const isOutbound = dir !== 'inbound';
+    const smsStatusHtml = isOutbound ? renderSmsStatus(act) : '';
+    bodyHtml = `<div class="text-thread">
+      <div class="bubble-wrap ${isOutbound ? 'outbound' : ''}">
+        <div>
+          <div class="bubble ${isOutbound ? 'bubble-outbound' : 'bubble-inbound'}">${esc(act.body||act.content||'')}</div>
+          ${smsStatusHtml}
+        </div>
+      </div>
+    </div>`;
+
+  } else if (type === 'note') {
+    iconCls = 'ti-note'; iconChar = '📝'; typeLabel = 'Note';
+    const noteBody = act.body||act.content||'';
+    // Highlight @mentions
+    const highlightedNote = noteBody.replace(/@(\w[\w ]*)/g, '<span style="color:var(--red);font-weight:600">@$1</span>');
+    bodyHtml = `<div class="ti-content note-content">${highlightedNote}</div>`;
+
+  } else if (type === 'email') {
+    iconCls = 'ti-email'; iconChar = '✉️'; typeLabel = 'Email';
+    const emailBody = act.body || '';
+    const subjectLine = act.email_subject || emailBody.match(/Subject: ([^\n]+)/)?.[1] || '';
+    const bodyText = emailBody.replace(/^To:.*\n|^Subject:.*\n/gm,'').trim();
+    const dir = act.direction || 'outbound';
+    bodyHtml = `<div style="background:var(--bg-4);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      ${subjectLine ? `<div style="font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:6px">Subject: ${esc(subjectLine)}</div>` : ''}
+      <div style="font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.6">${esc(bodyText)}</div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:6px">${dir === 'inbound' ? '← Received' : '→ Sent via Gmail'}</div>
+    </div>`;
+  }
+
+  return `<div class="timeline-item" data-type="${type}">
+    <div class="ti-icon-wrap">
+      <div class="ti-icon ${iconCls}">${iconChar}</div>
+      ${hasConnector ? `<div class="ti-connector" style="height:calc(100% + 16px - 32px)"></div>` : ''}
+    </div>
+    <div class="ti-body">
+      <div class="ti-header">
+        <span class="ti-type">${typeLabel}</span>
+        <span class="ti-agent">by ${esc(agent)}</span>
+        <span class="ti-time">${time}</span>
+      </div>
+      ${bodyHtml}
+    </div>
+  </div>`;
+}
+
+// ── SMS STATUS RENDERING ─────────────────────────────────────────────
+function renderSmsStatus(act) {
+  const status = act.sms_status || 'sent'; // activities without sms_status are old entries
+  const actId = act.id;
+  const personId = act.person_id || currentPersonId;
+
+  let iconHtml = '';
+  let retryHtml = '';
+  let errorHtml = '';
+
+  if (status === 'sending') {
+    iconHtml = `<span class="sms-status-icon sending" title="Sending…"></span>`;
+  } else if (status === 'sent') {
+    iconHtml = `<span class="sms-status-icon sent" title="Sent"></span>`;
+  } else if (status === 'delivered') {
+    iconHtml = `<span class="sms-status-icon delivered" title="Delivered"></span>`;
+  } else if (status === 'failed') {
+    iconHtml = `<span class="sms-status-icon failed" title="${esc(act.sms_error||'Failed')}"></span>`;
+    retryHtml = `<button class="sms-retry-btn" id="retry-btn-${actId}" onclick="retrySms('${actId}','${personId}')" title="Tap to retry">↺ Retry</button>`;
+    if (act.sms_error) errorHtml = `<div class="sms-error-msg">${esc(act.sms_error)}</div>`;
+  } else if (status === null || status === undefined) {
+    // Legacy activity — no status tracked, show nothing
+    return '';
+  }
+
+  return `<div class="sms-status-row">${iconHtml}${retryHtml}</div>${errorHtml}`;
+}
+
+// ── SMS RETRY ─────────────────────────────────────────────────────────
+async function retrySms(activityId, personId) {
+  const btn = document.getElementById('retry-btn-' + activityId);
+  if (btn) { btn.disabled = true; btn.textContent = '↺ Retrying…'; }
+  try {
+    await api(`/api/twilio/sms/retry/${activityId}`, 'POST');
+    toast('Retrying send…', 'info');
+    // Poll briefly then reload timeline to show updated status
+    setTimeout(async () => {
+      const acts = await api(`/api/activities?personId=${personId}`);
+      if (document.getElementById('timeline-scroll')) {
+        document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(acts || []);
+      }
+    }, 2500);
+  } catch(e) {
+    toast('Retry failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '↺ Retry'; }
+  }
+}
+
+// ── TIMELINE HELPERS ─────────────────────────────────────────────────
+function toggleCallSection(cardId, section) {
+  const el  = document.getElementById(`${cardId}-${section}`);
+  const btn = document.getElementById(`${cardId}-${section}-btn`);
+  if (!el) return;
+  const isOpen = el.classList.toggle('open');
+  if (btn) btn.classList.toggle('active', isOpen);
+
+  // When opening an audio section, fetch the recording and create a blob URL
+  if (isOpen && section === 'audio') {
+    const audioEl  = document.getElementById(`${cardId}-audio-el`);
+    const statusEl = document.getElementById(`${cardId}-audio-status`);
+    if (!audioEl) return;
+
+    // Already loaded — don't re-fetch
+    if (audioEl.dataset.loaded === '1') return;
+
+    // Extract call_id from data attribute (act.call_id, not act.id)
+    const callId = audioEl.dataset.callId;
+    if (!callId) {
+      if (statusEl) { statusEl.textContent = '⚠️ No call ID found'; statusEl.style.display = 'block'; }
+      return;
+    }
+    const tok    = localStorage.getItem('connect_token') || '';
+
+    if (statusEl) { statusEl.textContent = '⏳ Loading audio…'; statusEl.style.display = 'block'; }
+    audioEl.style.opacity = '0.4';
+    console.log('[Audio] Fetching recording for call_id:', callId);
+
+    fetch(`/api/calls/${callId}/recording`, {
+      headers: { 'Authorization': `Bearer ${tok}` }
+    })
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.blob();
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      audioEl.src = url;
+      audioEl.dataset.loaded = '1';
+      audioEl.style.opacity = '1';
+      if (statusEl) statusEl.style.display = 'none';
+      audioEl.play().catch(() => {}); // autoplay on open
+    })
+    .catch(err => {
+      audioEl.style.opacity = '1';
+      if (statusEl) { statusEl.textContent = `⚠️ Could not load audio: ${err.message}`; statusEl.style.display = 'block'; }
+    });
+  }
+}
+
+// Legacy — keep for any old markup still in the DOM
+function toggleCallExpand(cardId) {
+  document.getElementById(cardId + '-expanded')?.classList.toggle('open');
+}
+
+function filterTimeline(type, btn) {
+  document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.timeline-item').forEach(item => {
+    item.style.display = (type === 'all' || item.dataset.type === type) ? 'flex' : 'none';
+  });
+}
+
+// ── COMPOSE ───────────────────────────────────────────────────────────
+let composeTab = 'note';
+function setComposeTab(tab) {
+  composeTab = tab;
+  ['note','text','logcall'].forEach(t => document.getElementById('ctab-'+t)?.classList.toggle('active', t === tab));
+  const input = document.getElementById('compose-input');
+  const btn = document.getElementById('compose-submit');
+  if (tab === 'note') { input.placeholder = 'Add a note…'; btn.textContent = 'Save Note'; }
+  else if (tab === 'text') { input.placeholder = 'Type a message to send via SMS…'; btn.textContent = 'Send Text'; }
+  else { input.placeholder = 'What happened on this call?'; btn.textContent = 'Log Call'; }
+}
+function openNoteCompose() { setComposeTab('note'); document.getElementById('compose-input')?.focus(); }
+function openTextCompose() {
+  window._selectedTextPhone = window._selectedTextPhone || null; setComposeTab('text'); document.getElementById('compose-input')?.focus(); }
+
+async function submitCompose() {
+  const content = document.getElementById('compose-input').value.trim();
+  if (!content) return;
+  const btn = document.getElementById('compose-submit');
+  btn.disabled = true;
+
+  try {
+    if (composeTab === 'text') {
+      // Use selected phone if picker was used, otherwise fall back to primary
+      let toPhone = window._selectedTextPhone || null;
+      window._selectedTextPhone = null;
+      if (!toPhone) {
+        const primary = _personPhones.find(p => p.is_primary && !p.is_bad) || _personPhones.find(p => !p.is_bad);
+        if (primary) toPhone = primary.phone;
+        else {
+          const person = await api(`/api/people/${currentPersonId}`);
+          toPhone = person?.phone;
+        }
+      }
+      if (!toPhone) { toast('Contact has no valid phone number', 'error'); return; }
+      await api('/api/twilio/sms', 'POST', {
+        to: toPhone,
+        body: content,
+        personId: currentPersonId
+      });
+      toast('Text sent ✓', 'success');
+      if (window.neonGlow) window.neonGlow.smsSent();
+    } else {
+      await api('/api/activities', 'POST', {
+        personId: currentPersonId,
+        type: composeTab === 'logcall' ? 'note' : composeTab,
+        body: content,
+        direction: 'outbound'
+      });
+      toast('Saved ✓', 'success');
+    }
+
+    document.getElementById('compose-input').value = '';
+    const activities = await api(`/api/activities?personId=${currentPersonId}`);
+    document.getElementById('timeline-scroll').innerHTML = renderTimelineHTML(activities || []);
+  } catch(e) {
+    toast(e.message, 'error');
+    if (window.neonGlow) window.neonGlow.smsFailed();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── TASKS ────────────────────────────────────────────────────────────
+function openAddTaskModal(personId) {
+  currentTaskPersonId = personId;
+  document.getElementById('task-text-input').value = '';
+  document.getElementById('task-due-input').value = '';
+  openModal('modal-new-task');
+}
+async function submitTask() {
+  const text = document.getElementById('task-text-input').value.trim();
+  const due = document.getElementById('task-due-input').value;
+  if (!text) return;
+  try {
+    await api('/api/tasks', 'POST', { personId: currentTaskPersonId, title: text, due_date: due||null });
+    closeModal('modal-new-task');
+    toast('Task added ✓', 'success');
+    const tasks = await api(`/api/tasks?personId=${currentTaskPersonId}`);
+    document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks||[], currentTaskPersonId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+async function toggleTask(taskId, personId, done) {
+  try {
+    await api(`/api/tasks/${taskId}`, 'PUT', { completed: !done, title: ' ' });
+    const tasks = await api(`/api/tasks?personId=${personId}`);
+    document.getElementById('tasks-list').innerHTML = renderTasksHTML(tasks||[], personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function updatePersonStage(personId, stage) {
+  // Update the banner immediately
+  const banner = document.getElementById('stage-banner');
+  if (banner) {
+    const cls = getStageBannerClass(stage);
+    if (cls) {
+      banner.className = '';
+      if (cls === 'banner-delinquent') {
+        const p = window._currentPerson || {};
+        const cf = p.custom_fields || {};
+        const bal = p.past_due_balance != null ? p.past_due_balance : cf.past_due_balance;
+        const days = p.past_due_days != null ? p.past_due_days : cf.past_due_days;
+        const balStr = (bal != null && bal !== '') ? `$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}` : null;
+        const daysStr = (days != null && days !== '') ? `${parseInt(days)} DAYS` : null;
+        banner.innerHTML = `<div class="stage-banner-text ${cls}">
+          <span class="banner-delinquent-label">⚠ DELINQUENT</span>
+          ${(balStr || daysStr) ? `<span class="banner-delinquent-divider"></span><span class="banner-delinquent-stats">
+            ${balStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${balStr}</span><span class="banner-delinquent-stat-lbl">PAST DUE</span></span>` : ''}
+            ${(balStr && daysStr) ? `<span style="opacity:0.3">|</span>` : ''}
+            ${daysStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${daysStr}</span><span class="banner-delinquent-stat-lbl">OVERDUE</span></span>` : ''}
+          </span>` : ''}
+        </div>`;
+      } else {
+        banner.innerHTML = `<div class="stage-banner-text ${cls}">${esc(stage)}</div>`;
+      }
+    } else {
+      banner.className = 'banner-hidden';
+      banner.innerHTML = '';
+    }
+  }
+  // Update avatar border
+  const avatar = document.querySelector('.contact-big-avatar');
+  if (avatar) {
+    avatar.className = `contact-big-avatar ${stageClass(stage)}`;
+  }
+  try { await api(`/api/people/${personId}`, 'PUT', { stage }); toast('Stage updated ✓', 'success'); }
+  catch(e) { toast(e.message, 'error'); }
+}
+
+// ── NEW CONTACT ───────────────────────────────────────────────────────
+async function createContact() {
+  const firstName = document.getElementById('nc-first').value.trim();
+  const lastName = document.getElementById('nc-last').value.trim();
+  const phone = document.getElementById('nc-phone').value.trim();
+  const email = document.getElementById('nc-email').value.trim();
+  const stage = document.getElementById('nc-stage').value;
+  if (!firstName && !lastName && !phone) { toast('Need a name or phone', 'error'); return; }
+  try {
+    const p = await api('/api/people', 'POST', { firstName, lastName, phone, email, stage });
+    closeModal('modal-new-contact');
+    toast('Contact added ✓', 'success');
+    await loadPeople(currentListId);
+    if (p.id) openContact(p.id);
+  } catch(e) {
+    if (e.status === 409 && e.data?.existing) {
+      const ex = e.data.existing;
+      const name = ex.name || 'this contact';
+      // Show duplicate warning with link to existing contact
+      const confirmed = await showDuplicateAlert(name, ex, e.data.message);
+      if (confirmed) {
+        closeModal('modal-new-contact');
+        openContact(ex.id);
+      }
+    } else {
+      toast(e.message, 'error');
+    }
+  }
+}
+
+function showDuplicateAlert(name, existing, reason) {
+  return new Promise(resolve => {
+    // Reuse toast-style but as a sticky centered dialog
+    const id = 'dupe-alert-' + Date.now();
+    const div = document.createElement('div');
+    div.id = id;
+    div.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center`;
+    div.innerHTML = `
+      <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:14px;padding:28px 32px;max-width:420px;width:90%;box-shadow:0 12px 60px rgba(0,0,0,0.6)">
+        <div style="font-size:28px;margin-bottom:12px">⚠️</div>
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px">Duplicate Contact</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:16px;line-height:1.6">
+          ${esc(reason || 'A contact with this phone or email already exists.')}<br><br>
+          <strong style="color:var(--text)">${esc(name)}</strong>${existing.phone ? `<br>📞 ${esc(existing.phone)}` : ''}${existing.email ? `<br>✉️ ${esc(existing.email)}` : ''}${existing.stage ? `<br>🏷 ${esc(existing.stage)}` : ''}
+        </div>
+        <div style="display:flex;gap:10px">
+          <button id="${id}-open" style="flex:1;padding:9px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Open Existing Contact</button>
+          <button id="${id}-cancel" style="flex:1;padding:9px;background:var(--bg-4);color:var(--text-2);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer">Go Back</button>
+        </div>
+      </div>`;
+    document.body.appendChild(div);
+    document.getElementById(`${id}-open`).onclick = () => { div.remove(); resolve(true); };
+    document.getElementById(`${id}-cancel`).onclick = () => { div.remove(); resolve(false); };
+  });
+}
+
+// ── INBOX ─────────────────────────────────────────────────────────────
+async function loadInboxCount() {
+  try {
+    const data = await api('/api/inbox');
+    const total = (data.missed_calls||[]).length + (data.unread_texts||[]).length;
+    const badge = document.getElementById('inbox-badge');
+    if (total > 0) { badge.textContent = total; badge.style.display = 'inline'; }
+    else badge.style.display = 'none';
+  } catch(e) { console.warn('Inbox count:', e.message); }
+}
+
+async function clearInbox() {
+  try {
+    await api('/api/inbox/clear', 'POST', { type: 'all' });
+    // Zero out badge immediately
+    const badge = document.getElementById('inbox-badge');
+    if (badge) badge.style.display = 'none';
+    // Reload inbox list to show empty state
+    loadInbox();
+    toast('Inbox cleared', 'info');
+  } catch(e) { toast('Could not clear inbox: ' + e.message, 'error'); }
+}
+
+async function clearSecurityAlerts() {
+  try {
+    await api('/api/security/events/clear', 'POST', {});
+    updateSecBadge(0);
+    loadSecurityAlertHistory();
+    toast('Security alerts cleared', 'info');
+  } catch(e) { toast('Could not clear alerts: ' + e.message, 'error'); }
+}
+
+async function loadInbox() {
+  const listEl = document.getElementById('inbox-list');
+  listEl.innerHTML = '<div style="text-align:center;padding:60px"><div class="spinner"></div></div>';
+  try {
+    const data = await api('/api/inbox');
+    let items = [];
+    if (inboxFilter === 'all' || inboxFilter === 'missed') items = items.concat((data.missed_calls||[]).map(c=>({...c,_type:'missed'})));
+    if (inboxFilter === 'all' || inboxFilter === 'texts') items = items.concat((data.unread_texts||[]).map(t=>({...t,_type:'text'})));
+    items.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+    if (!items.length) { listEl.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-3)"><div style="font-size:40px;margin-bottom:16px">✨</div><p>All caught up!</p></div>'; return; }
+    listEl.innerHTML = items.map(item => {
+      const name = item.contact_name||item.from_number||item.phone||'Unknown';
+      const icon = item._type === 'missed' ? '📞' : '💬';
+      const preview = item._type === 'missed' ? 'Missed call' : (item.body||item.content||'');
+      return `<div class="inbox-item unread" onclick="${item.person_id?`openContact('${item.person_id}')`:''}"}>
+        <div class="inbox-type-icon ${item._type==='missed'?'inbox-missed':'inbox-text-in'}">${icon}</div>
+        <div class="inbox-info"><div class="inbox-contact-name">${esc(name)}</div><div class="inbox-preview">${esc(preview)}</div></div>
+        <div class="inbox-time">${item.created_at?timeAgo(item.created_at):''}</div>
+      </div>`;
+    }).join('');
+  } catch(e) { listEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</div>`; }
+}
+
+function setInboxFilter(f) {
+  inboxFilter = f;
+  ['all','missed','texts'].forEach(x => document.getElementById('inbox-filter-'+x)?.classList.toggle('active', x === f));
+  loadInbox();
+}
+
+// ── ADMIN ──────────────────────────────────────────────────────────────
+async function loadAdmin() {
+  const viewEl = document.getElementById('admin-dynamic');
+  viewEl.innerHTML = '<div style="text-align:center;padding:80px"><div class="spinner"></div></div>';
+  try {
+    const [agents, callLines, cameras] = await Promise.all([
+      api('/api/agents'),
+      api('/api/call-lines').catch(() => []),
+      api('/api/admin/cameras').catch(() => [])
+    ]);
+    viewEl.innerHTML = `
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <div class="admin-section-title">Agents & Users</div>
+          <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="toggleAddUserForm()">+ Add User</button>
+        </div>
+        <!-- Add User Form (hidden by default) -->
+        <div id="add-user-form" style="display:none;padding:20px;border-bottom:1px solid var(--border);background:var(--bg-3)">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end">
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Full Name</div>
+              <input id="new-user-name" type="text" placeholder="Jane Smith" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Email</div>
+              <input id="new-user-email" type="email" placeholder="jane@okcreal.com" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Password</div>
+              <input id="new-user-password" type="password" placeholder="••••••••" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:6px">Role</div>
+              <select id="new-user-role" style="width:100%;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px">
+                <option value="agent">Agent</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-primary" style="font-size:12px;padding:8px 16px;white-space:nowrap" onclick="submitAddUser()">Create User</button>
+              <button onclick="toggleAddUserForm()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:6px;padding:8px 12px;font-size:12px;cursor:pointer">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <table class="admin-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+          <tbody>${(agents||[]).map(a=>`<tr>
+            <td>${esc(a.name||'')}</td>
+            <td style="color:var(--text-2);font-size:12px">${esc(a.email||'')}</td>
+            <td><span class="role-badge ${a.role==='admin'?'role-admin':'role-agent'}">${a.role||'agent'}</span></td>
+            <td><span class="${a.is_online?'online-dot':'offline-dot'}"></span>${a.is_online?'Online':'Offline'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="admin-section">
+        <div class="admin-section-header"><div class="admin-section-title">Call Lines & Routing</div></div>
+        <table class="admin-table">
+          <thead><tr><th>Line Name</th><th>Number</th><th>Description</th><th>Status</th></tr></thead>
+          <tbody>${(callLines||[]).map(l=>`<tr>
+            <td style="font-weight:600">${esc(l.name||'')}</td>
+            <td><span class="phone-mono" style="color:var(--green)">${formatPhone(l.twilio_number)}</span></td>
+            <td style="color:var(--text-2);font-size:12px">${esc(l.description||'')}</td>
+            <td><span class="${l.is_active?'online-dot':'offline-dot'}"></span>${l.is_active?'Active':'Inactive'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <div class="admin-section-title">🏠 AppFolio Guest Cards</div>
+        </div>
+        <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+          <div style="font-size:12px;color:var(--text-3);line-height:1.7">
+            Auto-imports AppFolio guest cards as Leads via Google Apps Script. Runs every 5 minutes. Dedupes by email and phone.
+          </div>
+          <div style="background:var(--bg-4);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px">Webhook URL</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <code id="webhook-url-display" style="font-size:11px;color:var(--green);flex:1;word-break:break-all"></code>
+              <button onclick="copyWebhookUrl()" style="padding:4px 10px;font-size:11px;border-radius:5px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);cursor:pointer;white-space:nowrap">Copy</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text-3);line-height:1.8">
+            <strong style="color:var(--text-2)">Setup (one time):</strong><br>
+            1. Go to <a href="https://script.google.com" target="_blank" style="color:var(--red)">script.google.com</a> → New Project<br>
+            2. Paste the Apps Script code (copy from below)<br>
+            3. Set <code style="font-size:10px;background:var(--bg-4);padding:1px 4px;border-radius:3px">WEBHOOK_URL</code> to the URL above<br>
+            4. Set <code style="font-size:10px;background:var(--bg-4);padding:1px 4px;border-radius:3px">WEBHOOK_SECRET</code> to match your Railway env var<br>
+            5. Run once manually → approve permissions → set trigger: every 5 min
+          </div>
+          <button onclick="copyAppsScript()" style="padding:7px 14px;font-size:12px;font-weight:700;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;text-align:left">📋 Copy Google Apps Script Code</button>
+          <div id="appfolio-last-lead" style="font-size:11px;color:var(--text-3)"></div>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <div class="admin-section-title">📷 Camera Names</div>
+          <button onclick="discoverCameras()" style="padding:5px 12px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-weight:600">🔍 Auto-Discover</button>
+        </div>
+        <div style="padding:0 0 8px">
+          ${cameras.length === 0 ? `<div style="padding:20px;font-size:13px;color:var(--text-3);text-align:center">
+            No cameras yet. Click <strong>Auto-Discover</strong> to populate from security events.
+          </div>` : `<table class="admin-table">
+            <thead><tr><th>MAC Address</th><th>Friendly Name</th><th>Site</th><th></th></tr></thead>
+            <tbody>${cameras.map(c=>`<tr id="cam-row-${c.id}">
+              <td style="font-family:monospace;font-size:11px;color:var(--text-3)">${esc(c.mac)}</td>
+              <td><input type="text" value="${esc(c.name||c.mac)}" id="cam-name-${c.id}"
+                style="background:var(--bg-3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box"
+                onkeydown="if(event.key==='Enter')saveCameraName('${c.mac}','${c.id}')"></td>
+              <td style="color:var(--text-3);font-size:12px">${esc(c.site||'')}</td>
+              <td><button onclick="saveCameraName('${c.mac}','${c.id}')"
+                style="padding:4px 10px;font-size:11px;font-weight:700;border-radius:6px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer">Save</button></td>
+            </tr>`).join('')}</tbody>
+          </table>`}
+        </div>
+      </div>`;
+
+  } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
+  loadAppfolioStatus();
+}
+
+// ── APPFOLIO GUEST CARD INTEGRATION ──────────────────────────────────────────
+function loadAppfolioStatus() {
+  const el = document.getElementById('webhook-url-display');
+  if (el) el.textContent = window.location.origin + '/api/appfolio/inbound?token=YOUR_SECRET';
+}
+
+function copyWebhookUrl() {
+  const url = window.location.origin + '/api/appfolio/inbound?token=YOUR_SECRET';
+  navigator.clipboard.writeText(url).then(() => toast('Webhook URL copied ✓', 'success'));
+}
+
+function copyAppsScript() {
+  const secret = 'YOUR_SECRET'; // user replaces this
+  const script = `// OKCREAL Connect — AppFolio Guest Card Forwarder
+// Paste into script.google.com → set trigger: Time-driven, Every 5 minutes
+
+var WEBHOOK_URL = '${window.location.origin}/api/appfolio/inbound';
+var WEBHOOK_SECRET = 'YOUR_APPFOLIO_WEBHOOK_SECRET'; // match Railway env var
+var LABEL_NAME = 'AppFolio-GuestCard';
+var PROCESSED_LABEL = 'AppFolio-Processed';
+
+function checkGuestCards() {
+  var processedLabel = getOrCreateLabel(PROCESSED_LABEL);
+  var searchQuery = 'from:guestcards@appfolio.com -label:' + PROCESSED_LABEL;
+  var threads = GmailApp.search(searchQuery, 0, 20);
+
+  threads.forEach(function(thread) {
+    var messages = thread.getMessages();
+    messages.forEach(function(msg) {
+      var subject = msg.getSubject();
+      var body = msg.getPlainBody();
+      var date = msg.getDate().toISOString();
+
+      var payload = JSON.stringify({ subject: subject, body: body, received_at: date });
+
+      var response = UrlFetchApp.fetch(WEBHOOK_URL + '?token=' + WEBHOOK_SECRET, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: payload,
+        muteHttpExceptions: true
+      });
+
+      Logger.log('Guest card: ' + subject + ' → ' + response.getContentText());
+    });
+    thread.addLabel(processedLabel);
+  });
+}
+
+function getOrCreateLabel(name) {
+  return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
+}
+
+// Run this once manually first to authorize permissions
+function setup() {
+  checkGuestCards();
+  Logger.log('Setup complete. Now add a time-driven trigger for checkGuestCards every 5 minutes.');
+}`;
+
+  navigator.clipboard.writeText(script).then(() => toast('Apps Script copied to clipboard ✓', 'success'));
+}
+
+// ── CAMERA NAME ADMIN ─────────────────────────────────────────────────────────
+async function saveCameraName(mac, id) {
+  const input = document.getElementById(`cam-name-${id}`);
+  if (!input) return;
+  const name = input.value.trim();
+  if (!name) { toast('Enter a name', 'error'); return; }
+  try {
+    await api(`/api/admin/cameras/${encodeURIComponent(mac)}`, 'PUT', { name });
+    toast(`Camera renamed to "${name}" ✓`, 'success');
+    input.style.borderColor = 'var(--green)';
+    setTimeout(() => { input.style.borderColor = ''; }, 1500);
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function discoverCameras() {
+  toast('Fetching cameras from UniFi Protect...', 'info');
+  try {
+    // Call UniFi Protect bootstrap API directly from the browser (already authenticated via cookie)
+    // This works because we're on okcreal.ui.com in the same browser session
+    const consoleId = '6C63F88E4A03000000000927D6F50000000009A5904200000000683ED32C:16735734';
+    const resp = await fetch(`https://okcreal.ui.com/api/self/console/cameras`, {
+      credentials: 'include',
+      headers: { 'x-console-id': consoleId }
+    });
+    
+    let cameras = [];
+    if (resp.ok) {
+      cameras = await resp.json();
+    } else {
+      // Try the bootstrap endpoint as fallback
+      const r2 = await fetch(`https://okcreal.ui.com/proxy/${consoleId}/protect/api/bootstrap`, { credentials: 'include' });
+      if (r2.ok) {
+        const boot = await r2.json();
+        cameras = boot.cameras || [];
+      }
+    }
+
+    if (!cameras.length) {
+      // Fall back to server-side discover from security_events
+      const r = await api('/api/admin/cameras/discover', 'POST');
+      toast(`Auto-discovered ${r.added} cameras from event history ✓`, 'success');
+      loadAdmin();
+      return;
+    }
+
+    // Send all cameras to server
+    let saved = 0;
+    for (const cam of cameras) {
+      if (!cam.mac || !cam.name) continue;
+      await api(`/api/admin/cameras/${encodeURIComponent(cam.mac.replace(/:/g,'').toUpperCase())}`, 'PUT', {
+        name: cam.name,
+        site: 'Marlin'
+      }).catch(() => {});
+      saved++;
+    }
+    toast(`Synced ${saved} cameras from UniFi Protect ✓`, 'success');
+    loadAdmin();
+  } catch(e) {
+    // Network error or CORS — fall back to server-side discover
+    try {
+      const r = await api('/api/admin/cameras/discover', 'POST');
+      toast(`Auto-discovered ${r.added} cameras from event history ✓`, 'success');
+      loadAdmin();
+    } catch(e2) { toast('Discover failed: ' + e2.message, 'error'); }
+  }
+}
+
+// ── POWER DIALER ──────────────────────────────────────────────────────────────
+const PD = {
+  queue: [],       // [{id, name, phone}]
+  index: 0,
+  paused: false,   // pause AFTER current call ends
+  active: false,
+  waitingToCall: false, // true when we've advanced to next but waiting for user to hit Call
+
+  get current() { return this.queue[this.index] || null; },
+  get total()   { return this.queue.length; },
+};
+
+async function bulkCall() {
+  const checked = [...document.querySelectorAll('.row-check:checked')];
+  if (!checked.length) { toast('Select contacts first', 'error'); return; }
+
+  // Build queue — fetch phone for each selected person
+  const ids = checked.map(c => c.value);
+  toast('Building call queue…', 'info');
+
+  const people = await Promise.all(ids.map(id =>
+    api(`/api/people/${id}`).catch(() => null)
+  ));
+
+  PD.queue = people
+    .filter(p => p && (p.phone || (p.phones && p.phones.length)))
+    .map(p => ({
+      id: p.id,
+      name: `${p.first_name||''} ${p.last_name||''}`.trim() || 'Unknown',
+      phone: p.phone || (p.phones && p.phones[0]) || null,
+    }))
+    .filter(p => p.phone);
+
+  if (!PD.queue.length) { toast('None of the selected contacts have phone numbers', 'error'); return; }
+
+  PD.index   = 0;
+  PD.paused  = false;
+  PD.active  = true;
+  PD.waitingToCall = true;
+
+  pdShow();
+  pdUpdateUI();
+  // Open the first contact's file
+  openContact(PD.current.id);
+  toast(`Power dialer ready — ${PD.queue.length} contacts. Click 📞 Call to begin.`, 'info');
+}
+
+function pdShow() {
+  document.getElementById('power-dialer').classList.add('visible');
+}
+function pdHide() {
+  document.getElementById('power-dialer').classList.remove('visible');
+}
+
+function pdUpdateUI() {
+  const c = PD.current;
+  if (!c) return;
+
+  document.getElementById('pd-contact-name').textContent  = c.name;
+  document.getElementById('pd-contact-phone').textContent = c.phone;
+  document.getElementById('pd-current-num').textContent   = PD.index + 1;
+  document.getElementById('pd-total-num').textContent     = PD.total;
+  document.getElementById('pd-bar-fill').style.width      = `${Math.round(((PD.index) / PD.total) * 100)}%`;
+
+  // Queue list
+  const list = document.getElementById('pd-queue-list');
+  list.innerHTML = PD.queue.map((p, i) => {
+    const cls = i < PD.index ? 'done' : i === PD.index ? 'current' : '';
+    const icon = i < PD.index ? '✓' : i === PD.index ? '▶' : `${i+1}.`;
+    return `<div class="pd-queue-item ${cls}">${icon} ${esc(p.name)}</div>`;
+  }).join('');
+  // Scroll current into view
+  const cur = list.querySelector('.current');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+
+  // Pause button label
+  const pauseBtn = document.getElementById('pd-pause-btn');
+  if (PD.paused) {
+    pauseBtn.textContent = '▶ Resume';
+    pauseBtn.classList.add('primary');
+  } else {
+    pauseBtn.textContent = '⏸ Pause After';
+    pauseBtn.classList.remove('primary');
+  }
+
+  // Call button
+  const callBtn = document.getElementById('pd-call-btn');
+  if (PD.waitingToCall) {
+    callBtn.textContent = '📞 Call';
+    callBtn.classList.add('success');
+    callBtn.disabled = false;
+    pdSetStatus('waiting', 'Ready to call');
+  } else {
+    callBtn.textContent = '📞 Calling…';
+    callBtn.classList.remove('success');
+    callBtn.disabled = true;
+    pdSetStatus('calling', 'On call…');
+  }
+}
+
+function pdSetStatus(type, text) {
+  const dot = document.getElementById('pd-status-dot');
+  dot.className = `pd-status-dot ${type}`;
+  document.getElementById('pd-status-text').textContent = text;
+}
+
+async function pdCall() {
+  const c = PD.current;
+  if (!c || !PD.active) return;
+  PD.waitingToCall = false;
+  pdUpdateUI();
+  await quickCall(c.id, c.phone, c.name);
+}
+
+function pdTogglePause() {
+  PD.paused = !PD.paused;
+  pdUpdateUI();
+  toast(PD.paused ? 'Will pause after this call' : 'Pause cancelled — will auto-advance', 'info');
+}
+
+function pdSkip() {
+  // Mark current as skipped in the list
+  const list = document.getElementById('pd-queue-list');
+  const items = list.querySelectorAll('.pd-queue-item');
+  if (items[PD.index]) items[PD.index].classList.add('skipped');
+
+  // Hang up if a call is in progress
+  if (activeCall) { activeCall.disconnect(); }
+
+  pdAdvance();
+}
+
+function pdAdvance() {
+  PD.index++;
+  if (PD.index >= PD.total) {
+    pdFinish();
+    return;
+  }
+  PD.waitingToCall = true;
+  pdUpdateUI();
+
+  // Open the next contact's file
+  openContact(PD.current.id);
+
+  if (PD.paused) {
+    pdSetStatus('paused', 'Paused — make notes, then Resume');
+    toast(`Paused. Review ${PD.current.name}'s file, then hit Resume.`, 'info');
+  } else {
+    // Auto-dial after a brief moment so the contact panel loads
+    pdSetStatus('waiting', 'Opening next contact…');
+    setTimeout(() => { if (PD.active && !PD.paused && PD.waitingToCall) pdCall(); }, 1800);
+  }
+}
+
+function pdFinish() {
+  PD.active = false;
+  PD.paused = false;
+  pdSetStatus('waiting', `✅ Done — ${PD.total} contacts called`);
+  document.getElementById('pd-call-btn').textContent = '✅ Done';
+  document.getElementById('pd-call-btn').disabled = true;
+  document.getElementById('pd-bar-fill').style.width = '100%';
+  toast(`Power dialer complete — ${PD.total} contacts.`, 'success');
+  setTimeout(pdHide, 4000);
+}
+
+function pdEnd() {
+  if (activeCall) activeCall.disconnect();
+  PD.active = false;
+  pdHide();
+  toast('Power dialer ended', 'info');
+}
+
+// Hook into the existing handleCallEnd so dialer auto-advances
+const _origHandleCallEnd = handleCallEnd;
+handleCallEnd = function() {
+  _origHandleCallEnd.call(this);
+  if (PD.active && !PD.waitingToCall) {
+    setTimeout(pdAdvance, 1200);
+  }
+};
+
+function toggleAddUserForm() {
+  const f = document.getElementById('add-user-form');
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById('new-user-name')?.focus();
+}
+
+// ── FUB IMPORT ──────────────────────────────────────────────────────────────
+// Upload raw CSV file — zero in-browser parsing to avoid tab crash on large exports
+function importFileChosen(input) {
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById('import-filename').textContent = `${file.name} (${(file.size/1024).toFixed(0)} KB)`;
+  document.getElementById('import-dryrun-btn').style.opacity = '1';
+  document.getElementById('import-dryrun-btn').style.fontWeight = '600';
+  document.getElementById('import-commit-btn').style.opacity = '0.4';
+  document.getElementById('import-commit-btn').style.background = 'var(--bg-5)';
+  document.getElementById('import-commit-btn').style.color = 'var(--text-2)';
+  document.getElementById('import-preview').style.display = 'none';
+  document.getElementById('import-status').style.display = 'none';
+}
+
+async function runImport(commit) {
+  const fileInput = document.getElementById('import-file-input');
+  const file = fileInput && fileInput.files[0];
+  if (!file) { 
+    toast('Click "📂 Choose CSV file…" first to select your FUB export', 'error'); 
+    return; 
+  }
+
+  const statusEl  = document.getElementById('import-status');
+  const previewEl = document.getElementById('import-preview');
+  const tbody     = document.getElementById('import-preview-body');
+  const summaryEl = document.getElementById('import-summary');
+  const commitBtn = document.getElementById('import-commit-btn');
+
+  statusEl.style.display = 'block';
+  statusEl.textContent = commit ? '⏳ Importing… this may take a moment for large files' : '⏳ Analysing CSV…';
+  previewEl.style.display = 'none';
+
+  try {
+    const token = localStorage.getItem('connect_token');
+    const form = new FormData();
+    form.append('csv', file);
+    form.append('commit', commit ? '1' : '0');
+
+    const resp = await fetch('/api/import/fub', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(err.error || resp.statusText);
+    }
+    const data = await resp.json();
+
+    // Summary pills
+    const pills = [
+      { label: '✅ New',     val: data.inserted, color: 'var(--green)' },
+      { label: '🔄 Updated', val: data.updated,  color: 'var(--amber)' },
+      { label: '🚫 Blocked', val: data.blocked,  color: 'var(--red)' },
+      { label: '⏭ Skipped', val: data.skipped,  color: 'var(--text-3)' },
+    ];
+    summaryEl.innerHTML = pills.map(p =>
+      `<div style="background:var(--bg-3);border:1px solid var(--border);border-radius:8px;padding:8px 16px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:${p.color}">${p.val}</div>
+        <div style="font-size:11px;color:var(--text-3);font-weight:600;letter-spacing:0.08em">${p.label}</div>
+      </div>`
+    ).join('');
+
+    // Preview rows (first 200)
+    tbody.innerHTML = (data.preview||[]).map(r => {
+      const actionColor = r.action==='insert'?'var(--green)':r.action==='update'?'var(--amber)':'var(--text-3)';
+      const actionLabel = r.action==='insert'?'+ NEW':r.action==='update'?'~ UPDATE':'– SKIP';
+      return `<tr>
+        <td><span style="font-size:11px;font-weight:700;color:${actionColor};letter-spacing:0.06em">${actionLabel}</span></td>
+        <td style="font-weight:500">${esc(r.name||'')}</td>
+        <td><span class="stage-badge stage-${(r.stage||'').toLowerCase().replace(/\s+/g,'-')}">${r.stage||''}</span></td>
+        <td style="font-family:monospace;font-size:12px;color:var(--text-2)">${esc(r.phone||'—')}</td>
+        <td style="font-size:12px;color:var(--text-2)">${esc(r.email||'—')}</td>
+        <td style="font-size:11px;color:var(--text-3)">${esc(r.fub_stage||'')}</td>
+        <td>${r.is_blocked ? '<span style="color:var(--red);font-weight:700;font-size:11px">🚫 YES</span>' : ''}</td>
+      </tr>`;
+    }).join('');
+
+    previewEl.style.display = 'block';
+
+    if (commit) {
+      statusEl.textContent = `✅ Import complete — ${data.inserted} added, ${data.updated} updated.`;
+      commitBtn.disabled = true; commitBtn.style.opacity = '0.4';
+      toast(`Import done! ${data.inserted} new contacts added.`, 'success');
+    } else {
+      statusEl.textContent = `Dry run complete (${data.total} contacts) — review below, then click Commit Import when ready.`;
+      commitBtn.disabled = false;
+      commitBtn.style.opacity = '1';
+      commitBtn.style.background = 'var(--red)';
+      commitBtn.style.color = '#fff';
+    }
+  } catch(e) {
+    statusEl.textContent = '❌ Error: ' + e.message;
+    toast('Import error: ' + e.message, 'error');
+  }
+}
+
+async function submitAddUser() {
+  const name     = document.getElementById('new-user-name')?.value.trim();
+  const email    = document.getElementById('new-user-email')?.value.trim();
+  const password = document.getElementById('new-user-password')?.value;
+  const role     = document.getElementById('new-user-role')?.value || 'agent';
+  if (!name)     { toast('Name is required', 'error'); return; }
+  if (!email)    { toast('Email is required', 'error'); return; }
+  if (!password || password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+  try {
+    await api('/api/admin/agents', 'POST', { name, email, password, role });
+    toast(`User ${name} created ✓`, 'success');
+    loadAdmin();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ── VOICE BAR VISUALIZER ─────────────────────────────────────────────────
+// ── SECURITY ALERT HISTORY VIEW ──────────────────────────────────────────
+async function loadSecurityAlertHistory() {
+  const container = document.getElementById('sec-history-list');
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--text-3);font-size:13px">Loading…</div>';
+
+  try {
+    const events = await api('/api/security/events');
+    if (!events || !events.length) {
+      container.innerHTML = `<div class="sec-hist-empty">
+        <div style="font-size:40px">🛡</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text)">No alerts in the last 30 days</div>
+        <div style="font-size:12px">Watchlist detections from UniFi Protect will appear here</div>
+      </div>`;
+      updateSecBadge(0);
+      return;
+    }
+
+    updateSecBadge(events.length);
+
+    // Group by date
+    const groups = {};
+    events.forEach(e => {
+      const d = new Date(e.triggered_at);
+      const key = d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
+
+    let html = '';
+    for (const [day, items] of Object.entries(groups)) {
+      html += `<div class="sec-hist-day-label">${esc(day)}</div>`;
+      items.forEach(e => {
+        const t = new Date(e.triggered_at);
+        const timeStr = t.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        const agoStr  = timeAgo(t);
+
+        const thumbSrc = e.thumbnail_b64
+          ? (e.thumbnail_b64.startsWith('data:') ? e.thumbnail_b64 : `data:image/jpeg;base64,${e.thumbnail_b64}`)
+          : null;
+        const thumb = thumbSrc
+          ? `<img class="sec-hist-thumb" src="${thumbSrc.substring(0,100000)}" onerror="this.outerHTML='<div class=sec-hist-thumb-ph>📷</div>'">`
+          : `<div class="sec-hist-thumb-ph">📷</div>`;
+
+        // Friendly camera name or formatted MAC
+        const camDisplay = (e.camera_name && e.camera_name !== e.camera_mac)
+          ? e.camera_name
+          : (e.camera_mac ? `Camera (${e.camera_mac.match(/.{2}/g).join(':')})` : 'Unknown Camera');
+
+        const siteLabel = e.site && e.site !== 'Watchlist'
+          ? `<div class="sec-hist-site">📍 ${esc(e.site)}</div>` : '';
+
+        // Person info
+        let personHTML = '';
+        let openBtn = '';
+        if (e.first_name || e.last_name) {
+          const fullName = [e.first_name, e.last_name].filter(Boolean).join(' ');
+          const stageColor = {
+            'Resident':'rgba(0,210,210,0.15)','Evicting':'rgba(255,59,59,0.15)',
+            'Delinquent':'rgba(59,158,255,0.15)','Lead':'rgba(255,200,0,0.12)'
+          }[e.stage] || 'rgba(255,255,255,0.08)';
+          const stageText = {
+            'Resident':'#00d2d2','Evicting':'#ff3b3b','Delinquent':'#3b9eff','Lead':'#ffc800'
+          }[e.stage] || 'var(--text-3)';
+          personHTML = `<div class="sec-hist-name">👤 ${esc(fullName)}</div>
+            ${e.stage ? `<span class="sec-hist-stage" style="background:${stageColor};color:${stageText}">${esc(e.stage)}</span>` : ''}`;
+          openBtn = `<button class="sec-hist-btn open" onclick="navigate('person',${e.person_id})">Open Contact</button>`;
+        } else {
+          personHTML = `<div class="sec-hist-unknown">👤 Unknown individual</div>`;
+        }
+
+        const footageBtn = e.event_link
+          ? `<button class="sec-hist-btn footage" onclick="window.open('${esc(e.event_link)}','_blank')">📹 View Footage</button>`
+          : '';
+
+        html += `<div class="sec-hist-card">
+          <div class="sec-hist-thumb-col">${thumb}</div>
+          <div class="sec-hist-content">
+            <div class="sec-hist-cam-block">
+              ${siteLabel}
+              <div class="sec-hist-cam">📷 ${esc(camDisplay)}</div>
+              <div class="sec-hist-time">${timeStr} &nbsp;·&nbsp; ${agoStr}</div>
+            </div>
+            <div class="sec-hist-divider"></div>
+            <div class="sec-hist-person-row">${personHTML}</div>
+            <div class="sec-hist-actions">${footageBtn}${openBtn}</div>
+          </div>
+        </div>`;
+      });
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div class="sec-hist-empty"><div style="color:#ff3b3b">Failed to load: ${esc(e.message)}</div></div>`;
+  }
+}
+
+function updateSecBadge(count) {
+  const badge = document.getElementById('sec-alert-badge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// Call on login to show badge count immediately
+async function initSecBadge() {
+  try {
+    const events = await api('/api/security/events');
+    updateSecBadge((events || []).length);
+  } catch(e) {}
+}
+
+// ── JIREH SECURITY — SSE + Alert System ────────────────────────────────
+const JirehSecurity = (() => {
+  let _sse = null;
+  let _dismissTimer = null;
+  let _currentEvent = null;
+
+  function connect() {
+    if (_sse) return;
+    const token = localStorage.getItem('crm_token');
+    if (!token) return;
+    _sse = new EventSource('/api/security/stream');
+    _sse.onopen = () => console.log('[Jireh Security] SSE connected');
+    _sse.onerror = () => {
+      console.warn('[Jireh Security] SSE error — reconnecting in 10s');
+      _sse.close(); _sse = null;
+      setTimeout(connect, 10000);
+    };
+    _sse.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload.type === 'poi_detected') {
+          showAlert(payload);
+          // Increment badge immediately
+          const badge = document.getElementById('sec-alert-badge');
+          if (badge) {
+            const cur = parseInt(badge.textContent) || 0;
+            badge.textContent = cur + 1;
+            badge.style.display = '';
+          }
+        }
+      } catch(err) {}
+    };
+  }
+
+  function showAlert(payload) {
+    _currentEvent = payload;
+    clearTimeout(_dismissTimer);
+
+    // Thumbnail
+    const thumbWrap = document.getElementById('sec-thumb-wrap');
+    if (payload.thumbnail) {
+      const prefix = payload.thumbnail.startsWith('data:') ? '' : 'data:image/jpeg;base64,';
+      thumbWrap.innerHTML = `<img class="security-alert-thumb" src="${prefix}${payload.thumbnail}" onerror="this.parentElement.innerHTML='👤'">`;
+    } else {
+      thumbWrap.innerHTML = '👤';
+      thumbWrap.className = 'security-alert-thumb-placeholder';
+    }
+
+    // Camera + site
+    const cam = payload.site ? `${payload.site} · ${payload.cameraName}` : payload.cameraName;
+    document.getElementById('sec-camera').textContent = ' — ' + cam;
+
+    // Time
+    const t = new Date(typeof payload.triggeredAt === 'number' && payload.triggeredAt > 1e12
+      ? payload.triggeredAt : payload.triggeredAt * 1000);
+    document.getElementById('sec-time').textContent = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+    // Person name or unknown
+    const nameEl = document.getElementById('sec-name');
+    const openBtn = document.getElementById('sec-btn-open');
+    if (payload.person?.name) {
+      nameEl.textContent = payload.person.name;
+      nameEl.style.display = '';
+      openBtn.style.display = '';
+    } else {
+      nameEl.textContent = 'Unknown individual';
+      nameEl.style.display = '';
+      openBtn.style.display = 'none';
+    }
+
+    // Show banner
+    document.getElementById('security-alert').classList.add('visible');
+
+    // Flash tab title
+    let flash = false;
+    const titleInterval = setInterval(() => {
+      flash = !flash;
+      document.title = flash ? '🚨 SECURITY ALERT' : 'OKCREAL Connect';
+    }, 600);
+
+    // Auto-dismiss after 45s
+    _dismissTimer = setTimeout(() => {
+      clearInterval(titleInterval);
+      dismiss();
+    }, 45000);
+
+    // Store titleInterval on element so dismiss can clear it
+    document.getElementById('security-alert')._titleInterval = titleInterval;
+
+    // Toast
+    toast(`🚨 POI detected — ${cam}`, 'error');
+  }
+
+  function dismiss() {
+    const el = document.getElementById('security-alert');
+    el.classList.remove('visible');
+    clearTimeout(_dismissTimer);
+    const ti = el._titleInterval;
+    if (ti) { clearInterval(ti); el._titleInterval = null; }
+    TabAlert.clear();
+    _currentEvent = null;
+  }
+
+  return {
+    connect,
+    dismiss,
+    viewEvent() {
+      if (_currentEvent?.eventLink) window.open(_currentEvent.eventLink, '_blank');
+    },
+    openFile() {
+      if (_currentEvent?.person?.id) {
+        navigate('person', _currentEvent.person.id);
+        dismiss();
+      }
+    },
+    current: () => _currentEvent
+  };
+})();
+
+// Global handlers for button onclick
+function secDismiss()   { JirehSecurity.dismiss(); }
+function secViewEvent() { JirehSecurity.viewEvent(); }
+function secOpenFile()  { JirehSecurity.openFile(); }
+
+// ── JIREH ORGANIC — living light organism ───────────────────────────────
+const JirehOrganic = (() => {
+  // Irrational constants — ensures oscillators never re-sync
+  const PHI = 1.6180339887498948, S2 = 1.4142135623730951;
+  const S3 = 1.7320508075688772, S5 = 2.2360679774997896;
+
+  // 5 bioluminescent blobs, each drifting at its own irrational speed
+  const blobs = [
+    { x:0.08, hue:200, speed: 0.000175 * PHI,    hueV:0.09 * S2,  phase:0                },
+    { x:0.30, hue:255, speed:-0.000130 * S3,   hueV:0.11 * PHI,   phase:Math.PI * S2     },
+    { x:0.54, hue:178, speed: 0.000205 / S5,   hueV:0.07 * S3,  phase:Math.PI / PHI      },
+    { x:0.72, hue:232, speed:-0.000158 * S2,   hueV:0.13 / PHI,   phase:Math.PI * 0.7    },
+    { x:0.91, hue:215, speed: 0.000092 * S5,   hueV:0.085* (Math.PI/4), phase:Math.PI*S3*0.5 },
+  ];
+  // Each blob gets 4 oscillator frequencies — all irrational multiples
+  const FREQS = [
+    [PHI,S2,S3,S5,Math.PI],
+    [S3,PHI,Math.PI/4,S2,S5],
+    [S5,Math.PI/3,PHI,S3,S2],
+    [S2,S5,PHI,Math.PI/5,S3],
+    [Math.PI,S3,S2,PHI,S5],
+  ].map((arr,i) => ({
+    f1: 0.000310 * arr[i % 5],
+    f2: 0.000193 * arr[(i+1) % 5],
+    f3: 0.000071 * arr[(i+2) % 5],
+    fw: 0.000417 * arr[(i+3) % 5],
+  }));
+
+  let canvas = null, ctx = null, raf = null, lastTs = 0, t = 0;
+  let _mode = 'offline', _voice = 0, _smooth = 0;
+
+  const PALETTES = {
+    offline:  null,
+    idle:     { base:200, range:80,  sat:90, litBase:40 },
+    busy:     { base:22,  range:38,  sat:95, litBase:46 },
+    ringing:  { base:138, range:55,  sat:95, litBase:48 },
+    voice:    { base:185, range:115, sat:95, litBase:38 },
+  };
+
+  function draw() {
+    if (!canvas || !ctx) return;
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if (_mode === 'offline') {
+      // Ghost-breath: barely alive
+      const v = 0.014 + 0.007 * Math.sin(t * 0.00048 * PHI) * Math.sin(t * 0.00031 * S2);
+      ctx.fillStyle = `rgba(170,0,35,${v.toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+
+    const pal = PALETTES[_mode] || PALETTES.idle;
+
+    // ── VOICE INTENSITY HEAT ────────────────────────────────────────
+    // When on a call, _smooth (0-1) drives hue: blue(200°) → amber(28°) → red(0°)
+    // Power curve so it stays cool at normal speech, burns red when loud
+    let voiceHueBase = pal.base;
+    let voiceHueRange = pal.range;
+    let voiceGlowBoost = 0;
+    if (_mode === 'voice') {
+      const heat = Math.pow(_smooth, 3.2); // steep curve — stays cool until genuinely loud
+      // 0 → cool teal/blue (195), 0.75 → amber (28), 1 → alarm red (0)
+      voiceHueBase  = heat < 0.75
+        ? 195 - (heat / 0.75) * 167          // 195 → 28 in first 75%
+        : 28  - ((heat - 0.75) / 0.25) * 28; // 28 → 0 only in final 25% (yelling)
+      voiceHueRange = 40 + (1 - heat) * 80; // range narrows as it reddens (more focused color)
+      voiceGlowBoost = heat;
+    }
+
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i];
+      const f = FREQS[i];
+
+      // Position: base drift + 3 irrational oscillators (sub-pixel wobble)
+      const dx = b.speed
+        + Math.sin(t * f.f1 + b.phase)           * 0.000088
+        + Math.sin(t * f.f2 + b.phase * PHI)       * 0.000051
+        + Math.sin(t * f.f3 + b.phase * S2)      * 0.000024;
+      b.x = ((b.x + dx) % 1 + 1) % 1;
+
+      // Hue: slow organic walk, 3 oscillators at irrational ratios
+      const dh = b.hueV * (
+        Math.sin(t * f.f1 * 1.73 + b.phase)         * 0.55 +
+        Math.sin(t * f.f2 * 2.41 + b.phase * S3)    * 0.30 +
+        Math.sin(t * f.f3 * 3.14 + b.phase / PHI)     * 0.15
+      );
+      b.hue = (b.hue + dh * 0.019 + 360) % 360;
+
+      // Constrain hue to palette range — voice mode overrides base+range dynamically
+      const baseH  = _mode === 'voice' ? voiceHueBase  : pal.base;
+      const rangeH = _mode === 'voice' ? voiceHueRange : pal.range;
+      const hue = baseH + ((b.hue % rangeH) - rangeH / 2) * 0.75;
+
+      // Width: blobs spread wider when heated — more aggressive presence
+      const heatSpread = _mode === 'voice' ? 1 + voiceGlowBoost * 0.55 : 1;
+      const wf = (0.17 + 0.08 * Math.abs(Math.sin(t * f.fw + b.phase))) * heatSpread;
+      const sigma = wf * W;
+      const xPx = b.x * W;
+
+      // Brightness: hotter = brighter, especially in the red zone
+      const litMod = _mode === 'voice'
+        ? _smooth * 18 + voiceGlowBoost * 20
+        : (_mode === 'ringing' ? 8 * Math.abs(Math.sin(t * 0.0025 * S3)) : 0);
+      const brt = (pal.litBase + litMod) | 0;
+
+      // Alpha: surges at high intensity for warning punch
+      const alBase = _mode === 'voice'
+        ? 0.28 + _smooth * 0.52 + voiceGlowBoost * 0.20
+        : 0.65 + 0.28 * Math.abs(Math.sin(t * f.f2 * 2.1 + b.phase));
+
+      const g = ctx.createLinearGradient(xPx - sigma * 2.4, 0, xPx + sigma * 2.4, 0);
+      const col = `hsla(${hue|0},${pal.sat}%,${brt}%,`;
+      g.addColorStop(0,    'transparent');
+      g.addColorStop(0.3,  col + (alBase * 0.38).toFixed(2) + ')');
+      g.addColorStop(0.5,  col + alBase.toFixed(2) + ')');
+      g.addColorStop(0.7,  col + (alBase * 0.38).toFixed(2) + ')');
+      g.addColorStop(1,    'transparent');
+
+      ctx.fillStyle = g;
+      ctx.fillRect(Math.max(0, xPx - sigma * 2.4), 0, Math.min(W, sigma * 4.8), H);
+    }
+
+    // Subtle top-sheen highlight
+    const sh = ctx.createLinearGradient(0, 0, 0, H);
+    sh.addColorStop(0, 'rgba(255,255,255,0.07)');
+    sh.addColorStop(1, 'rgba(0,0,0,0.12)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function loop(ts) {
+    raf = requestAnimationFrame(loop);
+    const dt = Math.min(ts - lastTs, 50);
+    lastTs = ts;
+    t += dt;
+    _smooth += (_voice - _smooth) * (_voice > _smooth ? 0.18 : 0.055); // fast attack, slow decay
+
+    // Keep canvas sized to its container every frame (handles collapse/expand)
+    if (canvas) {
+      const pw = (canvas.parentElement?.clientWidth  || 64)  | 0;
+      const ph = (canvas.parentElement?.clientHeight || 2)   | 0;
+      if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
+    }
+    draw();
+  }
+
+  return {
+    init() {
+      canvas = document.getElementById('jireh-canvas');
+      if (!canvas) return;
+      ctx = canvas.getContext('2d');
+      raf = requestAnimationFrame(loop);
+    },
+    setMode(m) { _mode = m; },
+    setVoice(v) { _voice = Math.max(0, Math.min(1, v)); },
+  };
+})();
+
+// ── JIREH — voice-reactive energy field ─────────────────────────────────
+const VoiceViz = (() => {
+  let _ctx = null, _merger = null, _analyserL = null, _analyserR = null;
+  let _raf = null, _dataL = null, _dataR = null, _active = false;
+
+  function levelToStyle(level) {
+    const l = Math.pow(Math.min(level, 1), 0.5);
+
+    // Blue (quiet) → cyan → white → orange → red (loud)
+    // Interpolate hue: 220° (blue) at 0 → 0° (red) at 1
+    const hue    = Math.round(220 - l * 220);
+    const sat    = 90 + Math.round(l * 10);
+    const lit    = 45 + Math.round(l * 25);
+    const spread = 1 + Math.round(l * 20);
+    const blur   = 2 + Math.round(l * 28);
+    const alpha  = 0.3 + l * 0.7;
+    // scaleY so the fill visually pulses in height without moving anything
+    const scaleY = 1 + l * 2.5;
+
+    return {
+      bg:     `hsl(${hue}, ${sat}%, ${lit}%)`,
+      shadow: `0 0 ${blur}px ${spread}px hsla(${hue}, ${sat}%, ${lit}%, ${alpha.toFixed(2)})`,
+      scaleY
+    };
+  }
+
+  function readLevel(analyser, data) {
+    analyser.getByteFrequencyData(data);
+    const bins = data.length;
+    // Focus on voice band ~300Hz–4kHz
+    const s = Math.floor(bins * 0.04), e = Math.floor(bins * 0.50);
+    let sum = 0;
+    for (let i = s; i < e; i++) sum += data[i];
+    return (e > s) ? sum / (e - s) : 0;
+  }
+
+  function tick() {
+    if (!_active) return;
+    let level = 0;
+    if (_analyserL && _dataL) level = Math.max(level, readLevel(_analyserL, _dataL));
+    if (_analyserR && _dataR) level = Math.max(level, readLevel(_analyserR, _dataR));
+    level = level / 90; // normalize — higher divisor means louder needed to hit 1.0
+    JirehOrganic.setVoice(level);
+    _raf = requestAnimationFrame(tick);
+  }
+
+  function makeAnalyser(ctx, stream) {
+    if (!stream) return [null, null];
+    try {
+      const src = ctx.createMediaStreamSource(stream);
+      const an  = ctx.createAnalyser();
+      an.fftSize = 512;
+      an.smoothingTimeConstant = 0.5;
+      src.connect(an);
+      // Never connect to destination — no echo/feedback
+      return [an, new Uint8Array(an.frequencyBinCount)];
+    } catch(e) { return [null, null]; }
+  }
+
+  return {
+    start(call) {
+      if (_active) return;
+      try {
+        _ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Tap the call's own streams — no new permission prompt, no conflict
+        const localStream  = call?.getLocalStream?.();
+        const remoteStream = call?.getRemoteStream?.();
+
+        [_analyserL, _dataL] = makeAnalyser(_ctx, localStream);
+        [_analyserR, _dataR] = makeAnalyser(_ctx, remoteStream);
+
+        if (!_analyserL && !_analyserR) {
+          // Neither stream available — silent fallback pulse so bar still animates
+          console.warn('[Jireh] No call streams available, using fallback');
+        }
+
+        _active = true;
+        const bar = document.getElementById('conn-status-bar');
+        if (bar) {
+          bar.classList.remove('connected','status-busy','status-offline');
+          bar.classList.add('voice-active');
+        }
+        JirehOrganic.setMode('voice');
+        tick();
+        console.log('[Jireh] Active — local:', !!localStream, 'remote:', !!remoteStream);
+      } catch(e) {
+        console.warn('[Jireh] Start error:', e.message);
+      }
+    },
+
+    stop() {
+      _active = false;
+      if (_raf) { cancelAnimationFrame(_raf); _raf = null; }
+      try { _ctx?.close(); } catch(e) {}
+      _ctx = _merger = _analyserL = _analyserR = _dataL = _dataR = null;
+      JirehOrganic.setVoice(0);
+
+      const bar = document.getElementById('conn-status-bar');
+      if (bar) { bar.classList.remove('voice-active'); }
+
+      updateConnBarForStatus(userStatus);
+      console.log('[Jireh] Stopped');
+    }
+  };
+})();
+
+// ── CONNECTION STATUS ───────────────────────────────────────────────────
+(function() {
+  const bar = () => document.getElementById('conn-status-bar');
+  function setConnected(online) {
+    const el = bar();
+    if (!el) return;
+    if (online) {
+      el.classList.add('connected');
+      el.title = 'Connected';
+      if (!el.classList.contains('voice-active') && !el.classList.contains('status-busy') && !el.classList.contains('status-offline')) {
+        JirehOrganic.setMode('idle');
+      }
+    } else {
+      el.classList.remove('connected');
+      el.title = 'Offline — check your connection';
+      if (!el.classList.contains('voice-active')) JirehOrganic.setMode('offline');
+    }
+  }
+
+  // Initial state
+  setConnected(navigator.onLine);
+
+  // Browser events
+  window.addEventListener('online',  () => setConnected(true));
+  window.addEventListener('offline', () => setConnected(false));
+
+  // Active heartbeat — ping the health endpoint every 20s
+  async function heartbeat() {
+    // Don't overwrite busy/offline status colours
+    if (window.userStatus === 'busy' || window.userStatus === 'offline' || document.getElementById('conn-status-bar')?.classList.contains('voice-active')) return;
+    try {
+      const r = await fetch('/health', { method: 'GET', cache: 'no-store' });
+      setConnected(r.ok);
+    } catch(e) {
+      setConnected(false);
+    }
+  }
+  heartbeat();
+  setInterval(heartbeat, 20000);
+})();
+
+// ── TWILIO ─────────────────────────────────────────────────────────────
+let _twilioInitPromise = null; // prevent double-init races
+
+async function initTwilio() {
+  if (userStatus === 'offline') return;
+  // If already initializing, return the same promise
+  if (_twilioInitPromise) return _twilioInitPromise;
+
+  _twilioInitPromise = _doInitTwilio().finally(() => { _twilioInitPromise = null; });
+  return _twilioInitPromise;
+}
+
+async function _doInitTwilio() {
+  try {
+    if (typeof Twilio === 'undefined') {
+      console.warn('[Twilio] SDK not loaded — check network');
+      throw new Error('Twilio SDK failed to load. Check your connection and reload.');
+    }
+
+    const data = await api('/api/twilio/token', 'GET');
+    if (!data?.token) {
+      const msg = data?.error || 'No token returned';
+      console.warn('[Twilio] Token error:', msg);
+      throw new Error('Phone token error: ' + msg);
+    }
+
+    // Tear down any existing device cleanly
+    if (twilioDevice) {
+      try { twilioDevice.destroy(); } catch(e) {}
+      twilioDevice = null;
+      twilioReady  = false;
+    }
+
+    twilioDevice = new Twilio.Device(data.token, {
+      logLevel: 1,
+      codecPreferences: ['opus', 'pcmu'],
+      allowIncomingWhileBusy: true,
+    });
+
+    twilioDevice.on('registered', () => {
+      twilioReady = true;
+      console.log('[Twilio] Device ready ✅');
+    });
+    twilioDevice.on('error', err => {
+      const msg = err?.message || String(err);
+      twilioReady = false;
+      console.warn('[Twilio] Device error:', msg);
+      // Auto re-init on token expiry
+      if (msg.includes('token') || msg.includes('expired') || msg.includes('31204') || msg.includes('31205')) {
+        console.log('[Twilio] Token expired — re-initializing in 2s');
+        setTimeout(() => { twilioDevice = null; initTwilio(); }, 2000);
       }
     });
-  } catch(e) {
-    console.error('[Dashboard]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+    twilioDevice.on('tokenWillExpire', () => {
+      console.log('[Twilio] Token expiring — refreshing');
+      api('/api/twilio/token', 'GET').then(d => {
+        if (d?.token) twilioDevice.updateToken(d.token);
+      }).catch(()=>{});
+    });
+    twilioDevice.on('incoming', handleIncomingCall);
+    twilioDevice.on('disconnect', handleCallEnd);
 
-// =============================================================================
-// SPA CATCH-ALL — serve index.html for /file/:id, /inbox, /admin, etc.
-// =============================================================================
-// SPA CATCH-ALL — must be AFTER all API routes
-// Serves index.html for every frontend path: /dashboard, /showings, /inbox, etc.
-// =============================================================================
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// =============================================================================
-// START
-// =============================================================================
-// ── Verify DB connectivity before running migrations ──
-async function checkDB() {
-  try {
-    await pool.query('SELECT 1');
-    console.log('✅ Database connected');
+    twilioDevice.register();
   } catch(e) {
-    console.error('❌ FATAL: Cannot connect to database:', e.message);
-    console.error('   Check DATABASE_URL in Railway environment variables.');
-    process.exit(1);
+    console.warn('[Twilio] Init failed:', e.message);
+    throw e; // re-throw so quickCall can surface it
   }
 }
 
-checkDB().then(() => initDB()).then(() => {
-  // Showing followup text poller — runs every 2 minutes
-  setInterval(pollShowingFollowups, 2 * 60 * 1000);
-  setTimeout(pollShowingFollowups, 10000); // first check 10s after boot
+// Wait for Twilio device to become ready — with one auto-retry
+async function waitForTwilioReady(timeoutMs = 12000) {
+  // Already ready
+  if (twilioReady) return;
 
-  app.listen(PORT, () => {
-    console.log(`OKCREAL Connect running on port ${PORT}`);
-    console.log(`Twilio Account:  ${process.env.TWILIO_ACCOUNT_SID ? '✓' : '✗'}`);
-    console.log(`Twilio API Key:  ${process.env.TWILIO_API_KEY_SID ? '✓' : '✗'}`);
-    console.log(`Twilio Auth Tok: ${process.env.TWILIO_AUTH_TOKEN ? '✓' : '✗ (not needed if API Key set)'}`);
-    console.log(`Twilio RecAuth:  ${twilioBasicAuth() ? '✓ ready' : '✗ NO CREDENTIALS - recordings will fail'}`);
-    console.log(`Deepgram: ${process.env.DEEPGRAM_API_KEY ? '✓' : '✗'}`);
-    console.log(`Grok:     ${process.env.GROK_API_KEY ? '✓' : '✗'}`);
+  // Wait for registration
+  await new Promise((resolve, reject) => {
+    const start = Date.now();
+    const check = setInterval(() => {
+      if (twilioReady) { clearInterval(check); resolve(); }
+      else if (Date.now() - start > timeoutMs) {
+        clearInterval(check);
+        reject(new Error('_timeout_'));
+      }
+    }, 250);
+  }).catch(async (e) => {
+    if (e.message !== '_timeout_') throw e;
+    // One retry — destroy and re-init
+    console.warn('[Twilio] Registration timed out — retrying');
+    if (twilioDevice) { try { twilioDevice.destroy(); } catch(_){} twilioDevice = null; twilioReady = false; }
+    await initTwilio();
+    await new Promise((resolve, reject) => {
+      const start2 = Date.now();
+      const check2 = setInterval(() => {
+        if (twilioReady) { clearInterval(check2); resolve(); }
+        else if (Date.now() - start2 > 8000) {
+          clearInterval(check2);
+          reject(new Error('Phone unavailable — verify Twilio credentials & TwiML App in Railway env vars'));
+        }
+      }, 250);
+    });
   });
-}); // end checkDB().then(() => initDB()).then
+}
+
+// ── INCOMING CALL — matched contact tracking ─────────────────────────
+let _incomingMatchedPerson = null; // person object if number matched, null if not
+let _incomingFromNumber   = null;  // raw From number for tray actions
+
+function handleIncomingCall(conn) {
+  activeCall = conn;
+  _incomingFromNumber = conn.parameters?.From || null;
+  const from = _incomingFromNumber || 'Unknown';
+  const normalizedFrom = from.replace(/\D/g,'');
+
+  // Match against ALL phone numbers (all_phones array added by server, or fallback to p.phone)
+  _incomingMatchedPerson = peopleData.find(p => {
+    const phones = p.all_phones?.length ? p.all_phones : (p.phone ? [p.phone] : []);
+    return phones.some(ph => ph.replace(/\D/g,'') === normalizedFrom);
+  }) || null;
+
+  const callerName = _incomingMatchedPerson
+    ? [_incomingMatchedPerson.first_name, _incomingMatchedPerson.last_name].filter(Boolean).join(' ')
+    : from;
+
+  showCallBar('ringing', callerName, from, _incomingMatchedPerson);
+  if (window.neonGlow) window.neonGlow.ringing();
+  JirehOrganic.setMode('ringing');
+  TabAlert.ringing(callerName);
+
+  conn.on('disconnect', handleCallEnd);
+  conn.on('cancel', handleCallEnd);
+  conn.on('reject', handleCallEnd);
+
+  try {
+    const audio = new AudioContext();
+    const osc = audio.createOscillator();
+    osc.connect(audio.destination); osc.frequency.value = 440;
+    osc.start(); osc.stop(audio.currentTime + 0.3);
+  } catch(e) {}
+}
+
+function showCallBar(state, name, number, matchedPerson = null) {
+  const bar  = document.getElementById('call-bar');
+  bar.className = '';
+
+  // Name — clickable if matched in BOTH ringing and active states
+  const nameEl = document.getElementById('call-contact-name');
+  nameEl.textContent = name || 'Unknown';
+  nameEl.className = 'call-contact-name';
+  nameEl.onclick = null;
+  if (matchedPerson) {
+    nameEl.classList.add('linked');
+    nameEl.title = 'Open contact file';
+    nameEl.onclick = (e) => { e.stopPropagation(); openContact(matchedPerson.id); };
+  }
+
+  document.getElementById('call-number').textContent = formatPhone(number || '');
+  document.getElementById('call-avatar').textContent = (name||'?').substring(0,2).toUpperCase();
+  document.getElementById('call-status-label').textContent = state === 'ringing' ? '📲 Incoming Call' : '📞 On Call';
+  document.getElementById('call-actions-incoming').style.display = state === 'ringing' ? 'flex' : 'none';
+  document.getElementById('call-actions-active').style.display  = state === 'active'  ? 'flex' : 'none';
+  document.getElementById('call-timer').style.display = state === 'active' ? 'inline' : 'none';
+
+  // Unknown caller tray — show during RINGING and ACTIVE if no match
+  const tray = document.getElementById('call-unknown-tray');
+  if (!matchedPerson && _incomingFromNumber) {
+    document.getElementById('call-unknown-tray-label').textContent = `Unknown: ${formatPhone(_incomingFromNumber)}`;
+    if (state === 'ringing') {
+      document.getElementById('call-tray-search-wrap').style.display = 'none';
+      document.getElementById('call-tray-search').value = '';
+      document.getElementById('call-tray-results').innerHTML = '';
+    }
+    tray.style.display = '';
+  } else {
+    tray.style.display = 'none';
+  }
+
+  requestAnimationFrame(() => bar.classList.add('visible', state));
+}
+
+function acceptCall() {
+  if (!activeCall) return;
+  activeCall.accept();
+  clearTimeout(_idleTimer); // no auto-blur during calls
+  if (window.neonGlow) window.neonGlow.callActive();
+
+  const name = document.getElementById('call-contact-name').textContent;
+  const num  = document.getElementById('call-number').textContent;
+
+  // Pass matched person so name stays clickable during active call
+  showCallBar('active', name, num, _incomingMatchedPerson);
+  startCallTimer();
+  VoiceViz.start(activeCall);
+  TabAlert.active(name);
+
+  // Auto-navigate to contact file when answering a known caller
+  if (_incomingMatchedPerson) {
+    openContact(_incomingMatchedPerson.id);
+  }
+  // Unknown caller tray stays visible (was set during ringing) — agent can still create/link
+}
+
+function declineCall() { if (activeCall) activeCall.reject(); hideCallBar(); TabAlert.clear(); }
+function endCall() { if (activeCall) activeCall.disconnect(); }
+
+// ── UNKNOWN CALLER TRAY ─────────────────────────────────────────────
+function callTrayDismiss() {
+  document.getElementById('call-unknown-tray').style.display = 'none';
+}
+
+function callTrayCreateNew() {
+  callTrayDismiss();
+  // Open Add Contact modal pre-filled with the phone number
+  const phone = _incomingFromNumber ? _incomingFromNumber.replace(/\D/g,'') : '';
+  showAddPersonModal(phone);
+}
+
+function callTrayAddToExisting() {
+  document.getElementById('call-tray-search-wrap').style.display = '';
+  document.getElementById('call-tray-search').focus();
+}
+
+function callTraySearch(q) {
+  const results = document.getElementById('call-tray-results');
+  if (!q.trim()) { results.innerHTML = ''; return; }
+  const matches = peopleData
+    .filter(p => {
+      const full = [p.first_name, p.last_name].filter(Boolean).join(' ').toLowerCase();
+      return full.includes(q.toLowerCase());
+    })
+    .slice(0, 8);
+  if (!matches.length) {
+    results.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:6px">No matches</div>';
+    return;
+  }
+  results.innerHTML = matches.map(p => {
+    const name = [p.first_name, p.last_name].filter(Boolean).join(' ');
+    return `<div class="call-tray-result" onclick="callTrayAttachNumber(${p.id},'${esc(name)}')">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--bg-5);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">${name.substring(0,2).toUpperCase()}</div>
+      <span>${esc(name)}</span>
+      <span class="call-tray-result-stage">${esc(p.stage||'')}</span>
+    </div>`;
+  }).join('');
+}
+
+async function callTrayAttachNumber(personId, personName) {
+  if (!_incomingFromNumber) return;
+  try {
+    const phone = _incomingFromNumber.replace(/\D/g,'');
+    await api(`/api/people/${personId}/phones`, 'POST', { phone, label: 'mobile', is_primary: false });
+    callTrayDismiss();
+    toast(`Number added to ${personName}`, 'success');
+    openContact(personId);
+    // Refresh people list so future calls match
+    loadPeople(currentListId);
+  } catch(e) {
+    toast('Failed to add number: ' + e.message, 'error');
+  }
+}
+
+// showAddPersonModal pre-filled with phone
+function showAddPersonModal(prefillPhone) {
+  // Reuse existing add person flow but pre-fill phone if modal exists
+  const modal = document.getElementById('add-person-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    const phoneInput = modal.querySelector('input[name="phone"], #new-person-phone');
+    if (phoneInput && prefillPhone) phoneInput.value = prefillPhone;
+  } else {
+    // Fallback: navigate to people and open add
+    navigate('people', 'all');
+    setTimeout(() => {
+      const addBtn = document.querySelector('[onclick*="showAdd"], [onclick*="addPerson"]');
+      if (addBtn) addBtn.click();
+    }, 300);
+  }
+}
+
+
+
+function handleCallEnd() {
+  if (!activeCall) return;
+  activeCall = null;
+  VoiceViz.stop();
+  TabAlert.clear();
+  if (window.neonGlow) window.neonGlow.callEnd();
+  stopCallTimer();
+  const duration = document.getElementById('call-timer').textContent;
+  hideCallBar();
+  toast('Call ended · ' + duration, 'info');
+  if (currentPersonId) triggerAiSummary();
+  _idleReset(); // restart idle timer now that call is done
+}
+
+function hideCallBar() {
+  const bar = document.getElementById('call-bar');
+  bar.classList.remove('visible');
+  document.getElementById('call-unknown-tray').style.display = 'none';
+  _incomingMatchedPerson = null;
+  _incomingFromNumber = null;
+  setTimeout(() => { bar.className = ''; }, 350);
+}
+
+function startCallTimer() {
+  callSeconds = 0;
+  callTimerInterval = setInterval(() => {
+    callSeconds++;
+    document.getElementById('call-timer').textContent = formatDuration(callSeconds);
+  }, 1000);
+}
+function stopCallTimer() { clearInterval(callTimerInterval); }
+
+function toggleMute() {
+  isMuted = !isMuted;
+  if (activeCall) activeCall.mute(isMuted);
+  const btn = document.getElementById('mute-btn');
+  btn.classList.toggle('active', isMuted);
+  btn.textContent = isMuted ? '🔇 Unmute' : '🎤 Mute';
+}
+function toggleHold() {
+  isOnHold = !isOnHold;
+  const btn = document.getElementById('hold-btn');
+  btn.classList.toggle('active', isOnHold);
+  btn.textContent = isOnHold ? '▶ Resume' : '⏸ Hold';
+  toast(isOnHold ? 'Call on hold' : 'Call resumed', 'info');
+}
+
+async function quickCall(personId, phone, name) {
+  if (!phone) { toast('No phone number', 'error'); return; }
+
+  // Ensure Twilio is initialized and ready before connecting
+  if (!twilioDevice || !twilioReady) {
+    const toastId = toast('☎ Connecting phone…', 'info', 15000);
+    try {
+      if (!twilioDevice) await initTwilio();
+      await waitForTwilioReady();
+    } catch(e) {
+      toast(e.message, 'error', 8000);
+      return;
+    }
+  }
+
+  try {
+    activeCall = await twilioDevice.connect({ params: { To: phone, From: '+14052562614', personId: String(personId), agentId: String(currentUser?.id || '') } });
+    if (window.neonGlow) window.neonGlow.callActive();
+    showCallBar('active', name, phone);
+    startCallTimer();
+    activeCall.on('disconnect', handleCallEnd);
+    setTimeout(() => VoiceViz.start(activeCall), 600);
+    TabAlert.active(name);
+  } catch(e) {
+    toast('Call failed: ' + e.message, 'error');
+  }
+}
+
+async function triggerAiSummary() {
+  if (!currentPersonId) return;
+  // Recording webhook fires async — poll until transcript/summary lands (up to 45s)
+  document.body.classList.add('ai-thinking');
+  const start = Date.now();
+  const poll = async () => {
+    try {
+      const activities = await api(`/api/activities?personId=${currentPersonId}`);
+      const el = document.getElementById('timeline-scroll');
+      if (el) el.innerHTML = renderTimelineHTML(activities || []);
+      // Keep polling until a call activity has a real body (not placeholder)
+      const callAct = (activities || []).find(a => a.type === 'call' && a.body && a.body !== 'Transcript processing...' && a.body.length > 5);
+      if (callAct || Date.now() - start > 45000) {
+        document.body.classList.remove('ai-thinking');
+      } else {
+        setTimeout(poll, 5000);
+      }
+    } catch(e) { document.body.classList.remove('ai-thinking'); }
+  };
+  setTimeout(poll, 8000); // give Twilio time to fire recording webhook
+}
+
+// ── PHONE NUMBERS ───────────────────────────────────────────────────────
+let _personPhones = [];  // cached for current contact
+
+async function loadPhones(personId) {
+  try {
+    const phones = await api(`/api/people/${personId}/phones`);
+    _personPhones = phones || [];
+    renderPhonesList(personId, phones);
+  } catch(e) { _personPhones = []; }
+}
+
+function renderPhonesList(personId, phones) {
+  const el = document.getElementById(`phones-list-${personId}`);
+  if (!el) return;
+  if (!phones || !phones.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">No numbers yet</div>';
+    return;
+  }
+  el.innerHTML = phones.map(p => `
+    <div class="phone-row ${p.is_bad ? 'bad-number' : ''}" id="phone-row-${p.id}">
+      ${p.is_primary ? '<span class="phone-primary-dot" title="Primary"></span>' : '<span style="width:6px;flex-shrink:0"></span>'}
+      <span class="phone-num-text" onclick="pickCallSinglePhone('${personId}','${p.phone}')">${formatPhone(p.phone)}</span>
+      <span class="phone-label-badge">${p.label||'mobile'}</span>
+      ${p.is_bad ? '<span class="phone-bad-icon" title="Bad number">⚠</span>' : ''}
+      <button class="phone-action-btn" onclick="toggleBadPhone(${p.id},'${personId}',${p.is_bad})" title="${p.is_bad ? 'Mark as good' : 'Mark as bad/disconnected'}">
+        ${p.is_bad ? '✓' : '⚠'}
+      </button>
+      ${!p.is_primary ? `<button class="phone-action-btn" onclick="makePrimaryPhone(${p.id},'${personId}')" title="Set as primary">★</button>` : ''}
+      <button class="phone-action-btn" onclick="deletePhone(${p.id},'${personId}')" title="Remove" style="color:var(--red)">✕</button>
+    </div>
+  `).join('');
+}
+
+function toggleAddPhone(personId) {
+  const f = document.getElementById(`add-phone-form-${personId}`);
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById(`new-phone-num-${personId}`)?.focus();
+}
+
+async function addPhone(personId) {
+  const numEl = document.getElementById(`new-phone-num-${personId}`);
+  const labelEl = document.getElementById(`new-phone-label-${personId}`);
+  const phone = numEl?.value?.trim();
+  if (!phone) { toast('Enter a phone number', 'error'); return; }
+  try {
+    const isFirst = _personPhones.length === 0;
+    await api(`/api/people/${personId}/phones`, 'POST', { phone, label: labelEl?.value||'mobile', isPrimary: isFirst });
+    numEl.value = '';
+    toast('Phone added ✓', 'success');
+    loadPhones(personId);
+    toggleAddPhone(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deletePhone(phoneId, personId) {
+  try {
+    await api(`/api/people/${personId}/phones/${phoneId}`, 'DELETE');
+    loadPhones(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleBadPhone(phoneId, personId, isBad) {
+  try {
+    await api(`/api/people/${personId}/phones/${phoneId}`, 'PUT', { isBad: !isBad });
+    loadPhones(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function makePrimaryPhone(phoneId, personId) {
+  try {
+    await api(`/api/people/${personId}/phones/${phoneId}`, 'PUT', { isPrimary: true });
+    loadPhones(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── PHONE PICKER (call/text with multiple phones) ──────────────────────
+function showPhonePicker(personId, personName, mode) {
+  const phones = _personPhones.filter(p => !p.is_bad);
+  if (phones.length === 0) { toast('No valid phone numbers on file', 'error'); return; }
+  if (phones.length === 1) {
+    if (mode === 'call') quickCall(personId, phones[0].phone, personName);
+    else openTextComposeWithPhone(phones[0].phone);
+    return;
+  }
+  // Show picker
+  const existing = document.getElementById('phone-picker-overlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'phone-picker-overlay';
+  overlay.className = 'phone-picker-overlay';
+  overlay.innerHTML = `
+    <div class="phone-picker-box">
+      <div class="phone-picker-title">${mode === 'call' ? '📞 Choose number to call' : '💬 Choose number to text'}</div>
+      ${phones.map(p => `
+        <div class="phone-picker-option" onclick="pickPhone('${personId}','${p.phone}','${esc(personName)}','${mode}')">
+          <span style="font-family:var(--font-mono);font-size:14px;font-weight:600;flex:1">${formatPhone(p.phone)}</span>
+          <span class="phone-label-badge">${p.label||'mobile'}</span>
+          ${p.is_primary ? '<span style="color:var(--green);font-size:11px">Primary</span>' : ''}
+        </div>
+      `).join('')}
+      <button onclick="document.getElementById('phone-picker-overlay').remove()" style="margin-top:10px;width:100%;background:var(--bg-4);border:1px solid var(--border);color:var(--text-2);border-radius:8px;padding:8px;font-size:13px;cursor:pointer">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function pickPhone(personId, phone, name, mode) {
+  document.getElementById('phone-picker-overlay')?.remove();
+  if (mode === 'call') quickCall(personId, phone, name);
+  else openTextComposeWithPhone(phone);
+}
+
+function pickPhoneAndCall(personId, personName) {
+  if (_personPhones.length > 0) showPhonePicker(personId, personName, 'call');
+  else {
+    const p = peopleData.find(p=>String(p.id)===String(personId));
+    if (p?.phone) quickCall(personId, p.phone, personName);
+    else toast('No phone number on file', 'error');
+  }
+}
+
+function pickPhoneAndText(personId, personName) {
+  if (_personPhones.length > 0) showPhonePicker(personId, personName, 'text');
+  else openTextCompose();
+}
+
+function pickCallSinglePhone(personId, phone) {
+  const p = peopleData.find(x=>String(x.id)===String(personId));
+  quickCall(personId, phone, p ? [p.first_name, p.last_name].filter(Boolean).join(' ') : '');
+}
+
+function openTextComposeWithPhone(phone) {
+  // Store the selected phone so submitCompose can use it
+  window._selectedTextPhone = phone;
+  openTextCompose();
+}
+
+// ── ADDRESS ──────────────────────────────────────────────────────────────
+let _addressAutocomplete = null;
+
+function toggleEditAddress(personId) {
+  const disp = document.getElementById(`address-display-${personId}`);
+  const edit = document.getElementById(`address-edit-${personId}`);
+  const btn  = document.getElementById(`edit-addr-btn-${personId}`);
+  if (!disp || !edit) return;
+  const isEditing = edit.style.display !== 'none';
+  disp.style.display = isEditing ? 'block' : 'none';
+  edit.style.display = isEditing ? 'none' : 'block';
+  btn.textContent = isEditing ? 'Edit' : 'Cancel';
+  if (!isEditing) initAddressAutocomplete(personId);
+}
+
+function initAddressAutocomplete(personId) {
+  if (!window.google?.maps?.places) return;
+  const input = document.getElementById(`addr-street-${personId}`);
+  if (!input || input._autocompleteInit) return;
+  input._autocompleteInit = true;
+  const ac = new google.maps.places.Autocomplete(input, {
+    types: ['address'],
+    componentRestrictions: { country: 'us' }
+  });
+  ac.addListener('place_changed', () => {
+    const place = ac.getPlace();
+    if (!place.address_components) return;
+    let streetNum = '', route = '', city = '', state = '', zip = '';
+    for (const c of place.address_components) {
+      if (c.types.includes('street_number')) streetNum = c.short_name;
+      if (c.types.includes('route')) route = c.long_name;
+      if (c.types.includes('locality')) city = c.long_name;
+      if (c.types.includes('administrative_area_level_1')) state = c.short_name;
+      if (c.types.includes('postal_code')) zip = c.short_name;
+    }
+    input.value = [streetNum, route].filter(Boolean).join(' ');
+    const cityEl = document.getElementById(`addr-city-${personId}`);
+    const stateEl = document.getElementById(`addr-state-${personId}`);
+    const zipEl = document.getElementById(`addr-zip-${personId}`);
+    if (cityEl) cityEl.value = city;
+    if (stateEl) stateEl.value = state;
+    if (zipEl) zipEl.value = zip;
+  });
+}
+
+async function saveAddress(personId) {
+  const address = document.getElementById(`addr-street-${personId}`)?.value?.trim()||'';
+  const city    = document.getElementById(`addr-city-${personId}`)?.value?.trim()||'';
+  const state   = document.getElementById(`addr-state-${personId}`)?.value?.trim().toUpperCase()||'';
+  const zip     = document.getElementById(`addr-zip-${personId}`)?.value?.trim()||'';
+  try {
+    await api(`/api/people/${personId}`, 'PUT', { address: address||null, city: city||null, state: state||null, zip: zip||null });
+    toast('Address saved ✓', 'success');
+    // Refresh display
+    const dispEl = document.getElementById(`address-display-${personId}`);
+    if (dispEl) {
+      dispEl.innerHTML = (address||city||state||zip) ? `
+        <div style="font-size:12px;color:var(--text-2);line-height:1.6">
+          ${address ? `<div>${esc(address)}</div>` : ''}
+          ${(city||state||zip) ? `<div>${[city,state,zip].filter(Boolean).join(', ')}</div>` : ''}
+        </div>` : '<div style="font-size:12px;color:var(--text-3)">No address on file</div>';
+    }
+    toggleEditAddress(personId);
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── HOUSEHOLD ─────────────────────────────────────────────────────────────
+async function loadHousehold(personId) {
+  try {
+    const rels = await api(`/api/people/${personId}/relationships`);
+    renderHouseholdList(personId, rels||[]);
+  } catch(e) {}
+}
+
+function renderHouseholdList(personId, rels) {
+  const el = document.getElementById(`household-list-${personId}`);
+  const btn = document.getElementById(`hh-timeline-btn-${personId}`);
+  if (!el) return;
+  if (!rels.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">No household members linked</div>';
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  if (btn) btn.style.display = 'block';
+  el.innerHTML = rels.map(r => {
+    const hhName = [r.first_name, r.last_name].filter(Boolean).join(' ');
+    const initials = hhName.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    return `
+      <div class="household-member" onclick="navigate('contact',${r.related_id})">
+        <div class="hh-avatar">${initials}</div>
+        <div style="flex:1">
+          <div class="hh-name">${esc(hhName)}</div>
+          <div class="hh-label">${r.label||'Household'} · ${r.stage||'Lead'}</div>
+        </div>
+        <button class="hh-remove" onclick="event.stopPropagation();removeHouseholdMember(${r.id},'${personId}')" title="Unlink">✕</button>
+      </div>`;
+  }).join('');
+}
+
+function toggleAddHousehold(personId) {
+  const f = document.getElementById(`add-household-form-${personId}`);
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById(`hh-search-${personId}`)?.focus();
+}
+
+let _hhSearchTimer = null;
+async function searchHouseholdCandidates(personId) {
+  clearTimeout(_hhSearchTimer);
+  _hhSearchTimer = setTimeout(async () => {
+    const q = document.getElementById(`hh-search-${personId}`)?.value?.trim();
+    const resultsEl = document.getElementById(`hh-results-${personId}`);
+    if (!q || q.length < 2) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+    try {
+      const { people } = await api(`/api/people?search=${encodeURIComponent(q)}&limit=10`);
+      if (!resultsEl) return;
+      const filtered = (people||[]).filter(p => String(p.id) !== String(personId));
+      if (!filtered.length) { resultsEl.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:6px">No results</div>'; return; }
+      resultsEl.innerHTML = filtered.map(p => {
+        const n = [p.first_name,p.last_name].filter(Boolean).join(' ');
+        return `<div onclick="addHouseholdMember('${personId}',${p.id},'${esc(n)}')"
+          style="padding:7px 8px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:8px"
+          onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background=''">
+          <div style="width:24px;height:24px;border-radius:50%;background:var(--bg-5);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700">${n.substring(0,2).toUpperCase()}</div>
+          <div><div style="font-weight:600">${esc(n)}</div><div style="color:var(--text-3);font-size:11px">${formatPhone(p.phone)}</div></div>
+        </div>`;
+      }).join('');
+    } catch(e) {}
+  }, 300);
+}
+
+async function addHouseholdMember(personId, relatedId, relatedName) {
+  try {
+    await api(`/api/people/${personId}/relationships`, 'POST', { relatedPersonId: relatedId, label: 'household' });
+    toast(`Linked ${relatedName} to household ✓`, 'success');
+    toggleAddHousehold(personId);
+    loadHousehold(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function removeHouseholdMember(relId, personId) {
+  try {
+    await api(`/api/people/${personId}/relationships/${relId}`, 'DELETE');
+    loadHousehold(personId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function viewHouseholdTimeline(personId) {
+  try {
+    const activities = await api(`/api/people/${personId}/household-activities`);
+    const scroll = document.getElementById('timeline-scroll');
+    if (!scroll) return;
+    scroll.innerHTML = `
+      <div style="padding:8px 16px 4px;font-size:11px;font-weight:700;color:var(--blue);letter-spacing:0.1em;text-transform:uppercase">
+        👥 Household Timeline
+        <button onclick="loadActivities(currentPersonId)" style="float:right;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px">← Back to contact</button>
+      </div>
+      ${renderTimelineHTML(activities)}`;
+  } catch(e) { toast('Could not load household timeline', 'error'); }
+}
+
+// ── DELETE LEAD ────────────────────────────────────────────────────────
+function confirmDeleteLead(personId, name) {
+  // Build inline confirm modal
+  const existing = document.getElementById('delete-confirm-overlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'delete-confirm-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:28px 32px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+      <div style="font-size:28px;margin-bottom:12px;text-align:center">⚠️</div>
+      <div style="font-family:var(--font-cond);font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:var(--text)">Delete Forever?</div>
+      <div style="font-size:13px;color:var(--text-2);text-align:center;margin-bottom:24px;line-height:1.5">
+        Are you sure you want to permanently delete <strong style="color:var(--text)">${name}</strong>?<br>
+        This will remove all calls, texts, and notes. <strong style="color:#f87171">This cannot be undone.</strong>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button onclick="document.getElementById('delete-confirm-overlay').remove()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="executDeleteLead('${personId}')" style="background:#dc2626;border:none;color:#fff;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer">Yes, Delete Forever</button>
+      </div>
+    </div>`;
+  // Close on backdrop click
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+async function executDeleteLead(personId) {
+  document.getElementById('delete-confirm-overlay')?.remove();
+  try {
+    await api(`/api/people/${personId}`, 'DELETE');
+    toast('Lead deleted', 'info');
+    // Go back to people list
+    peopleData = peopleData.filter(p => p.id !== personId);
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-people')?.classList.add('active');
+    document.getElementById('header-title').textContent = 'All People';
+    loadPeople(currentListId);
+  } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── MODALS & MISC ──────────────────────────────────────────────────────
+// ── SMART LIST PANEL ─────────────────────────────────────────────────────────
+const STAGES = ['Lead','Resident','Delinquent','Evicting','Past Tenant','Property Owner','Contractor','Caseworker'];
+
+function openNewListModal() { openSmartListPanel(null); }
+
+function openSmartListPanel(listId) {
+  // Make sure people view is active
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-people').classList.add('active');
+
+  const panel = document.getElementById('sl-panel');
+  const titleEl = document.getElementById('sl-panel-title');
+  const nameInput = document.getElementById('sl-name-input');
+  const tagsInput = document.getElementById('sl-tags-input');
+  const delBtn = document.getElementById('sl-del-btn');
+  document.getElementById('sl-editing-id').value = listId || '';
+
+  // Reset stage chips
+  document.querySelectorAll('#sl-stage-grid .sl-stage-chip input').forEach(cb => {
+    cb.checked = false;
+    cb.closest('.sl-stage-chip').classList.remove('selected');
+  });
+
+  if (listId) {
+    const list = smartLists.find(l => String(l.id) === String(listId));
+    if (!list) return;
+    titleEl.textContent = list.name.toUpperCase();
+    nameInput.value = list.name;
+    // Populate stages
+    const f = list.filters || {};
+    const stages = f.stages || (f.stage ? [f.stage] : []);
+    document.querySelectorAll('#sl-stage-grid .sl-stage-chip input').forEach(cb => {
+      if (stages.includes(cb.value)) {
+        cb.checked = true;
+        cb.closest('.sl-stage-chip').classList.add('selected');
+      }
+    });
+    // Populate tags
+    const tags = f.tags || [];
+    tagsInput.value = tags.join('\n');
+    delBtn.style.display = 'block';
+  } else {
+    titleEl.textContent = 'NEW LIST';
+    nameInput.value = '';
+    tagsInput.value = '';
+    delBtn.style.display = 'none';
+  }
+
+  panel.classList.add('open');
+  nameInput.focus();
+}
+
+function closeSmartListPanel() {
+  document.getElementById('sl-panel').classList.remove('open');
+}
+
+async function saveSmartListPanel() {
+  const nameInput = document.getElementById('sl-name-input');
+  const tagsInput = document.getElementById('sl-tags-input');
+  const editingId = document.getElementById('sl-editing-id').value;
+  const name = nameInput.value.trim();
+  if (!name) { toast('List name is required', 'error'); nameInput.focus(); return; }
+
+  // Collect selected stages
+  const stages = [];
+  document.querySelectorAll('#sl-stage-grid .sl-stage-chip input:checked').forEach(cb => stages.push(cb.value));
+
+  // Collect tags (one per line)
+  const tags = tagsInput.value.split('\n').map(t => t.trim()).filter(Boolean);
+
+  const filters = {};
+  if (stages.length === 1) filters.stage = stages[0];
+  else if (stages.length > 1) filters.stages = stages;
+  if (tags.length) filters.tags = tags;
+
+  try {
+    let saved;
+    if (editingId) {
+      saved = await api(`/api/smart-lists/${editingId}`, 'PUT', { name, filters });
+      const idx = smartLists.findIndex(l => String(l.id) === String(editingId));
+      if (idx >= 0) smartLists[idx] = saved;
+      toast('List updated', 'success');
+    } else {
+      saved = await api('/api/smart-lists', 'POST', { name, filters });
+      smartLists.push(saved);
+      toast('List created', 'success');
+    }
+    renderSmartListsNav();
+    closeSmartListPanel();
+    navigate('people', saved.id);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteSmartListFromPanel() {
+  const editingId = document.getElementById('sl-editing-id').value;
+  if (!editingId) return;
+  const list = smartLists.find(l => String(l.id) === String(editingId));
+  if (!confirm(`Delete "${list?.name}"? This cannot be undone.`)) return;
+  await deleteSmartList(editingId, list?.name, true);
+}
+
+function slNavGo(dir) {
+  const newIdx = slNavIndex + dir;
+  if (newIdx < 0 || newIdx >= slNavPeople.length) return;
+  slNavIndex = newIdx;
+  openContact(slNavPeople[newIdx].id, true);
+}
+
+async function deleteSmartList(listId, name, fromPanel=false) {
+  if (!fromPanel && !confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  try {
+    await api(`/api/smart-lists/${listId}`, 'DELETE');
+    smartLists = smartLists.filter(l => String(l.id) !== String(listId));
+    renderSmartListsNav();
+    closeSmartListPanel();
+    if (String(currentListId) === String(listId)) navigate('people', 'all');
+    toast('List deleted', 'success');
+  } catch(e) { toast(e.message, 'error'); }
+}
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openNewContactModal() { openModal('modal-new-contact'); }
+
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
+});
+
+// ── TOAST ──────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icon = type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ';
+  el.innerHTML = `<span>${icon}</span><span>${esc(msg)}</span>`;
+  container.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(8px)'; el.style.transition = 'all 0.3s'; setTimeout(() => el.remove(), 300); }, 3000);
+}
+
+// ── HELPERS ────────────────────────────────────────────────────────────
+function esc(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatPhone(phone) {
+  if (!phone) return '—';
+  const d = String(phone).replace(/\D/g,'');
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  if (d.length === 11 && d[0]==='1') return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+  return phone;
+}
+function formatDuration(secs) {
+  const m = Math.floor(secs/60), s = secs%60;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+function formatDate(d) {
+  if (!d) return '';
+  try { return new Date(d).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'}); } catch(e) { return d; }
+}
+function timeAgo(dateStr) {
+  const diff = (Date.now() - new Date(dateStr)) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
+  return new Date(dateStr).toLocaleDateString('en-US', {month:'short',day:'numeric'});
+}
+function parseTags(tags) {
+  if (!tags) return [];
+  if (Array.isArray(tags)) return tags;
+  try { const p = JSON.parse(tags); return Array.isArray(p) ? p : []; } catch(e) { return String(tags).split(',').map(t=>t.trim()).filter(Boolean); }
+}
+function stageClass(stage) {
+  const s = (stage||'').toLowerCase();
+  if (s === 'evicting')          return 'stage-evicting';
+  if (s === 'delinquent')        return 'stage-delinquent';
+  if (s === 'resident')          return 'stage-resident';
+  if (s === 'caseworker')        return 'stage-caseworker';
+  if (s === 'contractor')        return 'stage-contractor';
+  if (s === 'property owner')    return 'stage-owner';
+  if (s.includes('past'))        return 'stage-past';
+  return 'stage-lead'; // Lead + anything else
+}
+
+function getStageBannerClass(stage) {
+  const s = (stage||'').toLowerCase();
+  if (s === 'resident')   return 'banner-resident';
+  if (s === 'evicting')   return 'banner-evicting';
+  if (s === 'delinquent') return 'banner-delinquent';
+  return null;
+}
+function tagClass(tag) {
+  const t = (tag||'').toLowerCase();
+  if (t.includes('eviction')) return 'tag-eviction';
+  if (t.includes('delinquent')) return 'tag-delinquent';
+  if (t.includes('committed')) return 'tag-committed';
+  return '';
+}
+async function retryTranscript(callId, btn) {
+  if (!callId) return;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    await api(`/api/twilio/recording/retry/${callId}`, 'POST');
+    toast('Retrying transcript — refreshing in 15s...', 'info');
+    setTimeout(() => loadActivities(currentPersonId), 15000);
+  } catch(e) {
+    toast('Retry failed: ' + e.message, 'error');
+    btn.textContent = '↻ Retry';
+    btn.disabled = false;
+  }
+}
+
+function formatTranscript(transcript) {
+  if (!transcript) return '';
+  if (typeof transcript === 'string') {
+    return transcript.split('\n').map(line => {
+      const m = line.match(/^(Agent|Tenant|Caller|Speaker \d+):\s*(.+)/i);
+      if (m) {
+        const spk = /^(tenant|caller)$/i.test(m[1]) ? (window._currentContactName || m[1]) : m[1];
+        return `<div class="transcript-line"><span class="transcript-speaker">${esc(spk)}:</span> ${esc(m[2])}</div>`;
+      }
+      return `<div class="transcript-line">${esc(line)}</div>`;
+    }).join('');
+  }
+  return esc(JSON.stringify(transcript));
+}
+</script>
+
+<!-- NEON GLOW CONTROLLER -->
+<script>
+(function() {
+  const glowEl = document.getElementById('app-glow-border');
+  let flashTimer = null;
+  let callGlowActive = false;
+
+  function setGlow(cls, duration) {
+    if (!glowEl) return;
+    // Clear any active flash timer
+    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
+    // Remove all glow classes
+    glowEl.className = '';
+    if (!cls) return;
+    // Force reflow so animation restarts
+    void glowEl.offsetWidth;
+    glowEl.classList.add(cls);
+    if (duration) {
+      flashTimer = setTimeout(() => {
+        // Only clear if call isn't active
+        if (!callGlowActive) glowEl.className = '';
+      }, duration);
+    }
+  }
+
+  // Expose globally
+  window.neonGlow = {
+    ringing()      { callGlowActive = true;  setGlow('glow-ringing'); },
+    callActive()   { callGlowActive = true;  setGlow('glow-active-call'); },
+    callEnd()      { callGlowActive = false; setGlow(null); },
+    smsSent()      { if (!callGlowActive) setGlow('glow-sms-sent', 2000); },
+    smsFailed()    { if (!callGlowActive) setGlow('glow-sms-failed', 2000); },
+    smsReceived()  { if (!callGlowActive) setGlow('glow-sms-received', 2000); },
+  };
+})();
+</script>
+
+<!-- SHOWINGS MODULE -->
+<script>
+// ── SHOWINGS STATE ──
+let _shProps = [], _shList = [], _shPropSelected = null, _shFeedbackId = null, _shVerdict = null, _shCats = [];
+let _rrByProp = {}; // rent roll units indexed by unit name for current property
+let _rrOccupancy = {}; // property -> { occupied, vacant, total_units } from rent roll
+
+const SH_CATS = ['smell','paint/walls','cleanliness','carpet/flooring','appliances','kitchen',
+  'bathroom','lighting','layout','curb appeal','parking','noise','neighborhood','price','other'];
+
+function renderShowingsView() {
+  const root = document.getElementById('showings-root');
+  if (!root) return;
+  root.innerHTML = `
+    <div class="sh-header">
+      <div>
+        <div class="sh-title">SHOWINGS</div>
+        <div class="sh-subtitle">PROPERTY TOUR INTELLIGENCE</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-left:auto">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="openFeedbackReport()" style="background:transparent;border:1px solid #6366f1;color:#6366f1;padding:6px 12px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;border-radius:4px;transition:all 0.15s;white-space:nowrap" onmouseover="this.style.background='rgba(99,102,241,0.15)'" onmouseout="this.style.background='transparent'">
+            📊 FEEDBACK REPORT
+          </button>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+            <label class="sh-upload-btn" id="rr-upload-lbl" style="background:var(--text-3);font-size:9px;padding:6px 12px">
+              🏘 RENT ROLL
+              <input type="file" accept=".xlsx" style="display:none" onchange="rrUpload(this)">
+            </label>
+            <div id="rr-last-upload-info" style="font-family:var(--font-mono);font-size:8px;color:var(--text-3);letter-spacing:0.06em"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+            <label class="sh-upload-btn" id="sh-upload-lbl">
+              📁 SHOWINGS
+              <input type="file" accept=".xlsx" style="display:none" onchange="shUpload(this)">
+            </label>
+            <div id="sh-last-upload-info" style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:0.08em;text-align:right"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="sh-body">
+      <div class="sh-props-wrap" id="sh-props-wrap">
+        <div id="sh-props"></div>
+      </div>
+      <div class="sh-panel-wrap" id="sh-panel-wrap" style="display:none">
+        <div id="sh-panel"></div>
+      </div>
+    </div>`;
+  shLoadProps();
+  shCheckLastUpload();
+  rrCheckLastUpload();
+}
+
+async function shUpload(input) {
+  const file = input.files[0]; if (!file) return;
+  const lbl = document.getElementById('sh-upload-lbl');
+  const setLabel = txt => {
+    if (!lbl) return;
+    const tn = [...lbl.childNodes].find(n => n.nodeType === 3);
+    if (tn) tn.nodeValue = '\n          ' + txt + '\n          ';
+  };
+  setLabel('⏳ PARSING...');
+  if (lbl) { lbl.style.pointerEvents='none'; lbl.style.opacity='0.7'; }
+
+  try {
+    // Parse Excel entirely in the browser — no server xlsx dependency
+    if (typeof XLSX === 'undefined') throw new Error('SheetJS not loaded — refresh the page');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+    // Find header row
+    let hi = -1;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] && raw[i][0] === 'Guest Card Name') { hi = i; break; }
+    }
+    if (hi === -1) throw new Error('Invalid file — "Guest Card Name" header not found. Is this the AppFolio showings export?');
+
+    const h = raw[hi];
+    const ci = k => h.indexOf(k);
+    const cols = {
+      name: ci('Guest Card Name'), email: ci('Email'), phone: ci('Phone Number'),
+      property: ci('Property'), unit: ci('Showing Unit'), time: ci('Showing Time'),
+      status: ci('Status'), type: ci('Type'), assigned: ci('Assigned User'),
+      desc: ci('Description'), lastActDate: ci('Last Activity Date'), lastActType: ci('Last Activity Type'),
+    };
+
+    const toDate = v => {
+      if (!v) return null;
+      if (v instanceof Date) return isNaN(v) ? null : v.toISOString();
+      if (typeof v === 'number') {
+        // Excel serial number
+        const d = new Date(Math.round((v - 25569) * 86400000));
+        return isNaN(d) ? null : d.toISOString();
+      }
+      const d = new Date(v);
+      return isNaN(d) ? null : d.toISOString();
+    };
+
+    const rows = [];
+    for (let i = hi + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || !r[cols.name]) continue;
+      const showingTime = toDate(r[cols.time]);
+      if (!showingTime) continue;
+      // Skip property-group header rows
+      if (r[cols.email] === null && r[cols.phone] === null && r[cols.property] === null) continue;
+      rows.push({
+        guest_name:         String(r[cols.name]).trim(),
+        email:              r[cols.email]  || null,
+        phone:              r[cols.phone]  || null,
+        property:           r[cols.property] || null,
+        unit:               r[cols.unit]   || null,
+        showing_time:       showingTime,
+        status:             r[cols.status] || null,
+        showing_type:       r[cols.type]   || null,
+        assigned_user:      r[cols.assigned] || null,
+        description:        r[cols.desc]   || null,
+        last_activity_date: toDate(r[cols.lastActDate]),
+        last_activity_type: r[cols.lastActType] || null,
+      });
+    }
+
+    if (!rows.length) throw new Error('No valid showings found in file');
+    setLabel('⏳ SAVING ' + rows.length + ' ROWS...');
+
+    const resp = await fetch('/api/showings/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+      body: JSON.stringify({ rows, filename: file.name })
+    });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.error || 'Server error');
+
+    const lcMsg = d.leadsCreated > 0 ? ` · ${d.leadsCreated} new lead${d.leadsCreated>1?'s':''} created` : (d.leadsMatched > 0 ? ` · ${d.leadsMatched} matched` : '');
+    toast(`✅ Imported ${d.inserted} showings${lcMsg}${d.skipped ? ' (' + d.skipped + ' skipped)' : ''}`, 'success');
+    shLoadProps();
+    shCheckLastUpload();
+  } catch(e) {
+    console.error('[shUpload]', e);
+    toast('Upload error: ' + e.message, 'error');
+  } finally {
+    setLabel('📁 UPLOAD DAILY REPORT');
+    if (lbl) { lbl.style.pointerEvents=''; lbl.style.opacity=''; lbl.classList.remove('sh-btn-flash'); }
+    input.value = '';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENT ROLL — upload + stale check
+// ═══════════════════════════════════════════════════════════════
+async function rrUpload(input) {
+  const file = input.files[0]; if (!file) return;
+  const lbl = document.getElementById('rr-upload-lbl');
+  const setLabel = txt => {
+    if (!lbl) return;
+    const tn = [...lbl.childNodes].find(n => n.nodeType === 3);
+    if (tn) tn.nodeValue = '\n              ' + txt + '\n              ';
+  };
+  setLabel('⏳ PARSING...');
+  if (lbl) { lbl.style.pointerEvents='none'; lbl.style.opacity='0.7'; }
+
+  try {
+    if (typeof XLSX === 'undefined') throw new Error('SheetJS not loaded — refresh');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+    // Find header row
+    let hi = -1;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] && raw[i][0] === 'Unit' && raw[i][3] === 'Tenant') { hi = i; break; }
+    }
+    if (hi === -1) throw new Error('Invalid file — "Unit" header not found. Is this the AppFolio rent roll export?');
+
+    const h = raw[hi];
+    const ci = k => h.indexOf(k);
+    const cols = {
+      unit: ci('Unit'), tags: ci('Tags'), bdba: ci('BD/BA'), tenant: ci('Tenant'),
+      status: ci('Status'), sqft: ci('Sqft'), mktRent: ci('Market Rent'),
+      rent: ci('Rent'), deposit: ci('Deposit'), leaseFrom: ci('Lease From'),
+      leaseTo: ci('Lease To'), moveIn: ci('Move-in'), moveOut: ci('Move-out'),
+      pastDue: ci('Past Due'), nsf: ci('NSF Count'), late: ci('Late Count'),
+    };
+
+    const toDate = v => {
+      if (!v) return null;
+      if (v instanceof Date) return isNaN(v) ? null : v.toISOString();
+      if (typeof v === 'number') { const d = new Date(Math.round((v-25569)*86400000)); return isNaN(d)?null:d.toISOString(); }
+      const d = new Date(v); return isNaN(d) ? null : d.toISOString();
+    };
+
+    const rows = [];
+    let currentProperty = '';
+    const SKIP_STATUSES = new Set(['100.0% Occupied','50.0% Occupied','90.0% Occupied','91.8% Occupied','68.1% Occupied']);
+
+    for (let i = hi + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || !r[cols.unit]) continue;
+      const statusVal = String(r[cols.status] || '');
+      // Property header row: unit col has property name, rest empty
+      if (!r[cols.tenant] && !r[cols.status] && !r[cols.rent]) {
+        currentProperty = String(r[cols.unit]).trim(); continue;
+      }
+      // Summary rows (e.g. "4 Units ... 100.0% Occupied")
+      if (SKIP_STATUSES.has(statusVal) || statusVal.includes('% Occupied')) continue;
+      if (!r[cols.status]) continue;
+      rows.push({
+        property:    currentProperty,
+        unit:        String(r[cols.unit]).trim(),
+        tenant_name: r[cols.tenant] ? String(r[cols.tenant]).trim() : null,
+        status:      statusVal || null,
+        bedrooms:    r[cols.bdba] || null,
+        sqft:        r[cols.sqft] ? parseInt(r[cols.sqft]) : null,
+        market_rent: r[cols.mktRent] || null,
+        rent:        r[cols.rent] || null,
+        deposit:     r[cols.deposit] || null,
+        lease_from:  toDate(r[cols.leaseFrom]),
+        lease_to:    toDate(r[cols.leaseTo]),
+        move_in:     toDate(r[cols.moveIn]),
+        move_out:    toDate(r[cols.moveOut]),
+        past_due:    r[cols.pastDue] || 0,
+        nsf_count:   r[cols.nsf] || 0,
+        late_count:  r[cols.late] || 0,
+      });
+    }
+
+    if (!rows.length) throw new Error('No unit rows found in rent roll');
+    setLabel('⏳ SAVING ' + rows.length + ' UNITS...');
+
+    const resp = await fetch('/api/rent-roll/upload', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+authToken },
+      body: JSON.stringify({ rows, filename: file.name })
+    });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.error || 'Server error');
+
+    toast(`✅ Rent roll updated — ${d.upserted} units`, 'success');
+    rrCheckLastUpload();
+    // Refresh current property view if open
+    if (_shPropSelected) shOpenProp(_shPropSelected);
+    shLoadProps(); // refresh occupancy on cards
+  } catch(e) {
+    console.error('[rrUpload]', e);
+    toast('Rent roll error: ' + e.message, 'error');
+  } finally {
+    setLabel('🏘 RENT ROLL');
+    if (lbl) { lbl.style.pointerEvents=''; lbl.style.opacity=''; lbl.classList.remove('sh-btn-flash'); }
+    input.value = '';
+  }
+}
+
+async function rrCheckLastUpload() {
+  const info = document.getElementById('rr-last-upload-info');
+  const lbl  = document.getElementById('rr-upload-lbl');
+  if (!info) return;
+  try {
+    const d = await api('/api/rent-roll/last-upload');
+    if (!d) {
+      info.innerHTML = '<span style="color:var(--red)">⚠ Not uploaded</span>';
+      if (lbl) lbl.classList.add('sh-btn-flash');
+      return;
+    }
+    const hoursAgo = (Date.now() - new Date(d.created_at).getTime()) / 3600000;
+    const when = hoursAgo < 1 ? 'just now' : hoursAgo < 24 ? Math.floor(hoursAgo)+'h ago' : Math.floor(hoursAgo/24)+'d ago';
+    const stale = hoursAgo > 24;
+    info.innerHTML = stale
+      ? `<span style="color:var(--red)">⚠ ${when}</span>`
+      : `<span style="color:var(--green)">✓ ${when} · ${d.unit_count} units</span>`;
+    if (lbl) lbl.classList.toggle('sh-btn-flash', stale);
+  } catch(e) {}
+}
+
+async function shCheckLastUpload() {
+  const info = document.getElementById('sh-last-upload-info');
+  const lbl  = document.getElementById('sh-upload-lbl');
+  if (!info) return;
+  try {
+    const d = await api('/api/showings/last-upload');
+    if (!d) {
+      info.innerHTML = '<span style="color:var(--red)">⚠ No report uploaded yet</span>';
+      if (lbl) lbl.classList.add('sh-btn-flash');
+      return;
+    }
+    const uploaded = new Date(d.created_at);
+    const hoursAgo = (Date.now() - uploaded.getTime()) / 3600000;
+    const when = hoursAgo < 1
+      ? 'just now'
+      : hoursAgo < 24
+        ? `${Math.floor(hoursAgo)}h ago`
+        : `${Math.floor(hoursAgo/24)}d ago`;
+    const stale = hoursAgo > 24;
+    info.innerHTML = stale
+      ? `<span style="color:var(--red)">⚠ Last upload: ${when} — update needed</span>`
+      : `<span style="color:var(--green)">✓ Updated ${when}</span>${d.record_count?' · '+d.record_count+' showings':''}`;
+    if (lbl) lbl.classList.toggle('sh-btn-flash', stale);
+  } catch(e) { info.textContent = ''; }
+}
+
+async function shLoadProps() {
+  const el = document.getElementById('sh-props'); if (!el) return;
+  el.innerHTML = '<div style="padding:24px;color:var(--text-3);font-family:var(--font-mono);font-size:11px">Loading...</div>';
+  try {
+    const [_propsData, _occData] = await Promise.all([
+      api('/api/showings/properties'),
+      api('/api/rent-roll/occupancy').catch(()=>[])
+    ]);
+    _shProps = _propsData;
+    _rrOccupancy = {};
+    for (const o of _occData) _rrOccupancy[o.property] = o;
+    if (!_shProps.length) {
+      el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-3)">
+        <div style="font-size:44px;margin-bottom:14px">🏠</div>
+        <div style="font-family:var(--font-cond);font-size:20px;letter-spacing:0.1em;color:var(--text-2)">NO SHOWINGS YET</div>
+        <div style="font-family:var(--font-mono);font-size:11px;margin-top:8px">Upload the daily AppFolio report to get started</div>
+      </div>`;
+      return;
+    }
+    el.innerHTML = _shProps.map(shPropCard).join('');
+    if (_shPropSelected) shOpenProp(_shPropSelected);
+  } catch(e) { el.innerHTML = `<div style="color:var(--red);padding:20px">${e.message}</div>`; }
+}
+
+function shPropCard(p) {
+  const name = p.property.split(' - ')[0];
+  const pct = p.completed > 0 ? Math.round((p.feedback_count/p.completed)*100) : 0;
+  const active = _shPropSelected === p.property;
+  return `<div class="sh-prop-card${active?' active':''}" data-prop="${esc(p.property)}" onclick="shOpenProp(this.dataset.prop)">
+    <div class="sh-prop-header">
+      <div class="sh-prop-address">
+        <div class="sh-prop-name">${esc(name)}</div>
+        <div class="sh-prop-meta">${p.total_showings} showings &nbsp;·&nbsp; ${p.feedback_count} rated &nbsp;·&nbsp; ${pct}% coverage${(_rrOccupancy[p.property] ? ' &nbsp;·&nbsp; <span style="color:var(--green)">'+_rrOccupancy[p.property].occupied+'/'+_rrOccupancy[p.property].total_units+' occupied</span>' : '')}</div>
+      </div>
+      <div class="sh-prop-stats">
+        <div class="sh-stat total"><span class="sh-stat-val">${p.total_showings}</span><span class="sh-stat-lbl">Total</span></div>
+        ${p.go_count>0    ?`<div class="sh-stat go">   <span class="sh-stat-val">${p.go_count}</span>   <span class="sh-stat-lbl">Go</span></div>`:''}
+        ${p.maybe_count>0 ?`<div class="sh-stat maybe"><span class="sh-stat-val">${p.maybe_count}</span><span class="sh-stat-lbl">Maybe</span></div>`:''}
+        ${p.nogo_count>0  ?`<div class="sh-stat nogo"> <span class="sh-stat-val">${p.nogo_count}</span> <span class="sh-stat-lbl">No-Go</span></div>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function shCloseProp() {
+  _shPropSelected = null;
+  const propsWrap = document.getElementById('sh-props-wrap');
+  const panelWrap = document.getElementById('sh-panel-wrap');
+  if (propsWrap) propsWrap.style.display = '';
+  if (panelWrap) panelWrap.style.display = 'none';
+  const el = document.getElementById('sh-props');
+  if (el) el.innerHTML = _shProps.map(shPropCard).join('');
+}
+
+async function shOpenProp(property) {
+  _shPropSelected = property;
+  // Highlight selected card
+  const el = document.getElementById('sh-props'); if (el) el.innerHTML = _shProps.map(shPropCard).join('');
+  // Switch to panel view
+  const propsWrap = document.getElementById('sh-props-wrap');
+  const panelWrap = document.getElementById('sh-panel-wrap');
+  const panel     = document.getElementById('sh-panel');
+  if (!panel || !propsWrap || !panelWrap) return;
+  propsWrap.style.display = 'none';
+  panelWrap.style.display = '';
+  panel.innerHTML = '<div style="padding:40px;color:var(--text-3);font-family:var(--font-mono);font-size:11px;text-align:center">Loading showings…</div>';
+  try {
+    const [showings, trends, rrUnits] = await Promise.all([
+      api('/api/showings?property='+encodeURIComponent(property)),
+      api('/api/showings/trends?property='+encodeURIComponent(property)),
+      api('/api/rent-roll/by-property?property='+encodeURIComponent(property)).catch(()=>[])
+    ]);
+    _rrByProp = {};
+    for (const u of rrUnits) _rrByProp[(u.unit||'').toLowerCase().trim()] = u;
+    _shList = showings;
+    panel.innerHTML = shBuildPanel(property, showings, trends);
+  } catch(e) { panel.innerHTML = `<div style="color:var(--red);padding:20px">${e.message}</div>`; }
+}
+
+function shBuildPanel(property, showings, trends) {
+  const name = property.split(' - ')[0];
+  const completed = showings.filter(s=>s.status==='Completed');
+  const scheduled = showings.filter(s=>s.status==='Scheduled');
+
+  // Trends bar chart
+  let trendsHTML = '';
+  if (trends.total > 0) {
+    const max = trends.topIssues[0]?.count || 1;
+    const verdictBar = `<div style="display:flex;gap:6px;margin-bottom:14px">
+      ${trends.go>0    ?`<div style="flex:${trends.go};background:var(--green-dim);border:1px solid rgba(0,232,122,0.3);border-radius:4px;padding:6px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--green)"><b>${trends.go}</b><br>GO</div>`:''}
+      ${trends.maybe>0 ?`<div style="flex:${trends.maybe};background:var(--amber-dim);border:1px solid rgba(255,140,0,0.3);border-radius:4px;padding:6px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--amber)"><b>${trends.maybe}</b><br>MAYBE</div>`:''}
+      ${trends.nogo>0  ?`<div style="flex:${trends.nogo};background:var(--red-dim);border:1px solid rgba(232,0,58,0.3);border-radius:4px;padding:6px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--red)"><b>${trends.nogo}</b><br>NO-GO</div>`:''}
+    </div>`;
+    const bars = trends.topIssues.slice(0,8).map(t=>`
+      <div class="sh-trend-bar">
+        <div class="sh-trend-label">${esc(t.cat)}</div>
+        <div class="sh-trend-track"><div class="sh-trend-fill" style="width:${Math.round((t.count/max)*100)}%"></div></div>
+        <div class="sh-trend-count">${t.count}×</div>
+      </div>`).join('');
+    const notes = trends.feedback.filter(f=>f.notes).slice(0,5).map(f=>
+      `<div style="padding:8px 12px;border-left:2px solid var(--red);margin-bottom:6px;font-size:12px;color:var(--text-2)">"${esc(f.notes)}" <span style="color:var(--text-3);font-size:10px;font-family:var(--font-mono)">— ${esc(f.agent_name||'Agent')}</span></div>`
+    ).join('');
+    trendsHTML = `<div class="sh-trends">
+      <div class="sh-trends-title">📊 OWNER REPORT — ${trends.total} RATED TOURS</div>
+      ${verdictBar}
+      ${trends.topIssues.length?`<div class="sh-trends-title" style="margin-bottom:6px">TOP ISSUES FLAGGED</div>${bars}`:''}
+      ${notes?`<div class="sh-trends-title" style="margin-top:12px;margin-bottom:6px">RECENT AGENT NOTES</div>${notes}`:''}
+    </div>`;
+  }
+
+  const renderSection = (list, icon, title) => !list.length ? '' : `
+    <div class="sh-list-panel">
+      <div class="sh-list-header"><span class="sh-list-title">${icon} ${title} (${list.length})</span></div>
+      ${list.map(s => {
+        const v = s.verdict||'none';
+        const dt = s.showing_time ? new Date(s.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}) : '—';
+        const cats = (s.categories||[]).join(', ');
+        // Check rent roll status for this showing's unit
+        const rrKey = (s.unit||'').toLowerCase().trim();
+        const rrUnit = _rrByProp[rrKey] || Object.values(_rrByProp).find(u =>
+          u.unit && s.unit && u.unit.toLowerCase().trim() === rrKey
+        );
+        const isRented = rrUnit && rrUnit.status === 'Current';
+        const isVacant = rrUnit && rrUnit.status && rrUnit.status.includes('Vacant');
+        const isNotice = rrUnit && rrUnit.status && rrUnit.status.includes('Notice');
+        const rentBadge = isRented
+          ? `<span class="sh-rented-badge">✓ RENTED${rrUnit.tenant_name?' · '+esc(rrUnit.tenant_name.split(' ').slice(0,2).join(' ')):''}</span>`
+          : isNotice ? `<span class="sh-notice-badge">⚡ NOTICE</span>`
+          : isVacant ? `<span class="sh-vacant-badge">◯ VACANT</span>` : '';
+
+        // Source transparency badge
+        const srcBadge = s.feedback_source === 'prospect'
+          ? `<span style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.08em;color:var(--green);background:rgba(0,232,122,0.08);border:1px solid rgba(0,232,122,0.25);padding:1px 7px;border-radius:10px">📱 PROSPECT FILLED OUT</span>`
+          : s.feedback_source === 'agent'
+          ? `<span style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.08em;color:var(--text-3);background:var(--bg-3);border:1px solid var(--border);padding:1px 7px;border-radius:10px">✏️ AGENT · ${esc(s.agent_name||'')}</span>`
+          : '';
+
+        return `<div class="sh-showing-row" onclick="shOpenFeedback('${s.id}')">
+          <div style="flex:1;min-width:0">
+            <div class="sh-showing-name">${esc(s.guest_name||'—')}</div>
+            <div class="sh-showing-meta">${esc(dt)}${s.unit?' · '+esc(s.unit):''}${s.showing_type?' · '+esc(s.showing_type):''}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center">
+              ${rentBadge}
+              ${srcBadge}
+            </div>
+            ${cats?`<div style="font-size:9px;color:var(--text-3);font-family:var(--font-mono);margin-top:3px">${esc(cats)}</div>`:''}
+            ${s.notes?`<div style="font-size:11px;color:var(--text-2);margin-top:3px;font-style:italic">"${esc(s.notes)}"</div>`:''}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+            <div class="sh-verdict-chip ${v==='no-go'?'nogo':v}">${v==='no-go'?'NO-GO':v==='none'?'RATE':v.toUpperCase()}</div>
+            <button onclick="event.stopPropagation();shCopyFeedbackLink('${s.id}',this)" title="Copy feedback link to send to prospect"
+              style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:2px 7px;font-family:var(--font-mono);font-size:7px;letter-spacing:0.08em;cursor:pointer;border-radius:3px;transition:all 0.15s;white-space:nowrap"
+              onmouseover="this.style.borderColor='#6366f1';this.style.color='#6366f1'"
+              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-3)'">
+              🔗 COPY LINK
+            </button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  return `
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;margin-bottom:12px">
+      <span style="font-family:var(--font-cond);font-size:14px;font-weight:800;letter-spacing:0.08em;color:var(--text);flex:1">${esc(name)}</span>
+      <button onclick="shCloseProp()"
+        style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px;padding:0 4px">✕</button>
+    </div>
+    ${trendsHTML}
+    ${renderSection(scheduled,'📅','Scheduled')}
+    ${renderSection(completed,'✅','Completed')}`;
+}
+
+// ── FEEDBACK MODAL ──
+function shOpenFeedback(showingId) {
+  const s = _shList.find(x=>x.id===showingId)||{};
+  _shFeedbackId = showingId;
+  _shVerdict = s.verdict||null;
+  _shCats = s.categories||[];
+
+  document.getElementById('sh-modal')?.remove();
+  const m = document.createElement('div');
+  m.className = 'sh-modal-bg'; m.id = 'sh-modal';
+  m.onclick = e=>{ if(e.target===m) m.remove(); };
+  m.innerHTML = `<div class="sh-modal">
+    <div class="sh-modal-head">
+      <div>
+        <div class="sh-modal-title">Tour Feedback</div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:2px">${esc(s.guest_name||'')} · ${esc((s.property||'').split(' - ')[0])}</div>
+        ${s.feedback_source === 'prospect'
+          ? `<div style="margin-top:5px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;color:var(--green);background:rgba(0,232,122,0.08);border:1px solid rgba(0,232,122,0.2);padding:3px 8px;border-radius:6px;display:inline-block">📱 PROSPECT SUBMITTED — you can add your own notes below</div>`
+          : s.feedback_source === 'agent'
+          ? `<div style="margin-top:5px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;color:var(--text-3);background:var(--bg-3);border:1px solid var(--border);padding:3px 8px;border-radius:6px;display:inline-block">✏️ LAST UPDATED BY AGENT · ${esc(s.agent_name||'')}</div>`
+          : ''}
+      </div>
+      <button class="sh-modal-close" onclick="document.getElementById('sh-modal').remove()">✕</button>
+    </div>
+    <div class="sh-modal-body">
+      <div class="sh-cat-label">Prospect Interest</div>
+      <div class="sh-verdict-row">
+        <button class="sh-verdict-btn go${_shVerdict==='go'?' selected':''}"     onclick="shSetVerdict('go')"    ><span class="sh-vb-emoji">✅</span>GO</button>
+        <button class="sh-verdict-btn maybe${_shVerdict==='maybe'?' selected':''}" onclick="shSetVerdict('maybe')" ><span class="sh-vb-emoji">🤔</span>MAYBE</button>
+        <button class="sh-verdict-btn nogo${_shVerdict==='no-go'?' selected':''}"  onclick="shSetVerdict('no-go')"  ><span class="sh-vb-emoji">❌</span>NO-GO</button>
+      </div>
+      <div class="sh-cat-label">Issues Flagged</div>
+      <div class="sh-cat-grid">
+        ${SH_CATS.map(c=>`<div class="sh-cat-chip${_shCats.includes(c)?' selected':''}" onclick="shToggleCat('${c}',this)">${c}</div>`).join('')}
+      </div>
+      <div class="sh-cat-label">Notes for Owner</div>
+      <textarea class="sh-notes-input" id="sh-notes" placeholder="Specific comments to share with the property owner...">${esc(s.notes||'')}</textarea>
+
+      <!-- AI RECOMMENDATION PANEL -->
+      <div id="sh-ai-rec-panel" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.15em;color:var(--text-3)">🤖 AI PROPERTY RECOMMENDATION</div>
+          <button id="sh-ai-rec-refresh" onclick="shLoadAIRec('${esc((s.property||'').replace(/'/g,"\\'"))}')" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:3px 8px;font-family:var(--font-mono);font-size:7px;letter-spacing:0.1em;cursor:pointer;border-radius:3px">↺ REFRESH</button>
+        </div>
+        <div id="sh-ai-rec-body" style="font-size:10px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em;padding:8px 0">
+          <div style="display:flex;align-items:center;gap:8px;opacity:0.5">
+            <div style="width:5px;height:5px;border-radius:50%;background:#6366f1;animation:pulse 1s infinite"></div>
+            SEARCHING NEARBY LISTINGS...
+          </div>
+        </div>
+      </div>
+
+      <div class="sh-modal-footer">
+        <button class="sh-cancel-btn" onclick="document.getElementById('sh-modal').remove()">Cancel</button>
+        <button class="sh-save-btn" onclick="shSave()">Save Feedback</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  // Auto-load AI rec for this property
+  if (s.property) shLoadAIRec(s.property);
+}
+
+function shCopyFeedbackLink(showingId, btn) {
+  const url = (window.location.origin) + '/feedback/' + showingId;
+  navigator.clipboard.writeText(url).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ COPIED';
+    btn.style.borderColor = 'var(--green)';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => {
+      btn.innerHTML = orig;
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--text-3)';
+    }, 2000);
+  }).catch(() => {
+    // Fallback for non-https
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    toast('Feedback link copied ✓', 'success');
+  });
+}
+
+async function shLoadAIRec(property) {
+  const body = document.getElementById('sh-ai-rec-body');
+  if (!body) return;
+  body.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;color:var(--text-3);opacity:0.5">
+    <div style="width:5px;height:5px;border-radius:50%;background:#6366f1;animation:pulse 1s infinite"></div>
+    SEARCHING NEARBY LISTINGS & ANALYZING FEEDBACK...
+  </div>`;
+  try {
+    const d = await api('/api/showings/property-ai-rec?property=' + encodeURIComponent(property));
+    if (!d.recommendation) {
+      body.innerHTML = `<div style="font-family:var(--font-mono);font-size:8px;color:var(--text-3);opacity:0.4;letter-spacing:0.08em">No feedback recorded for this property yet — recommendation will appear after tours are rated.</div>`;
+      return;
+    }
+    const parts = d.recommendation.split(/\n\n+/);
+    const p1 = parts[0] || d.recommendation;
+    const p2 = parts[1] || '';
+    const statsLine = `<div style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.1em;color:var(--text-3);opacity:0.5;margin-bottom:8px">${d.total} TOURS · ${d.go} GO · ${d.maybe} MAYBE · ${d.nogo} NO-GO</div>`;
+    body.innerHTML = statsLine +
+      `<div style="font-size:11px;line-height:1.7;color:var(--text-2);font-family:system-ui,sans-serif;padding:10px 12px;background:rgba(99,102,241,0.06);border-left:3px solid #6366f1;border-radius:0 4px 4px 0;margin-bottom:8px">${esc(p1)}</div>` +
+      (p2 ? `<div style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.12em;color:#ff8c00;opacity:0.7;margin-bottom:5px;margin-top:10px">🏘 COMPETITIVE MARKET ANALYSIS</div>
+      <div style="font-size:11px;line-height:1.7;color:var(--text-2);font-family:system-ui,sans-serif;padding:10px 12px;background:rgba(255,140,0,0.05);border-left:3px solid #ff8c00;border-radius:0 4px 4px 0">${esc(p2)}</div>` : '');
+  } catch(e) {
+    body.innerHTML = `<div style="font-family:var(--font-mono);font-size:8px;color:var(--red);opacity:0.7">⚠ ${esc(e.message)}</div>`;
+  }
+}
+
+function shSetVerdict(v) {
+  _shVerdict = v;
+  document.querySelectorAll('.sh-verdict-btn').forEach(b=>{
+    const match = (v==='go'&&b.classList.contains('go'))||(v==='maybe'&&b.classList.contains('maybe'))||(v==='no-go'&&b.classList.contains('nogo'));
+    b.classList.toggle('selected', match);
+  });
+}
+function shToggleCat(cat, el) {
+  if (_shCats.includes(cat)) { _shCats=_shCats.filter(c=>c!==cat); el.classList.remove('selected'); }
+  else { _shCats.push(cat); el.classList.add('selected'); }
+}
+async function shSave() {
+  if (!_shVerdict) { toast('Select Go, Maybe, or No-Go first','error'); return; }
+  const notes = document.getElementById('sh-notes')?.value||'';
+  try {
+    await api(`/api/showings/${_shFeedbackId}/feedback`,'POST',{verdict:_shVerdict,categories:_shCats,notes});
+    document.getElementById('sh-modal')?.remove();
+    toast('Feedback saved ✓','success');
+    shOpenProp(_shPropSelected);
+    shLoadProps();
+  } catch(e) { toast('Error: '+e.message,'error'); }
+}
+</script>
+
+<!-- SHOWING ROSTER + ALERT SYSTEM -->
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SHOWING ROSTER — loads on every contact record open
+// ═══════════════════════════════════════════════════════════════
+async function loadShowingRoster(person) {
+  const body = document.getElementById(`sh-roster-body-${person.id}`);
+  if (!body) return;
+
+  // Build search params — try phone AND email
+  const phones = [];
+  try {
+    const pr = await api(`/api/people/${person.id}/phones`);
+    (pr.phones||[]).forEach(p => { if(p.phone) phones.push(p.phone.replace(/\D/g,'').slice(-10)); });
+  } catch(e) {}
+  if (!phones.length && person.phone) phones.push(person.phone.replace(/\D/g,'').slice(-10));
+
+  const params = [];
+  if (phones.length)  params.push('phone='  + encodeURIComponent(phones[0]));
+  if (person.email)   params.push('email='  + encodeURIComponent(person.email));
+  if (person.first_name && person.last_name)
+    params.push('name=' + encodeURIComponent(`${person.last_name}, ${person.first_name}`));
+
+  if (!params.length) { body.textContent = 'No contact info to match showings'; return; }
+
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30*24*3600000).toISOString();
+    const showings = await api('/api/showings/by-contact?' + params.join('&') + '&since=' + encodeURIComponent(thirtyDaysAgo));
+    if (!showings.length) {
+      body.innerHTML = '<span style="color:var(--text-3)">No showings on record</span>';
+      return;
+    }
+    const upcoming   = showings.filter(s => s.status === 'Scheduled').sort((a,b) => new Date(a.showing_time)-new Date(b.showing_time));
+    const past       = showings.filter(s => s.status === 'Completed').sort((a,b) => new Date(b.showing_time)-new Date(a.showing_time));
+
+    const renderRow = s => {
+      const dt = s.showing_time ? new Date(s.showing_time) : null;
+      const when = dt ? dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '—';
+      const prop = (s.property||'').split(' - ')[0];
+      const isUpcoming = s.status === 'Scheduled';
+      const minsUntil = dt ? Math.round((dt - Date.now()) / 60000) : null;
+      const urgentBadge = (isUpcoming && minsUntil !== null && minsUntil >= 0 && minsUntil <= 90)
+        ? `<span style="background:var(--amber);color:#000;font-size:7px;font-weight:900;padding:1px 5px;border-radius:10px;margin-left:4px">IN ${minsUntil}m</span>` : '';
+      const v = s.verdict;
+      const chip = v ? `<span class="sh-verdict-chip ${v==='no-go'?'nogo':v}" style="font-size:7px;padding:2px 6px">${v==='no-go'?'NO-GO':v.toUpperCase()}</span>` : '';
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px">
+        <div style="display:flex;align-items:center;gap:4px;justify-content:space-between">
+          <span style="color:${isUpcoming?'var(--amber)':'var(--text-2)'};font-size:10px;font-weight:700">${isUpcoming?'📅':'✅'} ${esc(when)}</span>
+          ${chip}
+        </div>
+        <div style="color:var(--text-3);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(prop)}${s.unit?' · '+esc(s.unit):''}${urgentBadge}</div>
+        ${s.notes?`<div style="color:var(--text-2);font-size:9px;font-style:italic">"${esc(s.notes)}"</div>`:''}
+      </div>`;
+    };
+
+    body.innerHTML =
+      (upcoming.length ? `<div style="color:var(--amber);font-size:8px;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:4px">Upcoming (${upcoming.length})</div>${upcoming.map(renderRow).join('')}` : '') +
+      (past.length     ? `<div style="color:var(--text-3);font-size:8px;letter-spacing:0.15em;text-transform:uppercase;margin-top:8px;margin-bottom:4px">Completed (${past.length})</div>${past.map(renderRow).join('')}` : '');
+  } catch(e) {
+    body.innerHTML = `<span style="color:var(--text-3)">—</span>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENT ROLL — contact record integration
+// ═══════════════════════════════════════════════════════════════
+async function loadRentRollInfo(person) {
+  const wrap = document.getElementById(`sh-roster-${person.id}`);
+  if (!wrap) return;
+  const name = [person.last_name, person.first_name].filter(Boolean).join(', ') ||
+               [person.first_name, person.last_name].filter(Boolean).join(' ');
+  if (!name) return;
+  try {
+    const rr = await api('/api/rent-roll/by-person?name=' + encodeURIComponent(name));
+    if (!rr) return; // no match — silent
+    // Inject rent info section into right column above the showings roster
+    const existing = document.getElementById(`rr-info-${person.id}`);
+    if (existing) existing.remove();
+    const div = document.createElement('div');
+    div.id = `rr-info-${person.id}`;
+    div.className = 'right-section';
+    const leaseEnd = rr.lease_to ? new Date(rr.lease_to).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    const moveIn   = rr.move_in  ? new Date(rr.move_in).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})  : '—';
+    const isLate = rr.past_due && parseFloat(rr.past_due) > 0;
+    div.innerHTML = `
+      <div class="right-section-header">
+        <span class="right-section-title" style="color:var(--green)">🏠 Tenancy</span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:5px">
+        <div class="detail-row"><span class="detail-label">Unit</span><span class="detail-value">${esc(rr.unit)} · ${esc((rr.property||'').split(' - ')[0])}</span></div>
+        <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value" style="color:${rr.status==='Current'?'var(--green)':'var(--amber)'};font-weight:700">${esc(rr.status||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">Rent</span><span class="rr-rent-pill">$${parseFloat(rr.rent||0).toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span></div>
+        ${rr.market_rent && parseFloat(rr.market_rent) !== parseFloat(rr.rent) ? `<div class="detail-row"><span class="detail-label">Market</span><span class="detail-value" style="color:var(--text-3);font-size:11px">$${parseFloat(rr.market_rent).toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span></div>` : ''}
+        <div class="detail-row"><span class="detail-label">Move-in</span><span class="detail-value">${moveIn}</span></div>
+        <div class="detail-row"><span class="detail-label">Lease end</span><span class="detail-value">${leaseEnd}</span></div>
+        ${rr.bedrooms ? `<div class="detail-row"><span class="detail-label">Bed/Bath</span><span class="detail-value">${esc(rr.bedrooms)}</span></div>` : ''}
+        ${isLate ? `<div class="detail-row"><span class="detail-label">Past Due</span><span class="detail-value" style="color:var(--red);font-weight:700">$${Math.abs(parseFloat(rr.past_due)).toFixed(2)}</span></div>` : ''}
+        ${rr.late_count > 0 ? `<div class="detail-row"><span class="detail-label">Late Count</span><span class="detail-value" style="color:${rr.late_count>=4?'var(--red)':'var(--amber)'};">${rr.late_count}×</span></div>` : ''}
+      </div>`;
+    // Insert before the showings roster section
+    const rosterWrap = document.getElementById(`sh-roster-${person.id}`);
+    if (rosterWrap) rosterWrap.parentNode.insertBefore(div, rosterWrap);
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SHOWING ALERT SYSTEM — polls every 60s for upcoming tours
+// ═══════════════════════════════════════════════════════════════
+const _shAlerted = new Set(); // showing IDs already alerted this session
+let _shAlertQueue = [];       // queue so alerts don't stack on top of each other
+let _shAlertShowing = false;
+
+async function shPollUpcoming() {
+  try {
+    const upcoming = await api('/api/showings/upcoming');
+    for (const s of upcoming) {
+      if (_shAlerted.has(s.id)) continue;
+      _shAlerted.add(s.id);
+      _shAlertQueue.push(s);
+    }
+    shDrainAlertQueue();
+  } catch(e) {}
+}
+
+function shDrainAlertQueue() {
+  if (_shAlertShowing || !_shAlertQueue.length) return;
+  const s = _shAlertQueue.shift();
+  shShowAlert(s);
+}
+
+function shShowAlert(s) {
+  _shAlertShowing = true;
+  document.getElementById('sh-alert-toast')?.remove();
+
+  const dt = s.showing_time ? new Date(s.showing_time) : null;
+  const when = dt ? dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '—';
+  const minsUntil = dt ? Math.round((dt - Date.now()) / 60000) : null;
+  const prop = (s.property||'').split(' - ')[0];
+  const name = s.guest_name || 'Prospect';
+  const urgency = minsUntil !== null && minsUntil <= 15 ? 'var(--red)' : 'var(--amber)';
+  const urgencyText = minsUntil !== null && minsUntil <= 0 ? 'NOW' : minsUntil !== null ? `IN ${minsUntil}m` : '';
+
+  const el = document.createElement('div');
+  el.id = 'sh-alert-toast';
+  el.style.cssText = `
+    position:fixed;bottom:24px;right:24px;z-index:9999;
+    background:var(--bg-2);border:2px solid ${urgency};border-radius:14px;
+    width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.5),0 0 0 1px ${urgency}44;
+    animation:sh-alert-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
+    font-family:var(--font-body);
+  `;
+  el.innerHTML = `
+    <style>
+      @keyframes sh-alert-in { from{transform:translateX(120%);opacity:0} to{transform:translateX(0);opacity:1} }
+      @keyframes sh-alert-out { to{transform:translateX(120%);opacity:0} }
+      #sh-alert-toast .sh-al-pulse { animation:sh-pulse-ring 1.4s ease-in-out infinite; }
+      @keyframes sh-pulse-ring { 0%,100%{box-shadow:0 0 0 0 ${urgency}66} 50%{box-shadow:0 0 0 8px transparent} }
+    </style>
+    <div style="padding:14px 16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div class="sh-al-pulse" style="width:40px;height:40px;border-radius:50%;background:${urgency}22;border:2px solid ${urgency};display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">🏠</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-cond);font-size:13px;font-weight:900;letter-spacing:0.08em;color:var(--text);text-transform:uppercase">Showing Alert</div>
+          <div style="font-family:var(--font-mono);font-size:9px;color:${urgency};letter-spacing:0.15em;margin-top:1px">${urgencyText ? urgencyText+' · ' : ''}${esc(when)}</div>
+        </div>
+        <button onclick="shDismissAlert()" style="background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;padding:0;line-height:1">✕</button>
+      </div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px">${esc(name)}</div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(prop)}${s.unit?' · '+esc(s.unit):''}</div>
+      <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:3px">${s.showing_type||'In-Person'}</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        ${s.connect_person_id ? `<button onclick="shAlertOpenFile('${s.connect_person_id}')"
+          style="flex:1;padding:9px;background:${urgency};color:#000;border:none;border-radius:8px;font-family:var(--font-mono);font-size:10px;font-weight:800;letter-spacing:0.1em;cursor:pointer;text-transform:uppercase">
+          VIEW LEAD FILE →
+        </button>` : `<button onclick="shAlertFindLead('${esc(s.guest_name||'')}','${esc(s.phone||'')}','${esc(s.email||'')}')"
+          style="flex:1;padding:9px;background:${urgency};color:#000;border:none;border-radius:8px;font-family:var(--font-mono);font-size:10px;font-weight:800;letter-spacing:0.1em;cursor:pointer;text-transform:uppercase">
+          FIND LEAD →
+        </button>`}
+        <button onclick="shDismissAlert()"
+          style="padding:9px 14px;background:transparent;color:var(--text-3);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono);font-size:10px;cursor:pointer">
+          Dismiss
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+
+  // Auto-dismiss after 45 seconds
+  setTimeout(() => shDismissAlert(), 45000);
+}
+
+function shDismissAlert() {
+  const el = document.getElementById('sh-alert-toast');
+  if (!el) { _shAlertShowing = false; shDrainAlertQueue(); return; }
+  el.style.animation = 'sh-alert-out 0.25s ease both';
+  setTimeout(() => {
+    el.remove();
+    _shAlertShowing = false;
+    shDrainAlertQueue();
+  }, 260);
+}
+
+function shAlertOpenFile(personId) {
+  shDismissAlert();
+  openContact(personId);
+}
+
+function shAlertFindLead(name, phone, email) {
+  shDismissAlert();
+  navigate('people','all');
+  // Pre-fill search with name
+  setTimeout(() => {
+    const srch = document.getElementById('people-search');
+    if (srch) { srch.value = name; srch.dispatchEvent(new Event('input')); }
+  }, 300);
+}
+
+// Start polling after auth — called from launchApp
+function startShowingAlertPoller() {
+  shPollUpcoming(); // immediate first check
+  setInterval(shPollUpcoming, 60000); // every minute
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- MISSION CONTROL DASHBOARD + GALACTIC MAP                   -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<script>
+let _mcData = null, _mcGalaxy = null;
+let _mcInterval = null, _mcClockInterval = null;
+let _mcCanvas = null, _mcCtx = null, _mcStars = [];
+let _mcHovered = null, _mcAnimFrame = null;
+let _mcTooltip = { visible:false, x:0, y:0, prop:null };
+
+// ── Entry point ──────────────────────────────────────────────
+async function renderDashboard() {
+  const el = document.getElementById('view-dashboard');
+  if (!el) return;
+
+  el.innerHTML = `
+  <div class="mc-wrap">
+    <div class="mc-masthead">
+      <div>
+        <div class="mc-title" style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--red);font-size:28px;line-height:1">⬡</span>
+          <span style="font-family:var(--font-mono);font-size:20px;font-weight:400;letter-spacing:0.35em;color:#ccc">COMMAND</span><span style="font-family:var(--font-mono);font-size:20px;font-weight:800;letter-spacing:0.35em;color:#fff">MODULE</span>
+        </div>
+        <div style="font-size:8px;letter-spacing:0.22em;color:#444;margin-top:3px;text-transform:uppercase">OKCREAL Connect · Property Management Command</div>
+      </div>
+      <div style="text-align:right">
+        <div class="mc-clock" id="mc-clock"></div>
+        <div style="font-size:8px;color:#333;letter-spacing:0.12em;margin-top:2px" id="mc-date"></div>
+      </div>
+    </div>
+
+    <!-- CAUTION LIGHTS ROW -->
+    <div class="mc-panel" style="--panel-accent:#e8003a;margin-bottom:14px">
+      <div class="mc-panel-title">⚠ SYSTEM STATUS — CAUTION INDICATORS</div>
+      <div id="mc-lights" class="mc-caution-row" style="justify-content:space-between"></div>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
+
+      <!-- LEFT COLUMN -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <!-- AGENT ROSTER -->
+        <div class="mc-panel" style="--panel-accent:#00e87a">
+          <div class="mc-panel-title">👥 CREW STATUS</div>
+          <div id="mc-agents" class="mc-agent-grid"></div>
+        </div>
+
+        <!-- CALL STATS TODAY -->
+        <div class="mc-panel" style="--panel-accent:#6366f1">
+          <div class="mc-panel-title">📞 COMM ACTIVITY — LAST 24H</div>
+          <div id="mc-calls"></div>
+        </div>
+
+        <!-- RESPONSE TIME -->
+        <div class="mc-panel" style="--panel-accent:#ff8c00">
+          <div class="mc-panel-title">⚡ LEAD RESPONSE TIME — 30 DAYS</div>
+          <div id="mc-response"></div>
+        </div>
+
+        <!-- UPLOAD CONTROLS -->
+        <div class="mc-panel" style="--panel-accent:#888">
+          <div class="mc-panel-title">💾 DATA FEEDS — UPLOAD CONTROL</div>
+          <div class="mc-upload-row" id="mc-uploads"></div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT COLUMN — WO METER + GALACTIC MAP -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <!-- WORK ORDER HEALTH METER -->
+        <div class="mc-panel" style="--panel-accent:#ff8c00">
+          <div class="mc-panel-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>🔧 WORK ORDER HEALTH — PROPERTY TREND</span>
+            <span id="wo-open-badge" style="font-size:7px;letter-spacing:0.12em;color:#555"></span>
+          </div>
+          <div id="mc-wo-meter" style="min-height:40px"></div>
+        </div>
+
+        <!-- GALACTIC MAP -->
+        <div class="mc-panel" style="--panel-accent:#00e87a;padding:0;overflow:hidden;min-height:520px;position:relative">
+          <div style="padding:12px 16px 8px;border-bottom:1px solid #1a1a1a;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <div class="mc-panel-title" style="margin-bottom:0">🌌 GALACTIC PROPERTY MAP — LIVE UNIT STATUS</div>
+              <div style="display:flex;gap:10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase">
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e87a;box-shadow:0 0 6px #00e87a;vertical-align:middle;margin-right:4px"></span>OCCUPIED</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 6px #e8003a;vertical-align:middle;margin-right:4px"></span>DELINQUENT</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff8c00;box-shadow:0 0 6px #ff8c00;vertical-align:middle;margin-right:4px"></span>VACANT</span>
+              </div>
+            </div>
+            <!-- VACANCY THERMAL STATUS BAR -->
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.15em;color:#444;white-space:nowrap">VACANCY TEMP</span>
+              <div style="flex:1;position:relative;height:10px">
+                <!-- Spectrum track: blue→cyan→green→amber→red -->
+                <div style="position:absolute;inset:0;border-radius:5px;background:linear-gradient(to right,#0066ff,#00ccff,#00e87a,#ff8c00,#e8003a);opacity:0.25"></div>
+                <!-- LED segments -->
+                <div id="galaxy-vac-bar" style="position:absolute;inset:0;border-radius:5px;display:flex;gap:2px;padding:0 1px"></div>
+                <!-- Needle -->
+                <div id="galaxy-vac-needle" style="position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;background:#fff;box-shadow:0 0 6px #fff;transform:translateX(-50%);transition:left 0.8s ease"></div>
+              </div>
+              <span id="galaxy-vac-pct" style="font-family:var(--font-mono);font-size:9px;font-weight:700;width:36px;text-align:right;transition:color 0.6s">—</span>
+              <span id="galaxy-vac-label" style="font-family:var(--font-mono);font-size:7px;letter-spacing:0.12em;width:52px;transition:color 0.6s">—</span>
+            </div>
+            <!-- PROBLEM PROPERTY ALERT -->
+            <div id="galaxy-problem-prop" style="display:none;align-items:center;gap:8px;padding:5px 8px;background:rgba(232,0,58,0.08);border:1px solid rgba(232,0,58,0.3);border-radius:4px;margin-top:2px">
+              <span id="galaxy-problem-led" style="width:7px;height:7px;border-radius:50%;background:#e8003a;flex-shrink:0"></span>
+              <span id="galaxy-problem-text" style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;color:#e8003a;flex:1"></span>
+            </div>
+          </div>
+          <canvas id="mc-galaxy-canvas" style="width:100%;display:block;cursor:crosshair"></canvas>
+          <div id="mc-galaxy-tooltip" style="position:absolute;pointer-events:none;display:none;z-index:10;
+            background:rgba(0,0,0,0.9);border:1px solid #2a2a2a;border-radius:6px;padding:10px 14px;
+            font-family:var(--font-mono);font-size:10px;min-width:180px;backdrop-filter:blur(8px)"></div>
+          <div id="mc-galaxy-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+            color:#333;font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em">
+            INITIALIZING TELEMETRY...
+          </div>
+        </div>
+
+      </div><!-- end right column -->
+    </div><!-- end main grid -->
+  </div>`;
+
+  // Start clock
+  if (_mcClockInterval) clearInterval(_mcClockInterval);
+  const tick = () => {
+    const now = new Date();
+    const cl = document.getElementById('mc-clock');
+    const cd = document.getElementById('mc-date');
+    if (cl) cl.textContent = now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+    if (cd) cd.textContent = now.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}).toUpperCase();
+  };
+  tick(); _mcClockInterval = setInterval(tick, 1000);
+
+  await refreshDashboard();
+  if (_mcInterval) clearInterval(_mcInterval);
+  _mcInterval = setInterval(refreshDashboard, 30000);
+}
+
+function renderWoMeter(data) {
+  const el = document.getElementById('mc-wo-meter');
+  if (!el) return;
+  if (!data || !data.byProperty || !data.byProperty.length) {
+    el.innerHTML = '<div style="font-size:9px;color:#333;text-align:center;padding:16px;letter-spacing:0.1em">NO WORK ORDER DATA — UPLOAD FILE TO ENABLE</div>';
+    return;
+  }
+  const props = data.byProperty;
+  const maxCount = Math.max(...props.map(p => Math.max(parseInt(p.this_month)||0, parseInt(p.last_month)||0, parseFloat(p.avg_monthly)*1.5, 1)));
+  const badgeEl = document.getElementById('wo-open-badge');
+  if (badgeEl && data.openByPriority) {
+    const urgent = data.openByPriority.find(r => (r.priority||'').toLowerCase().includes('urgent'));
+    const total  = data.openByPriority.reduce((s,r) => s+parseInt(r.cnt), 0);
+    badgeEl.innerHTML = `<span style="color:#888">${total} OPEN</span>${urgent ? ` &nbsp;·&nbsp; <span style="color:#e8003a">${urgent.cnt} URGENT</span>` : ''}`;
+  }
+  el.innerHTML = `
+    <div class="wo-meter-legend">
+      <span>▮ <span style="color:#00e87a">THIS MONTH</span></span>
+      <span>▮ <span style="color:#1e3a2a">LAST MONTH</span></span>
+      <span style="color:#555">― AVG LINE</span>
+    </div>
+    ${props.map(p => {
+      const name  = p.property.split(' - ')[0].replace(/ (DUPLEX|FOURPLEX|APARTMENTS|TOWNHOMES|TOWNHOUSES)$/i,'').substring(0,24);
+      const avg   = parseFloat(p.avg_monthly) || 0;
+      const cur   = parseInt(p.this_month)    || 0;
+      const last  = parseInt(p.last_month)    || 0;
+      const trend = cur > last*1.2 ? '↑' : cur < last*0.8 ? '↓' : '→';
+      const trendCol = cur > last*1.2 ? '#e8003a' : cur < last*0.8 ? '#00e87a' : '#555';
+      const ratio = avg > 0 ? cur / avg : (cur > 0 ? 2 : 0);
+      const col   = ratio >= 1.5 ? '#e8003a' : ratio >= 1.1 ? '#ff8c00' : '#00e87a';
+      const cls   = ratio >= 1.5 ? 'red'     : ratio >= 1.1 ? 'amber'   : 'green';
+      const curW  = Math.round((cur  / maxCount) * 100);
+      const lastW = Math.round((last / maxCount) * 100);
+      const avgW  = avg > 0 ? Math.min(99, Math.round((avg / maxCount) * 100)) : 0;
+      return '<div class="wo-meter-row">'
+        + '<div class="wo-meter-prop" title="' + esc(p.property) + '">' + esc(name) + '</div>'
+        + '<div class="wo-meter-bars">'
+          + '<div class="wo-meter-track" style="height:7px">'
+            + '<div class="wo-meter-fill ' + cls + '" style="width:' + curW + '%"></div>'
+            + '<div class="wo-meter-avg-line" style="left:' + avgW + '%"></div>'
+          + '</div>'
+          + '<div class="wo-meter-track" style="height:4px;margin-top:2px">'
+            + '<div style="width:' + lastW + '%;height:100%;background:#1e3a2a;border-radius:2px"></div>'
+          + '</div>'
+        + '</div>'
+        + '<div class="wo-meter-count" style="color:' + col + '">' + cur + '</div>'
+        + '<div class="wo-meter-trend" style="color:' + trendCol + ';font-size:11px;font-weight:700">' + trend + '</div>'
+        + '</div>';
+    }).join('')}`;
+}
+
+async function refreshDashboard() {
+  try {
+    const [stats, galaxy, woStats] = await Promise.all([
+      api('/api/dashboard/stats'),
+      api('/api/dashboard/galaxy').catch(() => []),
+      api('/api/work-orders/stats').catch(() => null)
+    ]);
+    _mcData   = stats;
+    _mcGalaxy = galaxy;
+    window._mcGalaxy  = galaxy;
+    window._mcData    = stats;
+    window._mcWoStats = woStats;
+    renderMcPanels(stats, galaxy);
+    renderWoMeter(woStats);
+    renderVacancyBar(galaxy);
+    initGalaxyCanvas(galaxy);
+  } catch(e) {
+    console.error('[Dashboard]', e);
+  }
+}
+
+// ── PANELS ───────────────────────────────────────────────────
+function renderMcPanels(d, galaxy) {
+  if (!d) return;
+  if (!d.uploads) d.uploads = {};
+  const hoursAgo = dt => dt ? (Date.now() - new Date(dt).getTime()) / 3600000 : 9999;
+  const fmtAge  = h => {
+    if (h > 9000) return 'NEVER UPLOADED';
+    if (h < 1)    return 'JUST NOW';
+    if (h < 24)   return Math.floor(h) + 'H AGO';
+    return Math.floor(h / 24) + 'D AGO';
+  };
+  const shAge = hoursAgo(d.uploads?.showings?.created_at);
+  const rrAge = hoursAgo(d.uploads?.rentRoll?.created_at);
+  const woAge = hoursAgo(d.uploads?.workOrders?.created_at);
+
+  // Returns { color, flash, note } for an upload timestamp
+  function uploadStatus(dt) {
+    const h = hoursAgo(dt);
+    if (h > 9000) return { color:'red', flash:true,  note:'NEVER UPLOADED' };
+    const ts = new Date(dt);
+    const dateStr = ts.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const timeStr = ts.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+    const stamp   = `${dateStr} ${timeStr}`;
+    if (h > 24)  return { color:'red',   flash:true,  note:stamp };
+    if (h > 6)   return { color:'amber', flash:false, note:stamp };
+                 return { color:'green', flash:false, note:stamp };
+  }
+
+  const shStatus = uploadStatus(d.uploads.showings?.created_at);
+  const rrStatus = uploadStatus(d.uploads.rentRoll?.created_at);
+  const woStatus = uploadStatus(d.uploads.workOrders?.created_at);
+
+  // ── Caution lights ──
+  const totalUnits   = (galaxy||[]).reduce((s,p) => s+p.total, 0);
+  const totalVacant  = (galaxy||[]).reduce((s,p) => s+p.vacant, 0);
+  const vacancyPct   = totalUnits ? Math.round((totalVacant/totalUnits)*100) : 0;
+
+    // Online count: prefer _liveOnlineIds (most accurate), then _liveOnlineCount, then API onlineCount
+    // Always at least 1 since the current user is viewing this dashboard
+    const liveOnlineCount = d._liveOnlineIds?.length ?? d._liveOnlineCount ?? d.onlineCount;
+    const onlineCount = Math.max(liveOnlineCount, currentUser ? 1 : 0);
+
+    const lights = [
+    { label:'DATABASE', sublabel:'POSTGRES',
+      color:'green', note:'NOMINAL' },
+    { label:'TWILIO', sublabel:'SMS · CALLS',
+      color:'green', note:'NOMINAL' },
+    { label:`${onlineCount} AGENT${onlineCount!==1?'S':''}`, sublabel:'ONLINE NOW',
+      color: onlineCount===0?'red': onlineCount<2?'amber':'green',
+      flash: onlineCount===0, note: onlineCount===0?'NO CREW':'STAFFED' },
+    { label:'SHOWINGS', sublabel:'DAILY REPORT',
+      color: shStatus.color, flash: shStatus.flash, note: shStatus.note },
+    { label:'RENT ROLL', sublabel:'UNIT DATA',
+      color: rrStatus.color, flash: rrStatus.flash, note: rrStatus.note },
+    { label:`${d.calls.missed||0} MISSED`, sublabel:'CALLS TODAY',
+      color: (d.calls.missed||0)>10?'red':(d.calls.missed||0)>3?'amber':'green',
+      flash: (d.calls.missed||0)>10, note: (d.calls.missed||0)===0?'CLEAN':'REVIEW' },
+    { label:`${vacancyPct}% VACANT`, sublabel:`${totalVacant}/${totalUnits} UNITS`,
+      color: vacancyPct>20?'red': vacancyPct>10?'amber':'green',
+      flash: vacancyPct>20, note: vacancyPct>20?'HIGH VAC':'IN RANGE' },
+    { label:`$${Math.round((galaxy||[]).reduce((s,p)=>s+(parseFloat(p.total_past_due)||0),0)).toLocaleString()}`, sublabel:'PAST DUE',
+      color: (galaxy||[]).reduce((s,p)=>s+(parseFloat(p.total_past_due)||0),0) > 5000 ? 'amber' : 'green',
+      note: 'COLLECTIONS' },
+    { label:'WORK ORDERS', sublabel:'MAINTENANCE',
+      color: woStatus.color, flash: woStatus.flash, note: woStatus.note },
+  ];
+
+  // Note color matches bulb state for readability
+  const noteColor = c => c==='green'?'#00804a': c==='amber'?'#7a4400':'#8a0020';
+
+  document.getElementById('mc-lights').innerHTML = lights.map(l => `
+    <div class="mc-light">
+      <div class="mc-bulb ${l.color}${l.flash?' flash':''}"></div>
+      <div class="mc-bulb-label">${esc(l.label)}</div>
+      <div class="mc-bulb-label" style="color:#444">${esc(l.sublabel||'')}</div>
+      <div class="mc-bulb-label" style="color:${noteColor(l.color)};font-size:6.5px;line-height:1.4;word-break:break-word;max-width:72px">${esc(l.note||'')}</div>
+    </div>`).join('');
+
+  // ── Agent roster ──
+  const agentCallMap = {};
+  (d.agentCallStats||[]).forEach(a => { agentCallMap[a.agent_id] = a; });
+  document.getElementById('mc-agents').innerHTML = d.agents.map(a => {
+    const cs = agentCallMap[a.id] || {};
+    const initials = (a.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+
+    // Avatar — photo if available, else initials
+    const avatarEl = a.avatar_b64
+      ? `<img class="mc-agent-photo" src="${a.avatar_b64}" alt="${esc(initials)}" onclick="navigate('admin')" title="View profile">`
+      : `<div class="mc-agent-initials" style="background:${a.avatar_color||'#444'}" onclick="navigate('admin')" title="View profile">${esc(initials)}</div>`;
+
+    // Map DB availability + online (SSE) to display state
+    // Use _liveOnlineIds if available (from crew_online events), fall back to a.online from API
+    const liveIds = d._liveOnlineIds || [];
+    const isSSEOnline = liveIds.length > 0
+      ? liveIds.includes(String(a.id))
+      : (a.online || (currentUser && String(a.id) === String(currentUser.id))); // current user is always online
+    const avail = a.availability || 'online';
+    // Status pill: reflects what the agent has SET, not just whether they have a tab open
+    const statusClass = avail === 'busy' ? 'busy' : avail === 'offline' ? 'offline' : 'available';
+    const statusLabel = avail === 'busy' ? '⬤ BUSY' : avail === 'offline' ? '⬤ OFFLINE' : '⬤ AVAILABLE';
+
+    // Call stats
+    const callLine = cs.total_calls
+      ? `${cs.total_calls} call${cs.total_calls!==1?'s':''} · ${Math.floor((cs.avg_duration||0)/60)}m avg`
+      : 'No calls this week';
+
+    return `<div class="mc-agent-row" style="position:relative">
+      ${avatarEl}
+      <div style="flex:1;min-width:0">
+        <div class="mc-agent-name">${esc(a.name||'Agent')}</div>
+        <div style="font-size:8px;color:#444;margin-top:1px">${callLine}</div>
+      </div>
+      <!-- LED: green glow = browser tab open -->
+      <div title="${isSSEOnline?'Browser open':'Not connected'}" class="mc-led ${isSSEOnline?'on':'off'}"></div>
+      <span class="mc-agent-status ${statusClass}">${statusLabel}</span>
+    </div>`;
+  }).join('');
+
+  // ── Call stats ──
+  const c = d.calls;
+  const answerRate = c.inbound_total > 0 ? Math.round((c.inbound_answered/c.inbound_total)*100) : 0;
+  document.getElementById('mc-calls').innerHTML = `
+    <div class="mc-stat-row" style="margin-bottom:12px">
+      <div class="mc-stat"><div class="mc-stat-val" style="color:#6366f1">${c.inbound_total||0}</div><div class="mc-stat-lbl">INBOUND</div></div>
+      <div class="mc-stat"><div class="mc-stat-val" style="color:#888">${c.outbound_total||0}</div><div class="mc-stat-lbl">OUTBOUND</div></div>
+      <div class="mc-stat"><div class="mc-stat-val" style="color:var(--red)">${c.missed||0}</div><div class="mc-stat-lbl">MISSED</div></div>
+    </div>
+    <div class="mc-scanline"></div>
+    <div style="margin-top:8px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:8px;letter-spacing:0.1em;color:#555;text-transform:uppercase">Answer Rate</span>
+        <span style="font-size:9px;color:${answerRate>80?'#00e87a':answerRate>60?'#ff8c00':'#e8003a'}">${answerRate}%</span>
+      </div>
+      <div class="mc-gauge-track"><div class="mc-gauge-fill" style="width:${answerRate}%;background:${answerRate>80?'#00e87a':answerRate>60?'#ff8c00':'#e8003a'}"></div></div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <div style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:3px;padding:6px;text-align:center">
+        <div style="font-size:14px;font-weight:800;color:#eee">${c.avg_duration ? Math.floor(c.avg_duration/60)+'m '+String(c.avg_duration%60).padStart(2,'0')+'s' : '—'}</div>
+        <div style="font-size:7px;letter-spacing:0.1em;color:#444;text-transform:uppercase;margin-top:2px">Avg Duration</div>
+      </div>
+      <div style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:3px;padding:6px;text-align:center">
+        <div style="font-size:14px;font-weight:800;color:#eee">${d.sms?.sent||0}</div>
+        <div style="font-size:7px;letter-spacing:0.1em;color:#444;text-transform:uppercase;margin-top:2px">SMS Sent</div>
+      </div>
+    </div>`;
+
+  // ── Response time ──
+  const rt = d.responseTime || {};
+  const avgMin = rt.avg_minutes || 0;
+  const rtColor = avgMin <= 5 ? '#00e87a' : avgMin <= 60 ? '#ff8c00' : '#e8003a';
+  document.getElementById('mc-response').innerHTML = `
+    <div style="text-align:center;padding:8px 0 12px">
+      <div style="font-size:32px;font-weight:900;color:${rtColor};line-height:1">${avgMin > 0 ? (avgMin >= 60 ? Math.floor(avgMin/60)+'h '+(avgMin%60)+'m' : avgMin+'m') : '—'}</div>
+      <div style="font-size:7px;letter-spacing:0.15em;color:#444;text-transform:uppercase;margin-top:4px">AVG RESPONSE TO NEW LEAD · BIZ HRS</div>
+    </div>
+    <div class="mc-scanline"></div>
+    ${rt.sample_size > 0 ? `
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">
+      ${[['Under 5min',rt.under_5min,'#00e87a'],['5min – 1hr',rt.under_1hr,'#ff8c00'],['Over 1hr',rt.over_1hr,'#e8003a']].map(([lbl,val,col])=>`
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:8px;color:#555;width:70px;flex-shrink:0;text-transform:uppercase;letter-spacing:0.08em">${lbl}</span>
+        <div class="mc-gauge-track" style="flex:1"><div class="mc-gauge-fill" style="width:${rt.sample_size?Math.round((val/rt.sample_size)*100):0}%;background:${col}"></div></div>
+        <span style="font-size:9px;color:${col};width:20px;text-align:right">${val||0}</span>
+      </div>`).join('')}
+    </div>` : '<div style="font-size:9px;color:#333;text-align:center;padding:8px">No data available</div>'}`;
+
+  // ── Upload controls ──
+  const uploads = [
+    { key:'showings', label:'SHOWINGS REPORT', sublabel:'AppFolio daily export',
+      age: shAge, count: d.uploads.showings?.record_count,
+      accept:'.xlsx', fn:'shUpload', btnId:'mc-sh-upload-btn' },
+    { key:'rentroll', label:'RENT ROLL', sublabel:'AppFolio unit status',
+      age: rrAge, count: d.uploads.rentRoll?.unit_count,
+      accept:'.xlsx', fn:'rrUpload', btnId:'mc-rr-upload-btn' },
+    { key:'workorders', label:'WORK ORDERS', sublabel:'AppFolio maintenance export',
+      age: woAge, count: d.uploads.workOrders?.record_count,
+      accept:'.xlsx', fn:'woUpload', btnId:'mc-wo-upload-btn' },
+  ];
+  document.getElementById('mc-uploads').innerHTML = uploads.map(u => {
+    const stale = u.age > 24;
+    const dotCol = stale ? '#ff8c00' : '#00e87a';
+    const fmtd = fmtAge(u.age);
+    return `<div class="mc-upload-item">
+      <div class="mc-upload-status" style="background:${dotCol};box-shadow:0 0 8px ${dotCol};${stale?'animation:mc-flash 1.2s ease-in-out infinite':''}"></div>
+      <div class="mc-upload-info">
+        <div class="mc-upload-name">${esc(u.label)}</div>
+        <div class="mc-upload-time" style="color:${stale?'#ff8c00':'#555'}">${stale?'⚠ ':''} ${fmtd}${u.count?' · '+u.count+(u.key==='showings'||u.key==='workorders'?' records':' units'):''}
+</div>
+      </div>
+      <div class="mc-upload-btn-wrap">
+        <label class="${stale?'stale':''}">
+          ↑ UPLOAD
+          <input type="file" accept="${u.accept}" style="display:none" onchange="${u.fn}(this);renderDashboard()">
+        </label>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── GALACTIC CANVAS MAP ───────────────────────────────────────
+function renderVacancyBar(galaxy) {
+  const bar    = document.getElementById('galaxy-vac-bar');
+  const needle = document.getElementById('galaxy-vac-needle');
+  const pctEl  = document.getElementById('galaxy-vac-pct');
+  const lblEl  = document.getElementById('galaxy-vac-label');
+  if (!bar || !needle || !pctEl) return;
+
+  const props = (galaxy || []).filter(p => p.property !== 'ACCOUNTING PURPOSES (Service Team Accounting)');
+  const totalUnits  = props.reduce((s, p) => s + (parseInt(p.total)  || 0), 0);
+  const totalVacant = props.reduce((s, p) => s + (parseInt(p.vacant) || 0), 0);
+  if (!totalUnits) return;
+
+  const vacPct = (totalVacant / totalUnits) * 100; // 0–100 but we display on 0–10 scale
+
+  // Clamp display to 0–10% range; beyond 10% pegs at max
+  const displayPct = Math.min(vacPct, 10);
+  const ratio = displayPct / 10; // 0=perfect blue, 1=critical red
+
+  // Interpolate color: 0%→blue, 2.5%→cyan, 5%→green/amber boundary, 7.5%→orange, 10%→red
+  function lerpColor(t) {
+    // stops: [0→#0066ff] [0.25→#00ccff] [0.5→#00e87a] [0.75→#ff8c00] [1→#e8003a]
+    const stops = [
+      [0,   0x00, 0x66, 0xff],
+      [0.25,0x00, 0xcc, 0xff],
+      [0.5, 0x00, 0xe8, 0x7a],
+      [0.75,0xff, 0x8c, 0x00],
+      [1.0, 0xe8, 0x00, 0x3a],
+    ];
+    let lo = stops[0], hi = stops[stops.length-1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (t >= stops[i][0] && t <= stops[i+1][0]) { lo = stops[i]; hi = stops[i+1]; break; }
+    }
+    const f = (t - lo[0]) / (hi[0] - lo[0]);
+    const r = Math.round(lo[1] + (hi[1]-lo[1])*f);
+    const g = Math.round(lo[2] + (hi[2]-lo[2])*f);
+    const b = Math.round(lo[3] + (hi[3]-lo[3])*f);
+    return { hex:`#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`, r, g, b };
+  }
+
+  const col = lerpColor(ratio);
+
+  // 20 LED segments
+  const SEGS = 20;
+  const litSegs = Math.round(ratio * SEGS);
+  bar.innerHTML = Array.from({length: SEGS}, (_, i) => {
+    const segRatio = i / (SEGS - 1);
+    const segCol = lerpColor(segRatio);
+    const lit = i < litSegs;
+    return `<div style="flex:1;border-radius:2px;height:100%;background:${segCol.hex};opacity:${lit ? '0.9' : '0.1'};
+      ${lit ? `box-shadow:0 0 4px ${segCol.hex}` : ''}"></div>`;
+  }).join('');
+
+  // Position needle
+  needle.style.left = (ratio * 100) + '%';
+  needle.style.background = col.hex;
+  needle.style.boxShadow = `0 0 8px ${col.hex}`;
+
+  // Label
+  const label = ratio < 0.3 ? 'COLD ❄' : ratio < 0.55 ? 'NOMINAL' : ratio < 0.75 ? 'WARM ⚠' : 'HOT 🔴';
+  pctEl.textContent = vacPct.toFixed(1) + '%';
+  pctEl.style.color = col.hex;
+  lblEl.textContent = label;
+  lblEl.style.color = col.hex;
+
+  // ── PROBLEM PROPERTY DETECTION ──────────────────────────────
+  // If one property contributes disproportionately to vacancy, flag it
+  const alertEl = document.getElementById('galaxy-problem-prop');
+  const alertLed = document.getElementById('galaxy-problem-led');
+  const alertTxt = document.getElementById('galaxy-problem-text');
+  if (alertEl && alertTxt && totalVacant > 0) {
+    // Find property with most vacant units
+    let worst = null;
+    for (const p of props) {
+      const v = parseInt(p.vacant) || 0;
+      if (!worst || v > worst.vacant) worst = { name: p.property, vacant: v, total: parseInt(p.total)||0 };
+    }
+    // Flag if: single property contributes >35% of all vacant units AND has 3+ vacant units
+    const worstShare = worst ? worst.vacant / totalVacant : 0;
+    if (worst && worstShare >= 0.35 && worst.vacant >= 3) {
+      const propShort = worst.name.replace(' - OKC Real', '').replace(' - OKC REAL', '').split(' - ')[0];
+      const contribution = Math.round(worstShare * 100);
+      alertTxt.textContent = `⚠ PROBLEM PROPERTY DETECTED — ${propShort}: ${worst.vacant} VACANT UNITS (${contribution}% OF TOTAL VACANCY)`;
+      alertEl.style.display = 'flex';
+      // Flash the LED
+      if (!alertEl._flashTimer) {
+        alertEl._flashTimer = setInterval(() => {
+          if (alertLed) alertLed.style.opacity = alertLed.style.opacity === '0' ? '1' : '0';
+        }, 600);
+      }
+    } else {
+      alertEl.style.display = 'none';
+      if (alertEl._flashTimer) { clearInterval(alertEl._flashTimer); alertEl._flashTimer = null; }
+    }
+  }
+}
+
+function initGalaxyCanvas(galaxy) {
+  const loading = document.getElementById('mc-galaxy-loading');
+  const canvas  = document.getElementById('mc-galaxy-canvas');
+  if (!canvas || !galaxy || !galaxy.length) return;
+  if (loading) loading.style.display = 'none';
+
+  // Render the vacancy thermal bar from galaxy data
+  renderVacancyBar(galaxy);
+
+  // Size canvas to container
+  const parent = canvas.parentElement;
+  const W = parent.clientWidth;
+  const H = Math.max(520, parent.clientHeight - 50);
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  _mcCanvas = canvas;
+  _mcCtx    = ctx;
+
+  // Generate stars
+  _mcStars = Array.from({length:200}, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    r: Math.random() * 1.2 + 0.3,
+    a: Math.random(),
+    speed: Math.random() * 0.008 + 0.002
+  }));
+
+  // Position planets — spiral layout
+  const props = galaxy.filter(p => p.property !== 'ACCOUNTING PURPOSES (Service Team Accounting)');
+  const maxUnits = Math.max(...props.map(p => p.total));
+
+  // Assign positions in a galaxy spiral
+  const cx = W * 0.52, cy = H * 0.5;
+  props.forEach((p, i) => {
+    const angle = (i / props.length) * Math.PI * 2 - Math.PI / 2;
+    // Bigger properties toward center
+    const normalized = 1 - (p.total / maxUnits);
+    const radiusMult = 0.25 + normalized * 0.36;
+    p._x = cx + Math.cos(angle) * W * radiusMult;
+    p._y = cy + Math.sin(angle) * H * radiusMult * 0.72;
+    p._planetR = Math.max(14, Math.min(38, 10 + (p.total / maxUnits) * 32));
+    p._angle = angle;
+    p._orbitPhase = Math.random() * Math.PI * 2;
+  });
+
+  // Mouse interaction
+  canvas.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const my = (e.clientY - rect.top)  * scaleY;
+    let hit = null;
+    for (const p of props) {
+      const dx = mx - p._x, dy = my - p._y;
+      if (Math.sqrt(dx*dx+dy*dy) < p._planetR + 16) { hit = p; break; }
+    }
+    _mcHovered = hit;
+    const tip = document.getElementById('mc-galaxy-tooltip');
+    if (hit && tip) {
+      const scaleBack = rect.width / canvas.width;
+      const tx = (hit._x * scaleBack) + rect.left - parent.getBoundingClientRect().left;
+      const ty = (hit._y * scaleBack) + rect.top  - parent.getBoundingClientRect().top;
+      const name = hit.property.replace(/ - .*$/, '');
+      const occPct = hit.total > 0 ? Math.round(((hit.total-hit.vacant)/hit.total)*100) : 0;
+      tip.style.display = 'block';
+      tip.style.left = (tx + 20) + 'px';
+      tip.style.top  = Math.max(40, ty - 60) + 'px';
+      tip.innerHTML = `
+        <div style="font-weight:800;letter-spacing:0.1em;color:#eee;margin-bottom:6px;font-size:11px">${esc(name)}</div>
+        <div style="color:#555;font-size:8px;letter-spacing:0.12em;margin-bottom:8px;text-transform:uppercase">${hit.total} UNITS · ${occPct}% OCCUPIED</div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <div style="display:flex;justify-content:space-between;gap:20px"><span style="color:#00e87a">● OCCUPIED</span><span>${hit.occupied}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:20px"><span style="color:#e8003a">● DELINQUENT</span><span>${hit.delinquent}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:20px"><span style="color:#ff8c00">● VACANT</span><span>${hit.vacant}</span></div>
+          ${parseFloat(hit.total_past_due)>0 ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid #222;color:#e8003a">PAST DUE: $${Math.round(parseFloat(hit.total_past_due)).toLocaleString()}</div>` : ''}
+        </div>`;
+    } else if (tip) {
+      tip.style.display = 'none';
+    }
+  };
+  canvas.onmouseleave = () => {
+    _mcHovered = null;
+    const tip = document.getElementById('mc-galaxy-tooltip');
+    if (tip) tip.style.display = 'none';
+  };
+
+  // Cancel previous animation
+  if (_mcAnimFrame) cancelAnimationFrame(_mcAnimFrame);
+  let t = 0;
+  let scanX = 0;
+
+  function drawFrame() {
+    if (!document.getElementById('mc-galaxy-canvas')) return; // navigated away
+    t += 0.012;
+    scanX = (scanX + 1.2) % W;
+    ctx.clearRect(0, 0, W, H);
+
+    // Background gradient
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, W * 0.7);
+    bg.addColorStop(0, '#0d0f14');
+    bg.addColorStop(1, '#080a0c');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Scan line
+    const scanGrad = ctx.createLinearGradient(scanX-60, 0, scanX+20, 0);
+    scanGrad.addColorStop(0, 'transparent');
+    scanGrad.addColorStop(0.6, 'rgba(0,232,122,0.03)');
+    scanGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = scanGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Stars
+    _mcStars.forEach(s => {
+      s.a += s.speed;
+      const alpha = 0.2 + Math.abs(Math.sin(s.a)) * 0.6;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(200,210,255,${alpha})`;
+      ctx.fill();
+    });
+
+    // Draw connection lines between props with same street cluster
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,232,122,0.04)';
+    ctx.lineWidth = 0.5;
+    for (let i=0; i<props.length; i++) {
+      for (let j=i+1; j<props.length; j++) {
+        const dx = props[i]._x - props[j]._x;
+        const dy = props[i]._y - props[j]._y;
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        if (dist < W * 0.22) {
+          ctx.beginPath();
+          ctx.moveTo(props[i]._x, props[i]._y);
+          ctx.lineTo(props[j]._x, props[j]._y);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+
+    // Draw each property
+    props.forEach((p, pi) => {
+      const isHovered = _mcHovered === p;
+      const pr = p._planetR;
+
+      // Outer glow halo (pulse)
+      const pulseR = pr + 8 + Math.sin(t + pi * 0.8) * 4;
+      const haloAlpha = isHovered ? 0.25 : 0.08 + Math.sin(t + pi) * 0.04;
+      const haloColor = p.delinquent > 3 ? '232,0,58' : p.vacant > 3 ? '255,140,0' : '0,232,122';
+      const halo = ctx.createRadialGradient(p._x, p._y, pr*0.5, p._x, p._y, pulseR + 12);
+      halo.addColorStop(0, `rgba(${haloColor},${haloAlpha * 1.5})`);
+      halo.addColorStop(1, 'transparent');
+      ctx.beginPath();
+      ctx.arc(p._x, p._y, pulseR + 12, 0, Math.PI*2);
+      ctx.fillStyle = halo;
+      ctx.fill();
+
+      // Planet body gradient
+      const grad = ctx.createRadialGradient(p._x - pr*0.3, p._y - pr*0.3, pr*0.1, p._x, p._y, pr);
+      const baseH = p.delinquent > p.occupied * 0.3 ? '232,0,58' : p.vacant > p.occupied ? '255,140,0' : '20,40,30';
+      grad.addColorStop(0, `rgba(${p.delinquent>p.occupied*0.3?'80,10,20': p.vacant>p.total*0.3?'60,40,10':'20,60,40'},0.95)`);
+      grad.addColorStop(0.5, '#111820');
+      grad.addColorStop(1, '#080c10');
+      ctx.beginPath();
+      ctx.arc(p._x, p._y, pr, 0, Math.PI*2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Planet ring (for large props)
+      if (p.total >= 20) {
+        ctx.save();
+        ctx.translate(p._x, p._y);
+        ctx.scale(1, 0.28);
+        ctx.beginPath();
+        ctx.arc(0, 0, pr * 1.7, 0, Math.PI*2);
+        ctx.strokeStyle = `rgba(0,232,122,${isHovered?0.3:0.1})`;
+        ctx.lineWidth = isHovered ? 2 : 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Planet border
+      ctx.beginPath();
+      ctx.arc(p._x, p._y, pr, 0, Math.PI*2);
+      ctx.strokeStyle = isHovered ? `rgba(0,232,122,0.8)` : `rgba(0,232,122,0.2)`;
+      ctx.lineWidth = isHovered ? 1.5 : 0.8;
+      ctx.stroke();
+
+      // Highlight glint
+      ctx.beginPath();
+      ctx.arc(p._x - pr*0.28, p._y - pr*0.28, pr*0.2, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fill();
+
+      // ── Unit dots orbiting the planet ──
+      const units = p.units || [];
+      const orbitR = pr + 16 + Math.min(units.length * 1.2, 28);
+      units.forEach((u, ui) => {
+        const angle = (ui / units.length) * Math.PI * 2 + t * 0.18 + p._orbitPhase;
+        const ux = p._x + Math.cos(angle) * orbitR;
+        const uy = p._y + Math.sin(angle) * orbitR * 0.55;
+        const pastDue = parseFloat(u.past_due||0);
+        const isCurrent = u.status === 'Current';
+        const isDelinquent = isCurrent && pastDue > 0;
+        const isVacant = !isCurrent;
+        const dotColor = isDelinquent ? '#e8003a' : isVacant ? '#ff8c00' : '#00e87a';
+        const dotAlpha = isDelinquent ? 0.95 : isVacant ? 0.85 : 0.7;
+        const dotR = isDelinquent ? 3 : isVacant ? 2.5 : 2;
+
+        // Glow
+        const dotGlow = ctx.createRadialGradient(ux, uy, 0, ux, uy, dotR * 3);
+        dotGlow.addColorStop(0, dotColor + '88');
+        dotGlow.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.arc(ux, uy, dotR * 3, 0, Math.PI*2);
+        ctx.fillStyle = dotGlow;
+        ctx.fill();
+
+        // Dot
+        ctx.beginPath();
+        ctx.arc(ux, uy, dotR, 0, Math.PI*2);
+        ctx.fillStyle = dotColor;
+        ctx.globalAlpha = dotAlpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+
+      // Property label
+      const labelY = p._y + pr + orbitR * 0.55 + 14;
+      const shortName = p.property.split(' - ')[0].replace(/ (DUPLEX|FOURPLEX|APARTMENTS|TOWNHOMES)$/i, '').substring(0, 22);
+      ctx.font = `${isHovered?'700':'500'} ${isHovered?10:8}px 'JetBrains Mono', monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = isHovered ? 'rgba(0,232,122,0.9)' : 'rgba(150,170,160,0.55)';
+      ctx.fillText(shortName.toUpperCase(), p._x, labelY);
+
+      // Unit count badge on planet
+      ctx.font = `800 ${Math.max(8, pr*0.38)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText(p.total, p._x, p._y + pr*0.13);
+    });
+
+    _mcAnimFrame = requestAnimationFrame(drawFrame);
+  }
+
+  drawFrame();
+}
+</script>
+
+
+<!-- IN-PROGRESS BANNER POLLER -->
+<script>
+let _shInProgress = [];
+
+// Re-poll immediately when an inbound activity comes from a showing prospect
+async function shCheckActivityAlert(personId, type, body) {
+  if (!personId) return;
+  const isShowingProspect = _shInProgress && _shInProgress.some(
+    s => String(s.connect_person_id) === String(personId)
+  );
+  if (isShowingProspect) {
+    // Force a re-poll which will pick up the new activity
+    await shPollInProgress();
+  }
+}
+
+let _shBannerAlertPersonId = null;
+// ═══════════════════════════════════════════════════════════════
+// APOLLO MASTER CAUTION ALARM — Web Audio synthesizer
+// ═══════════════════════════════════════════════════════════════
+let _mcAudioCtx      = null;
+let _mcAlarmNodes    = [];   // active oscillator nodes
+let _mcAlarmTimer    = null; // repeating alarm interval
+let _mcAlarmMuted    = false;
+let _mcAlarmActive   = false;
+let _mcWasCritical   = false; // track state changes
+
+function _mcGetCtx() {
+  if (!_mcAudioCtx) {
+    try { _mcAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e) { return null; }
+  }
+  // Resume if suspended (browser autoplay policy)
+  if (_mcAudioCtx.state === 'suspended') _mcAudioCtx.resume().catch(()=>{});
+  return _mcAudioCtx;
+}
+
+// Synthesize the Apollo Master Caution tone
+// Two alternating square-ish tones at ~800Hz and ~1020Hz, 120ms each
+function _mcPlayTonePair(vol = 0.18) {
+  const ctx = _mcGetCtx();
+  if (!ctx || _mcAlarmMuted) return;
+
+  function playTone(freq, startAt, duration) {
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filt = ctx.createBiquadFilter();
+
+    osc.type = 'sawtooth';       // sawtooth gives the "master caution" buzz
+    osc.frequency.value = freq;
+
+    filt.type = 'bandpass';
+    filt.frequency.value = freq;
+    filt.Q.value = 1.2;
+
+    // Envelope: sharp attack, flat sustain, fast decay
+    gain.gain.setValueAtTime(0, startAt);
+    gain.gain.linearRampToValueAtTime(vol, startAt + 0.008);
+    gain.gain.setValueAtTime(vol, startAt + duration - 0.02);
+    gain.gain.linearRampToValueAtTime(0, startAt + duration);
+
+    osc.connect(filt);
+    filt.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(startAt);
+    osc.stop(startAt + duration);
+    _mcAlarmNodes.push(osc);
+    osc.onended = () => { _mcAlarmNodes = _mcAlarmNodes.filter(n=>n!==osc); };
+  }
+
+  const now = ctx.currentTime;
+  // First tone: 800Hz for 120ms
+  playTone(800,  now,        0.12);
+  // Second tone: 1020Hz for 120ms after 130ms gap
+  playTone(1020, now + 0.13, 0.12);
+  // Third tone: 800Hz again after another 130ms — classic triple-beep
+  playTone(800,  now + 0.26, 0.12);
+}
+
+// Start the repeating alarm
+function _mcStartAlarm(critical = false) {
+  if (_mcAlarmActive && _mcWasCritical === critical) return; // already running same mode
+  _mcStopAlarm();
+  _mcAlarmActive  = true;
+  _mcWasCritical  = critical;
+
+  const interval  = critical ? 1800 : 4000; // faster repeat when critical
+  const vol       = critical ? 0.22  : 0.13; // louder when critical
+
+  // Play immediately then repeat
+  _mcPlayTonePair(vol);
+  _mcAlarmTimer = setInterval(() => {
+    if (!_mcAlarmMuted) _mcPlayTonePair(vol);
+  }, interval);
+}
+
+// Stop all alarm sounds
+function _mcStopAlarm() {
+  if (_mcAlarmTimer) { clearInterval(_mcAlarmTimer); _mcAlarmTimer = null; }
+  _mcAlarmActive = false;
+  _mcWasCritical = false;
+  // Fade out any playing nodes
+  const ctx = _mcAudioCtx;
+  if (ctx) {
+    _mcAlarmNodes.forEach(n => { try { n.stop(ctx.currentTime + 0.05); } catch(e) {} });
+  }
+  _mcAlarmNodes = [];
+}
+
+function shToggleMute() {
+  _mcAlarmMuted = !_mcAlarmMuted;
+  const btn   = document.getElementById('sh-mute-btn');
+  const icon  = document.getElementById('sh-mute-icon');
+  const label = document.getElementById('sh-mute-label');
+  if (btn)   btn.classList.toggle('muted', _mcAlarmMuted);
+  if (icon)  icon.textContent  = _mcAlarmMuted ? '🔕' : '🔔';
+  if (label) label.textContent = _mcAlarmMuted ? 'UNMUTE' : 'MUTE';
+  // Stop current alarm sounds immediately when muting
+  if (_mcAlarmMuted) {
+    _mcAlarmNodes.forEach(n => { try { n.stop((_mcAudioCtx?.currentTime||0) + 0.05); } catch(e) {} });
+    _mcAlarmNodes = [];
+  }
+}
+
+let _shBannerDismissed = false;
+
+function shDismissBanner() {
+  _shBannerDismissed = true;
+  _mcStopAlarm();
+  const b = document.getElementById('sh-inprogress-banner');
+  if (b) b.classList.remove('visible','critical');
+}
+
+function shBannerOpenLead() {
+  if (_shBannerAlertPersonId) {
+    openContact(_shBannerAlertPersonId);
+  }
+}
+
+async function shPollInProgress() {
+  try {
+    const rows = await api('/api/showings/in-progress');
+    _shInProgress = rows;
+    const banner   = document.getElementById('sh-inprogress-banner');
+    const textEl   = document.getElementById('sh-banner-text');
+    const subEl    = document.getElementById('sh-banner-sub');
+    const btnsEl   = document.getElementById('sh-banner-btns');
+    const alertRow = document.getElementById('sh-banner-alert-row');
+    const alertType= document.getElementById('sh-banner-alert-type');
+    const alertMsg = document.getElementById('sh-banner-alert-msg');
+    const dotEl    = document.getElementById('sh-banner-dot');
+    if (!banner) return;
+
+    if (!rows.length) {
+      banner.classList.remove('visible','critical');
+      _mcStopAlarm();
+      _shBannerDismissed = false;
+      return;
+    }
+
+    // New showing started — re-show even if dismissed
+    const newActivity = rows.some(r => r.alert_type);
+    if (newActivity) _shBannerDismissed = false;
+    if (_shBannerDismissed && !newActivity) return;
+
+    // Find the most critical showing — one with inbound activity first
+    const critical = rows.find(r => r.alert_type) || rows[0];
+    const hasCritical = !!critical.alert_type;
+    _shBannerAlertPersonId = critical.connect_person_id || null;
+
+    // Main text
+    const name = critical.guest_name || 'Prospect';
+    const firstName = name.includes(',') ? name.split(',').reverse().join(' ').trim() : name;
+    const prop = (critical.property||'').split(' - ')[0];
+    const dt = critical.showing_time ? new Date(critical.showing_time) : null;
+    const startedMins = dt ? Math.max(0, Math.round((Date.now() - dt.getTime()) / 60000)) : 0;
+    const endsIn = Math.max(0, 15 - startedMins);
+
+    if (rows.length === 1) {
+      textEl.textContent = hasCritical
+        ? `🚨 ${firstName.toUpperCase()} — ACTIVE ${critical.alert_type === 'call' ? 'CALL' : 'TEXT'} DURING SHOWING`
+        : `🏠 SHOWING IN PROGRESS — ${firstName.toUpperCase()}`;
+      subEl.textContent = `${prop}${critical.unit?' · Unit '+critical.unit:''} · ${startedMins}m in · ~${endsIn}m remaining`;
+    } else {
+      const alertCount = rows.filter(r=>r.alert_type).length;
+      textEl.textContent = alertCount
+        ? `🚨 ${alertCount} PROSPECT${alertCount>1?'S':''} CONTACTING DURING SHOWINGS`
+        : `🏠 ${rows.length} SHOWINGS IN PROGRESS`;
+      subEl.textContent = rows.map(r => (r.guest_name||'').split(',').reverse().join(' ').trim() || 'Prospect').join(' · ');
+    }
+
+    // Critical alert row
+    if (hasCritical) {
+      const alertTime = critical.alert_at ? new Date(critical.alert_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+      const typeLabel = critical.alert_type === 'call' ? '📞 INBOUND CALL' : '💬 INBOUND TEXT';
+      alertType.textContent = typeLabel + (alertTime ? ' · ' + alertTime : '');
+      alertMsg.textContent  = critical.alert_type === 'sms'
+        ? (critical.alert_body || '(no preview)').substring(0, 120)
+        : `${firstName} is calling — may need help with lockbox or access`;
+      alertRow.style.display = '';
+      banner.classList.add('critical');
+      if (dotEl) dotEl.className = 'sh-banner-dot red';
+    } else {
+      alertRow.style.display = 'none';
+      banner.classList.remove('critical');
+      if (dotEl) dotEl.className = 'sh-banner-dot';
+    }
+
+    // Action buttons
+    const leadBtn = critical.connect_person_id
+      ? `<button class="sh-banner-btn${hasCritical?' alert':''}" onclick="openContact('${critical.connect_person_id}')">OPEN LEAD FILE →</button>`
+      : `<button class="sh-banner-btn" onclick="navigate('people','all')">FIND LEAD →</button>`;
+    btnsEl.innerHTML = `
+      ${leadBtn}
+      <button class="sh-banner-btn" onclick="navigate('showings')">SHOWINGS</button>`;
+
+    banner.classList.add('visible');
+
+    // ── Alarm audio ──
+    // Resume AudioContext on first user interaction (browser policy)
+    if (_mcAudioCtx && _mcAudioCtx.state === 'suspended') _mcAudioCtx.resume().catch(()=>{});
+    _mcStartAlarm(hasCritical);
+
+  } catch(e) { console.warn('[Banner]', e.message); }
+}
+
+// ── WORK ORDERS UPLOAD ─────────────────────────────────────────────────────
+async function woUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const lbl = input?.closest('label');
+  if (lbl) { lbl.style.pointerEvents='none'; lbl.style.opacity='0.5'; }
+  try {
+    const ab   = await file.arrayBuffer();
+    const wb   = XLSX.read(ab, { type:'array', cellDates:true });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+    const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:null });
+
+    // Find header row (contains "Property" and "Work Order Number")
+    let hdrIdx = -1;
+    for (let i = 0; i < raw.length; i++) {
+      const r = raw[i];
+      if (r && r.some(v => v && String(v).trim() === 'Property') &&
+               r.some(v => v && String(v).trim() === 'Work Order Number')) {
+        hdrIdx = i; break;
+      }
+    }
+    if (hdrIdx < 0) { toast('❌ Could not find header row in WO file', 'error'); return; }
+
+    const headers = raw[hdrIdx].map(h => (h||'').toString().trim());
+    const col = k => headers.indexOf(k);
+    let lastProp = null;
+    const rows = [];
+
+    for (let i = hdrIdx + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || r.every(v => v === null || v === '')) continue;
+      // Property header rows have value in col 0 but no WO number
+      const propVal = r[col('Property')];
+      const woNum   = r[col('Work Order Number')];
+      if (propVal && !woNum) { lastProp = String(propVal).split(' - ')[0].trim(); continue; }
+      if (!woNum) continue;
+
+      const parseDate = v => {
+        if (!v) return null;
+        if (v instanceof Date) return v.toISOString();
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? null : d.toISOString();
+      };
+
+      rows.push({
+        property:      lastProp || (propVal ? String(propVal).split(' - ')[0].trim() : null),
+        wo_number:     String(woNum),
+        priority:      r[col('Priority')]||null,
+        wo_type:       r[col('Work Order Type')]||null,
+        job_description: r[col('Job Description')]||null,
+        status:        r[col('Status')]||null,
+        vendor:        r[col('Vendor')]||null,
+        unit:          r[col('Unit')]||null,
+        resident:      r[col('Primary Resident')]||null,
+        created_at:    parseDate(r[col('Created At')]),
+        scheduled_start: parseDate(r[col('Scheduled Start')]),
+        completed_on:  parseDate(r[col('Completed On')]),
+        amount:        r[col('Amount')] ? parseFloat(r[col('Amount')]) : null,
+      });
+    }
+
+    if (!rows.length) { toast('❌ No valid work orders found in file', 'error'); return; }
+    const d = await api('/api/work-orders/upload', 'POST', { rows, filename: file.name });
+    toast(`✅ Imported ${d.inserted} work orders${d.skipped?' ('+d.skipped+' skipped)':''}`, 'success');
+    // Refresh WO meter
+    api('/api/work-orders/stats').then(renderWoMeter).catch(()=>{});
+    if (typeof refreshDashboard === 'function') refreshDashboard();
+  } catch(e) {
+    console.error('[woUpload]', e);
+    toast('❌ WO upload failed: ' + e.message, 'error');
+  } finally {
+    if (lbl) { lbl.style.pointerEvents=''; lbl.style.opacity=''; }
+    if (input) input.value = '';
+  }
+}
+
+// Hook into startShowingAlertPoller so it starts at the same time
+const _origStartPoller = window.startShowingAlertPoller;
+window.startShowingAlertPoller = function() {
+  if (_origStartPoller) _origStartPoller();
+  shPollInProgress();
+  setInterval(shPollInProgress, 60000);
+};
+</script>
+
+<!-- AUDIO CONTEXT RESUME ON FIRST INTERACTION -->
+<script>
+(function() {
+  const resume = () => {
+    if (_mcAudioCtx && _mcAudioCtx.state === 'suspended') {
+      _mcAudioCtx.resume().catch(()=>{});
+    }
+  };
+  document.addEventListener('click', resume, { once: true });
+  document.addEventListener('keydown', resume, { once: true });
+})();
+</script>
+
+<!-- POPSTATE: browser back/forward -->
+<script>
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+  if (!state) { navigate('people', 'all'); return; }
+  if (state.view === 'contact' && state.personId) {
+    openContact(state.personId, true);
+  } else if (state.view === 'people') {
+    navigate('people', state.listId || 'all');
+  } else if (state.view === 'inbox') {
+    navigate('inbox');
+  } else if (state.view === 'admin') {
+    navigate('admin');
+  } else if (state.view === 'security') {
+    navigate('security');
+  } else if (state.view === 'showings') {
+    navigate('showings');
+  }
+});
+</script>
+
+<!-- INBOUND SMS POLLER -->
+<script>
+(function() {
+  let lastActivityIds = new Set();
+  let pollerInterval = null;
+
+  async function checkForNewInbound() {
+    if (!window.currentPersonId) return;
+    try {
+      const jwt = localStorage.getItem('crm_token');
+      if (!jwt) return;
+      const resp = await fetch(`/api/activities?personId=${window.currentPersonId}`, {
+        headers: { 'Authorization': 'Bearer ' + jwt }
+      });
+      if (!resp.ok) return;
+      const activities = await resp.json();
+      if (!Array.isArray(activities)) return;
+
+      const inbound = activities.filter(a => a.type === 'sms' && a.direction === 'inbound');
+      const newOnes = inbound.filter(a => !lastActivityIds.has(a.id));
+
+      if (lastActivityIds.size > 0 && newOnes.length > 0) {
+        // New inbound SMS arrived — flash purple and refresh timeline
+        if (window.neonGlow) window.neonGlow.smsReceived();
+        const el = document.getElementById('timeline-scroll');
+        if (el) el.innerHTML = window.renderTimelineHTML ? window.renderTimelineHTML(activities) : el.innerHTML;
+      }
+
+      // Update known IDs
+      lastActivityIds = new Set(activities.map(a => a.id));
+    } catch(e) {}
+  }
+
+  // Reset tracker when a new contact is opened
+  const origOpenContact = window.openContact;
+  window.openContact = async function(personId) {
+    lastActivityIds = new Set();
+    if (origOpenContact) await origOpenContact(personId);
+    // Seed known IDs after load
+    try {
+      const jwt = localStorage.getItem('crm_token');
+      const resp = await fetch(`/api/activities?personId=${personId}`, {
+        headers: { 'Authorization': 'Bearer ' + jwt }
+      });
+      const acts = await resp.json();
+      if (Array.isArray(acts)) lastActivityIds = new Set(acts.map(a => a.id));
+    } catch(e) {}
+  };
+
+  // Poll every 8 seconds
+  pollerInterval = setInterval(checkForNewInbound, 8000);
+})();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// MY PROFILE + SETTINGS
+// ════════════════════════════════════════════════════════════════════════════
+async function loadMyProfile() {
+  try {
+    myAgent = await api('/api/me');
+    agentsList = (await api('/api/agents')).agents || await api('/api/agents') || [];
+    if (!Array.isArray(agentsList)) agentsList = agentsList.agents || [];
+    renderMyAvatar();
+  } catch(e) { console.warn('[profile]', e.message); }
+}
+
+function renderMyAvatar() {
+  const btn = document.getElementById('my-avatar-btn');
+  if (!btn || !myAgent) return;
+  if (myAgent.avatar_b64) {
+    btn.innerHTML = `<img src="${myAgent.avatar_b64}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+  } else {
+    const initials = (myAgent.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    btn.style.background = myAgent.avatar_color || '#6366f1';
+    btn.style.color = '#fff';
+    btn.textContent = initials;
+  }
+}
+
+function openSettings() {
+  const existing = document.getElementById('settings-modal');
+  if (existing) existing.remove();
+  const ag = myAgent || {};
+  const modal = document.createElement('div');
+  modal.id = 'settings-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  modal.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:16px;width:440px;max-width:95vw;overflow:hidden">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:16px;font-weight:700;color:var(--text)">My Settings</span>
+        <button onclick="document.getElementById('settings-modal').remove()" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;line-height:1">×</button>
+      </div>
+      <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
+        <!-- Avatar -->
+        <div style="display:flex;align-items:center;gap:16px">
+          <div id="settings-avatar-preview" onclick="document.getElementById('settings-avatar-input').click()" style="width:64px;height:64px;border-radius:50%;background:${ag.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff;cursor:pointer;overflow:hidden;border:2px solid var(--border);flex-shrink:0" title="Click to change avatar">
+            ${ag.avatar_b64 ? `<img src="${ag.avatar_b64}" style="width:100%;height:100%;object-fit:cover">` : (ag.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase()}
+          </div>
+          <input type="file" id="settings-avatar-input" accept="image/*" style="display:none" onchange="previewAvatar(event)">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(ag.name||'')}</div>
+            <div style="font-size:11px;color:var(--text-3)">${esc(ag.email||'')}</div>
+            <button onclick="document.getElementById('settings-avatar-input').click()" style="margin-top:6px;font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer">Change Photo</button>
+            <button onclick="clearAvatar()" style="margin-top:6px;margin-left:4px;font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-3);cursor:pointer">Remove</button>
+          </div>
+        </div>
+        <!-- Name -->
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px">Display Name</label>
+          <input id="settings-name" type="text" value="${esc(ag.name||'')}" style="width:100%;padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+        <!-- Phone -->
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px">Phone</label>
+          <input id="settings-phone" type="tel" value="${esc(ag.phone||'')}" style="width:100%;padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+        <!-- Gmail -->
+        <div style="background:var(--bg-4);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text)">✉️ Gmail</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px">${ag.gmail_email ? `Connected: ${esc(ag.gmail_email)}` : 'Not connected — enables email from CRM'}</div>
+            </div>
+            ${ag.gmail_email
+              ? `<button onclick="disconnectGmailSettings()" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-3);cursor:pointer">Disconnect</button>`
+              : `<button onclick="connectGmailSettings()" style="font-size:11px;font-weight:700;padding:5px 12px;border-radius:6px;border:none;background:var(--red);color:#fff;cursor:pointer">Connect Gmail →</button>`
+            }
+          </div>
+        </div>
+        <!-- Change password link -->
+        <div>
+          <button onclick="openChangePassword()" style="font-size:11px;color:var(--text-3);background:none;border:none;cursor:pointer;padding:0;text-decoration:underline">Change Password</button>
+        </div>
+      </div>
+      <div style="padding:12px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('settings-modal').remove()" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-size:13px">Cancel</button>
+        <button onclick="saveSettings()" style="padding:8px 18px;border-radius:8px;border:none;background:var(--red);color:#fff;cursor:pointer;font-size:13px;font-weight:700">Save Changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+let _newAvatarB64 = null;
+function previewAvatar(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    _newAvatarB64 = ev.target.result;
+    const prev = document.getElementById('settings-avatar-preview');
+    if (prev) prev.innerHTML = `<img src="${_newAvatarB64}" style="width:100%;height:100%;object-fit:cover">`;
+  };
+  reader.readAsDataURL(file);
+}
+function clearAvatar() {
+  _newAvatarB64 = 'CLEAR';
+  const prev = document.getElementById('settings-avatar-preview');
+  if (prev) prev.innerHTML = (myAgent?.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+}
+
+async function saveSettings() {
+  const name = document.getElementById('settings-name')?.value?.trim();
+  const phone = document.getElementById('settings-phone')?.value?.trim();
+  const body = { name, phone };
+  if (_newAvatarB64 === 'CLEAR') body.avatar_b64 = null;
+  else if (_newAvatarB64) body.avatar_b64 = _newAvatarB64;
+  _newAvatarB64 = null;
+  try {
+    myAgent = await api('/api/me', 'PUT', body);
+    renderMyAvatar();
+    document.getElementById('settings-modal')?.remove();
+    // Update sidebar
+    if (currentUser) { currentUser.name = myAgent.name; updateSidebarUser(); }
+    toast('Settings saved ✓', 'success');
+  } catch(e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+function connectGmailSettings() {
+  const token = localStorage.getItem('connect_token');
+  window.open(`/api/gmail/connect?token=${encodeURIComponent(token)}`, '_blank', 'width=600,height=700');
+  // Reload profile after a few seconds so status updates
+  setTimeout(() => loadMyProfile().then(openSettings), 4000);
+}
+async function disconnectGmailSettings() {
+  await api('/api/gmail/disconnect', 'POST');
+  await loadMyProfile();
+  openSettings();
+}
+
+function openChangePassword() {
+  document.getElementById('settings-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'pw-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:16px;width:360px;padding:24px">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px">Change Password</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input id="pw-current" type="password" placeholder="Current password" style="padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box">
+      <input id="pw-new" type="password" placeholder="New password" style="padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box">
+      <input id="pw-confirm" type="password" placeholder="Confirm new password" style="padding:8px 12px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%;box-sizing:border-box">
+    </div>
+    <div id="pw-err" style="font-size:12px;color:var(--red);margin-top:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button onclick="document.getElementById('pw-modal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer">Cancel</button>
+      <button onclick="submitChangePassword()" style="padding:8px 16px;border-radius:8px;border:none;background:var(--red);color:#fff;cursor:pointer;font-weight:700">Update</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+}
+async function submitChangePassword() {
+  const cur = document.getElementById('pw-current').value;
+  const nw = document.getElementById('pw-new').value;
+  const con = document.getElementById('pw-confirm').value;
+  const err = document.getElementById('pw-err');
+  if (nw !== con) { err.textContent = 'Passwords do not match'; return; }
+  if (nw.length < 6) { err.textContent = 'Password must be at least 6 characters'; return; }
+  try {
+    await api('/api/me/password', 'PUT', { current_password: cur, new_password: nw });
+    document.getElementById('pw-modal')?.remove();
+    toast('Password updated ✓', 'success');
+  } catch(e) { err.textContent = e.message; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AGENT SSE + PRESENCE + NOTIFICATIONS
+// ════════════════════════════════════════════════════════════════════════════
+function connectAgentSse() {
+  if (_agentSse) return;
+  _agentSse = new EventSource('/api/events/stream');
+  _agentSse.onopen = () => {
+    console.log('[AgentSSE] connected');
+    // Refresh notifications in case any arrived while disconnected
+    loadNotifications();
+    // Wait briefly for server to register this connection, then re-fetch
+    // dashboard stats so the ONLINE NOW light and crew LEDs show correctly
+    setTimeout(() => {
+      if (currentView === 'dashboard') refreshDashboard();
+    }, 400);
+  };
+  _agentSse.onerror = () => {
+    console.warn('[AgentSSE] reconnecting...');
+    _agentSse.close(); _agentSse = null;
+    setTimeout(() => {
+      connectAgentSse();
+    }, 8000);
+  };
+  _agentSse.onmessage = (e) => {
+    try {
+      const payload = JSON.parse(e.data);
+      if (payload.type === 'presence') {
+        renderPresenceBubbles(payload.personId, payload.viewers);
+      } else if (payload.type === 'notification') {
+        handleIncomingNotification(payload.notification);
+      } else if (payload.type === 'new_lead') {
+        toast(`🏠 New Lead: ${payload.name} (${payload.source||'Email'})`, 'success');
+        if (currentListId === 'all') loadPeople('all');
+      } else if (payload.type === 'inbound_sms') {
+        // If sender is a prospect currently showing, escalate the banner
+        shCheckActivityAlert(payload.personId, 'sms', payload.body);
+      } else if (payload.type === 'new_activity') {
+        // If we're on the Upcoming Showings list, an outbound contact may have cleared a "needs contact" flag
+        if ((window._isShowingsList || window._isTourFollowupList) && currentListId && currentListId !== 'all') {
+          loadPeople(currentListId);
+        }
+      } else if (payload.type === 'crew_online') {
+        // SSE connection opened/closed — update the AGENTS caution light immediately without full refresh
+        if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
+          _mcData._liveOnlineCount  = payload.onlineCount;
+          _mcData._liveOnlineIds    = payload.onlineIds || [];
+          // Patch agents online flag in cached data
+          if (_mcData.agents) {
+            _mcData.agents.forEach(a => {
+              a.online = (_mcData._liveOnlineIds).includes(String(a.id));
+            });
+          }
+          renderMcPanels(_mcData, window._mcGalaxy);
+        }
+      } else if (payload.type === 'agent_status') {
+        // Another agent changed their status — refresh dashboard crew panel if visible
+        if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
+          const ag = _mcData.agents?.find(a => String(a.id) === String(payload.agentId));
+          if (ag) { ag.availability = payload.availability; }
+          refreshDashboard();
+        }
+      } else if (payload.type === 'debt_update') {
+        // GrokFUB pushed updated balance/days — refresh banner if this contact is open
+        if (String(payload.personId) === String(currentPersonId) && window._currentPerson) {
+          if (payload.past_due_balance != null) window._currentPerson.past_due_balance = payload.past_due_balance;
+          if (payload.past_due_days    != null) window._currentPerson.past_due_days    = payload.past_due_days;
+          if (payload.stage) window._currentPerson.stage = payload.stage;
+          const stage = payload.stage || window._currentPerson.stage || 'Lead';
+          const banner = document.getElementById('stage-banner');
+          if (banner) {
+            const cls = getStageBannerClass(stage);
+            if (cls === 'banner-delinquent') {
+              const p = window._currentPerson;
+              const cf = p.custom_fields || {};
+              const bal  = p.past_due_balance != null ? p.past_due_balance : cf.past_due_balance;
+              const days = p.past_due_days    != null ? p.past_due_days    : cf.past_due_days;
+              const balStr  = (bal  != null && bal  !== '') ? `$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}` : null;
+              const daysStr = (days != null && days !== '') ? `${parseInt(days)} DAYS` : null;
+              banner.className = '';
+              banner.innerHTML = `<div class="stage-banner-text ${cls}">
+                <span class="banner-delinquent-label">⚠ DELINQUENT</span>
+                ${(balStr || daysStr) ? `<span class="banner-delinquent-divider"></span><span class="banner-delinquent-stats">
+                  ${balStr  ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${balStr}</span><span class="banner-delinquent-stat-lbl">PAST DUE</span></span>` : ''}
+                  ${(balStr && daysStr) ? `<span style="opacity:0.3">|</span>` : ''}
+                  ${daysStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${daysStr}</span><span class="banner-delinquent-stat-lbl">OVERDUE</span></span>` : ''}
+                </span>` : ''}
+              </div>`;
+            }
+          }
+          toast(`🤖 GrokFUB updated debt info`, 'info');
+        }
+      }
+    } catch(err) {}
+  };
+}
+
+function renderPresenceBubbles(personId, viewers) {
+  if (String(personId) !== String(currentPersonId)) return;
+  const strip = document.getElementById('presence-strip');
+  if (!strip) return;
+  // Filter out self
+  const others = (viewers || []).filter(v => myAgent && String(v.id) !== String(myAgent.id));
+  if (!others.length) { strip.innerHTML = ''; return; }
+  strip.innerHTML = `
+    <span style="font-size:10px;color:var(--text-3);margin-right:2px">Also viewing:</span>
+    ${others.map(v => {
+      const initials = (v.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+      const tooltip = esc(v.name);
+      if (v.avatar_b64) {
+        return `<div title="${tooltip}" style="width:26px;height:26px;border-radius:50%;overflow:hidden;border:2px solid var(--green);flex-shrink:0">
+          <img src="${v.avatar_b64}" style="width:100%;height:100%;object-fit:cover"></div>`;
+      }
+      return `<div title="${tooltip}" style="width:26px;height:26px;border-radius:50%;background:${v.avatar_color||'#6366f1'};
+        display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;
+        border:2px solid var(--green);flex-shrink:0">${initials}</div>`;
+    }).join('')}`;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────
+let _notifData = [];
+async function loadNotifications() {
+  try {
+    const r = await api('/api/notifications');
+    _notifData = r.notifications || [];
+    updateNotifBadge(r.unread || 0);
+    // If panel is open, re-render it
+    const panel = document.getElementById('notif-panel');
+    if (panel && panel.style.display !== 'none') renderNotifPanel();
+  } catch(e) {}
+}
+
+// Poll every 60s so badge stays accurate even if SSE push is missed
+let _notifPollTimer = null;
+function startNotifPoller() {
+  if (_notifPollTimer) return;
+  loadNotifications(); // immediate load
+  _notifPollTimer = setInterval(loadNotifications, 60000);
+}
+
+function updateNotifBadge(count) {
+  const badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  if (count > 0) { badge.textContent = count > 99 ? '99+' : count; badge.style.display = 'block'; }
+  else badge.style.display = 'none';
+}
+
+function handleIncomingNotification(notif) {
+  _notifData.unshift(notif);
+  const unread = _notifData.filter(n => !n.is_read).length;
+  updateNotifBadge(unread);
+  renderNotifPanel();
+  // Play a subtle sound or show toast
+  toast(`💬 ${notif.body?.substring(0,80) || 'New notification'}`, 'info', 6000);
+}
+
+function toggleNotifPanel() {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    renderNotifPanel();
+    document.addEventListener('click', closeNotifOnOutside, { once: true });
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+function closeNotifOnOutside(e) {
+  const panel = document.getElementById('notif-panel');
+  const btn = document.getElementById('notif-bell-btn');
+  if (panel && !panel.contains(e.target) && e.target !== btn) {
+    panel.style.display = 'none';
+  }
+}
+
+function renderNotifPanel() {
+  const list = document.getElementById('notif-list');
+  if (!list) return;
+  if (!_notifData.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No notifications</div>';
+    return;
+  }
+  list.innerHTML = _notifData.slice(0,20).map(n => {
+    const initials = (n.sender_name||'?').split(' ').map(x=>x[0]).join('').substring(0,2).toUpperCase();
+    const personName = (n.first_name||'') + ' ' + (n.last_name||'');
+    return `<div onclick="clickNotif('${n.id}','${n.person_id}')" style="display:flex;gap:10px;padding:12px 16px;cursor:pointer;
+      border-bottom:1px solid var(--border);transition:background .1s;${n.is_read?'opacity:.6':''}
+      " onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='transparent'">
+      <div style="width:32px;height:32px;border-radius:50%;background:${n.sender_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
+        ${n.sender_avatar ? `<img src="${n.sender_avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : initials}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;color:var(--text);line-height:1.4">${esc(n.body||'')}</div>
+        ${n.person_id ? `<div style="font-size:10px;color:var(--red);margin-top:2px">${esc(personName.trim())}</div>` : ''}
+        <div style="font-size:10px;color:var(--text-3);margin-top:2px">${timeAgo(n.created_at)}</div>
+      </div>
+      ${!n.is_read ? '<div style="width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;margin-top:4px"></div>' : ''}
+    </div>`;
+  }).join('');
+}
+
+async function clickNotif(notifId, personId) {
+  // Mark as read
+  api(`/api/notifications/${notifId}/read`, 'PUT').catch(()=>{});
+  const notif = _notifData.find(n => n.id === notifId);
+  if (notif) notif.is_read = true;
+  const unread = _notifData.filter(n => !n.is_read).length;
+  updateNotifBadge(unread);
+  renderNotifPanel();
+  // Navigate to contact
+  if (personId) {
+    document.getElementById('notif-panel').style.display = 'none';
+    openContact(personId);
+  }
+}
+
+async function markAllNotifsRead() {
+  await api('/api/notifications/read-all', 'POST').catch(()=>{});
+  _notifData.forEach(n => n.is_read = true);
+  updateNotifBadge(0);
+  renderNotifPanel();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// @MENTION SYSTEM
+// ════════════════════════════════════════════════════════════════════════════
+let _pendingMentions = [];
+
+function handleComposeInput(e) {
+  const ta = e.target;
+  const val = ta.value;
+  const pos = ta.selectionStart;
+
+  // Find the last @ before cursor
+  const beforeCursor = val.substring(0, pos);
+  const atIdx = beforeCursor.lastIndexOf('@');
+  const dd = document.getElementById('mention-dropdown');
+
+  if (atIdx !== -1) {
+    const afterAt = beforeCursor.substring(atIdx + 1);
+    // Only trigger if no space after the @ (still typing name)
+    if (!afterAt.includes(' ') || afterAt.length < 12) {
+      _mentionStart = atIdx;
+      _mentionQuery = afterAt.toLowerCase();
+      const matches = agentsList.filter(a =>
+        a.name.toLowerCase().includes(_mentionQuery) &&
+        (!myAgent || String(a.id) !== String(myAgent.id))
+      );
+      if (matches.length && dd) {
+        _mentionSelectedIdx = 0;
+        // Position dropdown above the textarea using fixed coords to escape overflow:hidden
+        const ta = document.getElementById('compose-input');
+        if (ta) {
+          const rect = ta.getBoundingClientRect();
+          dd.style.left = rect.left + 'px';
+          dd.style.width = rect.width + 'px';
+          // Show above the textarea; if not enough room above, show below
+          const dropH = Math.min(matches.length * 52, 260);
+          if (rect.top - dropH - 8 > 0) {
+            dd.style.top = (rect.top - dropH - 8) + 'px';
+          } else {
+            dd.style.top = (rect.bottom + 4) + 'px';
+          }
+          dd.style.bottom = 'auto';
+        }
+        dd.style.display = 'block';
+        dd.innerHTML = matches.map((a, i) => {
+          const initials = a.name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+          return `<div data-idx="${i}" data-name="${esc(a.name)}" onmousedown="insertMention('${esc(a.name)}')"
+            style="padding:8px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;
+            ${i===0?'background:var(--bg-4)':''}" id="mention-item-${i}"
+            onmouseover="highlightMention(${i})">
+            <div style="width:28px;height:28px;border-radius:50%;background:${a.avatar_color||'#6366f1'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
+              ${a.avatar_b64 ? `<img src="${a.avatar_b64}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : initials}
+            </div>
+            <span style="font-size:13px;color:var(--text)">${esc(a.name)}</span>
+          </div>`;
+        }).join('');
+        return;
+      }
+    }
+  }
+  if (dd) dd.style.display = 'none';
+  _mentionStart = -1;
+}
+
+function highlightMention(idx) {
+  _mentionSelectedIdx = idx;
+  document.querySelectorAll('[id^="mention-item-"]').forEach((el, i) => {
+    el.style.background = i === idx ? 'var(--bg-4)' : 'transparent';
+  });
+}
+
+function handleComposeKeydown(e) {
+  const dd = document.getElementById('mention-dropdown');
+  if (!dd || dd.style.display === 'none') return;
+  const items = dd.querySelectorAll('[data-idx]');
+  if (e.key === 'ArrowDown') { e.preventDefault(); _mentionSelectedIdx = Math.min(_mentionSelectedIdx+1, items.length-1); highlightMention(_mentionSelectedIdx); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _mentionSelectedIdx = Math.max(_mentionSelectedIdx-1, 0); highlightMention(_mentionSelectedIdx); }
+  else if (e.key === 'Enter' || e.key === 'Tab') {
+    const sel = items[_mentionSelectedIdx];
+    if (sel) { e.preventDefault(); insertMention(sel.dataset.name); }
+  } else if (e.key === 'Escape') { dd.style.display = 'none'; }
+}
+
+function insertMention(agentName) {
+  const ta = document.getElementById('compose-input');
+  if (!ta) return;
+  const val = ta.value;
+  const before = val.substring(0, _mentionStart);
+  const after = val.substring(ta.selectionStart);
+  ta.value = before + '@' + agentName + ' ' + after;
+  // Track the mention
+  if (!_pendingMentions.includes(agentName)) _pendingMentions.push(agentName);
+  const dd = document.getElementById('mention-dropdown');
+  if (dd) dd.style.display = 'none';
+  _mentionStart = -1;
+  ta.focus();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EMAIL COMPOSE
+// ════════════════════════════════════════════════════════════════════════════
+function openEmailCompose(personId, toEmail, toName) {
+  const existing = document.getElementById('email-modal');
+  if (existing) existing.remove();
+  if (!myAgent?.gmail_email) {
+    if (confirm('You need to connect Gmail first. Open settings?')) openSettings();
+    return;
+  }
+  const modal = document.createElement('div');
+  modal.id = 'email-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:flex-end;justify-content:flex-end;padding:20px';
+  modal.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:16px;width:480px;max-width:95vw;overflow:hidden;animation:fade-in .2s ease">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg-3)">
+        <span style="font-size:14px;font-weight:700;color:var(--text)">✉️ New Email</span>
+        <button onclick="document.getElementById('email-modal').remove()" style="background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer">×</button>
+      </div>
+      <div style="padding:16px 18px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);width:50px">To</label>
+          <input id="email-to" type="email" value="${esc(toEmail||'')}" placeholder="recipient@email.com"
+            style="flex:1;padding:7px 10px;background:var(--bg-4);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);width:50px">From</label>
+          <div style="font-size:12px;color:var(--text-3);padding:7px 10px">${esc(myAgent.gmail_email)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text-3);width:50px">Subject</label>
+          <input id="email-subject" type="text" placeholder="Subject…"
+            style="flex:1;padding:7px 10px;background:var(--bg-4);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px">
+        </div>
+        <textarea id="email-body" placeholder="Write your message…" rows="8"
+          style="width:100%;padding:10px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('email-modal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-4);color:var(--text-2);cursor:pointer;font-size:13px">Cancel</button>
+        <button id="email-send-btn" onclick="sendEmail('${personId}')" style="padding:8px 18px;border-radius:8px;border:none;background:var(--red);color:#fff;cursor:pointer;font-size:13px;font-weight:700">Send ↑</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  setTimeout(() => document.getElementById('email-subject')?.focus(), 100);
+}
+
+async function sendEmail(personId) {
+  const to = document.getElementById('email-to')?.value?.trim();
+  const subject = document.getElementById('email-subject')?.value?.trim();
+  const body = document.getElementById('email-body')?.value?.trim();
+  if (!to || !body) { toast('To and body are required', 'error'); return; }
+  const btn = document.getElementById('email-send-btn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await api('/api/gmail/send', 'POST', { to, subject, body, personId });
+    document.getElementById('email-modal')?.remove();
+    toast('Email sent ✓', 'success');
+    // Refresh timeline
+    const acts = await api(`/api/activities?personId=${personId}`);
+    const el = document.getElementById('timeline-scroll');
+    if (el) el.innerHTML = renderTimelineHTML(acts || []);
+  } catch(e) {
+    toast('Send failed: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Send ↑';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PATCH submitCompose to include @mentions
+// ════════════════════════════════════════════════════════════════════════════
+const _origSubmitCompose = window.submitCompose;
+window.submitCompose = async function() {
+  const mentions = [..._pendingMentions];
+  _pendingMentions = [];
+  // Inject mentions into the activity payload — patch the api call
+  const _origApi = window.api;
+  window.api = async function(url, method, data) {
+    if (url === '/api/activities' && method === 'POST' && mentions.length) {
+      data = { ...data, mentions };
+    }
+    const result = await _origApi(url, method, data);
+    window.api = _origApi; // restore after one call
+    return result;
+  };
+  return _origSubmitCompose?.();
+};
+
+// Leave presence when navigating away
+const _origNavigate = window.navigate;
+window.navigate = function(view, listId) {
+  if (_presencePersonId && view !== 'contact') {
+    api(`/api/presence/leave`, 'POST', { personId: _presencePersonId }).catch(()=>{});
+    _presencePersonId = null;
+  }
+  return _origNavigate?.(view, listId);
+};
+
+</script>
+  <!-- @mention dropdown — body level to escape overflow:hidden ancestors -->
+  <div id="mention-dropdown" style="display:none;position:fixed;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.55);z-index:9999;min-width:220px;max-width:300px;overflow:hidden"></div>
+
+  <!-- SHOWING IN-PROGRESS BANNER -->
+  <div id="sh-inprogress-banner">
+    <div class="sh-banner-inner">
+      <div class="sh-banner-dot" id="sh-banner-dot"></div>
+      <div style="flex:1;min-width:0">
+        <div class="sh-banner-text" id="sh-banner-text">SHOWING IN PROGRESS</div>
+        <div class="sh-banner-sub" id="sh-banner-sub"></div>
+      </div>
+      <div id="sh-banner-btns" style="display:flex;gap:8px;align-items:center;flex-shrink:0"></div>
+      <button class="sh-mute-btn" id="sh-mute-btn" onclick="shToggleMute()" title="Toggle alarm sound">
+        <span id="sh-mute-icon">🔔</span><span id="sh-mute-label">MUTE</span>
+      </button>
+      <button class="sh-banner-btn" onclick="shDismissBanner()" style="padding:5px 9px;font-size:11px">✕</button>
+    </div>
+    <div class="sh-banner-critical-row" id="sh-banner-alert-row" style="display:none">
+      <div class="sh-banner-dot red" style="width:8px;height:8px"></div>
+      <div class="sh-banner-critical-label" id="sh-banner-alert-type">⚠ ALERT</div>
+      <div class="sh-banner-critical-msg" id="sh-banner-alert-msg"></div>
+      <button class="sh-banner-btn alert" id="sh-banner-alert-btn" onclick="shBannerOpenLead()">OPEN LEAD FILE →</button>
+    </div>
+  </div>
+<!-- FEEDBACK REPORT MODAL -->
+<div id="feedback-report-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.88);backdrop-filter:blur(4px);overflow-y:auto" onclick="if(event.target===this)closeFeedbackReport()">
+  <div style="max-width:900px;margin:32px auto 60px;background:#111;border:1px solid #222;border-radius:8px;overflow:hidden;font-family:var(--font-mono)">
+    <div style="padding:18px 24px;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;justify-content:space-between;background:#0d0d0d;position:sticky;top:0;z-index:2">
+      <div>
+        <div style="font-size:14px;letter-spacing:0.15em;color:#eee;font-weight:700">📊 TOUR FEEDBACK REPORT</div>
+        <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-top:3px">ALL PROPERTIES · ALL TIME</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="downloadFeedbackReport()" id="fr-dl-btn" style="background:transparent;border:1px solid #6366f1;color:#6366f1;padding:6px 14px;cursor:pointer;border-radius:4px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase">⬇ DOWNLOAD PDF</button>
+        <button onclick="closeFeedbackReport()" style="background:none;border:1px solid #333;color:#666;padding:6px 12px;cursor:pointer;border-radius:4px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em">✕ CLOSE</button>
+      </div>
+    </div>
+    <div id="feedback-report-body" style="padding:24px">
+      <div style="text-align:center;padding:40px;color:#333;letter-spacing:0.15em;font-size:10px">LOADING REPORT...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _frData = null; // cached for PDF
+
+async function openFeedbackReport() {
+  const modal = document.getElementById('feedback-report-modal');
+  const body  = document.getElementById('feedback-report-body');
+  modal.style.display = 'block';
+  body.innerHTML = '<div style="text-align:center;padding:40px;color:#333;letter-spacing:0.15em;font-size:10px">LOADING REPORT...</div>';
+  try {
+    const d = await api('/api/showings/feedback-report');
+    _frData = d;
+    renderFeedbackReport(d);
+  } catch(e) {
+    body.innerHTML = `<div style="color:var(--red);padding:24px;text-align:center">${e.message}</div>`;
+  }
+}
+
+function closeFeedbackReport() {
+  document.getElementById('feedback-report-modal').style.display = 'none';
+}
+
+// ── AI recommendation per property — feedback + live nearby listing search ──
+async function loadPropertyAI(idx, elId) {
+  const propData = (window._frPropData || {})[idx];
+  const propName = propData ? propData.property.split(' - ')[0] : '?';
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:10px 0">
+    <div style="width:6px;height:6px;border-radius:50%;background:#6366f1;animation:pulse 1s infinite"></div>
+    <span style="color:#555;letter-spacing:0.1em;font-size:9px">🔍 SEARCHING NEARBY LISTINGS & ANALYZING FEEDBACK...</span>
+  </div>`;
+  try {
+    const result = await api('/api/showings/property-recommendation', 'POST', {
+      propertyName: propName,
+      stats: propData
+    });
+    const text = result.recommendation || 'No recommendation generated.';
+
+    // Split into two paragraphs
+    const parts = text.split(/\n\n+/);
+    const p1 = parts[0] || text;
+    const p2 = parts[1] || '';
+
+    el.innerHTML = `
+      <div style="margin-top:10px">
+        <div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:5px">📋 FEEDBACK-BASED RECOMMENDATIONS</div>
+        <div style="font-size:11px;line-height:1.7;color:#bbb;font-family:system-ui,sans-serif;padding:12px 14px;background:#0a0a0a;border-left:3px solid #6366f1;border-radius:0 4px 4px 0;margin-bottom:10px">${esc(p1)}</div>
+        ${p2 ? `
+        <div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:5px">🏘 COMPETITIVE MARKET ANALYSIS — NEARBY LISTINGS</div>
+        <div style="font-size:11px;line-height:1.7;color:#bbb;font-family:system-ui,sans-serif;padding:12px 14px;background:#0a0a0a;border-left:3px solid #ff8c00;border-radius:0 4px 4px 0">${esc(p2)}</div>
+        ` : ''}
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<span style="color:#e8003a;font-size:9px">⚠ ${e.message}</span>`;
+  }
+}
+
+function renderFeedbackReport(d) {
+  const body = document.getElementById('feedback-report-body');
+  if (!d || !d.total) {
+    body.innerHTML = '<div style="text-align:center;padding:40px;color:#333;font-size:10px;letter-spacing:0.15em">NO FEEDBACK DATA YET — SUBMIT FEEDBACK ON SHOWINGS TO SEE RESULTS</div>';
+    return;
+  }
+
+  const pct = (n) => d.total > 0 ? Math.round((n/d.total)*100) : 0;
+  const goP = pct(d.go), noP = pct(d.nogo), mayP = pct(d.maybe);
+
+  const verdictBar = (val, total, col, label) => {
+    const w = total > 0 ? Math.round((val/total)*100) : 0;
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="width:52px;font-size:8px;letter-spacing:0.1em;color:#666;text-align:right">${label}</div>
+      <div style="flex:1;background:#1a1a1a;border-radius:3px;height:14px;overflow:hidden">
+        <div style="width:${w}%;height:100%;background:${col};border-radius:3px"></div>
+      </div>
+      <div style="width:44px;font-size:10px;font-weight:700;color:${col}">${val} <span style="color:#444;font-size:8px">${w}%</span></div>
+    </div>`;
+  };
+
+  const catPill = (cat, count, maxCount) => {
+    const w = Math.round((count/maxCount)*100);
+    const col = cat.toLowerCase().includes('price')||cat.toLowerCase().includes('rent') ? '#ff8c00'
+              : cat.toLowerCase().includes('condition')||cat.toLowerCase().includes('repair') ? '#e8003a'
+              : '#6366f1';
+    return `<div style="margin-bottom:5px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+        <span style="font-size:8px;letter-spacing:0.08em;color:#aaa">${esc(cat)}</span>
+        <span style="font-size:8px;color:${col}">${count}</span>
+      </div>
+      <div style="background:#1a1a1a;border-radius:2px;height:5px">
+        <div style="width:${w}%;height:100%;background:${col};border-radius:2px;opacity:0.8"></div>
+      </div>
+    </div>`;
+  };
+
+  // Store per-property data for AI buttons (avoids JSON-in-onclick quoting issues)
+  window._frPropData = {};
+
+  // Per-property expanded cards with AI slot
+  const propCards = (d.byProperty||[]).map((p, idx) => {
+    const propName = p.property.split(' - ')[0];
+    const goW  = p.total > 0 ? Math.round((p.go/p.total)*100) : 0;
+    const noW  = p.total > 0 ? Math.round((p.nogo/p.total)*100) : 0;
+    const mayW = p.total > 0 ? Math.round((p.maybe/p.total)*100) : 0;
+    const borderCol = noW > 50 ? '#e8003a' : noW > 25 ? '#ff8c00' : '#1e1e1e';
+    const aiId = 'ai-rec-' + idx;
+    const propNotes = (d.recent||[]).filter(r => r.property === p.property && r.notes).map(r => r.notes);
+    window._frPropData[idx] = { ...p, recentNotes: propNotes };
+    const issueChips = (p.topIssues||[]).slice(0,6).map(i =>
+      '<span style="background:#1a1a1a;border:1px solid #252525;padding:2px 8px;border-radius:3px;font-size:8px;color:#888;letter-spacing:0.06em">' + esc(i.cat) + ' ×' + i.count + '</span>'
+    ).join('');
+    const goBar  = goW  ? '<div style="flex:' + goW  + ';background:#00e87a"></div>' : '';
+    const mayBar = mayW ? '<div style="flex:' + mayW + ';background:#ff8c00"></div>' : '';
+    const noBar  = noW  ? '<div style="flex:' + noW  + ';background:#e8003a"></div>' : '';
+    return '<div style="background:#0d0d0d;border:1px solid ' + borderCol + ';border-radius:6px;margin-bottom:12px;overflow:hidden">'
+      + '<div style="padding:14px 16px;display:flex;align-items:center;gap:14px">'
+        + '<div style="flex:1">'
+          + '<div style="font-size:11px;letter-spacing:0.08em;color:#ccc;font-weight:700;margin-bottom:4px">' + esc(propName) + '</div>'
+          + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + (issueChips || '<span style="font-size:8px;color:#333">No issues tagged</span>') + '</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:10px;align-items:center;flex-shrink:0">'
+          + '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#00e87a">' + p.go + '</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">GO</div></div>'
+          + '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#ff8c00">' + p.maybe + '</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">MAYBE</div></div>'
+          + '<div style="text-align:center"><div style="font-size:16px;font-weight:800;color:#e8003a">' + p.nogo + '</div><div style="font-size:7px;color:#333;letter-spacing:0.1em">NO-GO</div></div>'
+          + '<div style="width:80px">'
+            + '<div style="display:flex;height:8px;border-radius:2px;overflow:hidden;gap:1px">' + goBar + mayBar + noBar + '</div>'
+            + '<div style="font-size:7px;color:#444;margin-top:3px;text-align:center">' + p.total + ' TOURS</div>'
+          + '</div>'
+        + '</div>'
+      + '</div>'
+      + '<div style="padding:0 16px 14px">'
+        + '<div style="font-size:7px;letter-spacing:0.15em;color:#444;margin-bottom:4px">\u{1F916} AI RECOMMENDATION</div>'
+        + '<div id="' + aiId + '">'
+          + '<button onclick="loadPropertyAI(' + idx + ', \'' + aiId + '\')" '
+          + 'style="background:transparent;border:1px solid #252525;color:#555;padding:5px 12px;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;cursor:pointer;border-radius:3px;transition:all 0.15s" '
+          + 'onmouseover="this.style.borderColor=\'#6366f1\';this.style.color=\'#6366f1\'" '
+          + 'onmouseout="this.style.borderColor=\'#252525\';this.style.color=\'#555\'">'
+          + '\u2736 GENERATE RECOMMENDATION'
+          + '</button>'
+        + '</div>'
+      + '</div>'
+    + '</div>';
+  }).join('');
+
+  // Full feedback log
+  const allRows = (d.recent||[]).map(r => {
+    const vcol = r.verdict === 'go' ? '#00e87a' : r.verdict === 'no-go' ? '#e8003a' : '#ff8c00';
+    const vlbl = r.verdict === 'go' ? '✓ GO' : r.verdict === 'no-go' ? '✗ NO-GO' : '? MAYBE';
+    const dt   = r.showing_time ? new Date(r.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    const prop = (r.property||'').split(' - ')[0].substring(0,28);
+    const cats = (r.categories||[]).slice(0,3).map(c=>`<span style="background:#1e1e1e;padding:1px 5px;border-radius:2px;font-size:7px;color:#888">${esc(c)}</span>`).join(' ');
+    return `<tr style="border-bottom:1px solid #141414">
+      <td style="padding:7px 8px;font-size:9px;color:#888;white-space:nowrap">${dt}</td>
+      <td style="padding:7px 8px;font-size:9px;color:#ccc">${esc(r.guest_name||'—')}</td>
+      <td style="padding:7px 8px;font-size:9px;color:#666">${esc(prop)}</td>
+      <td style="padding:7px 8px"><span style="color:${vcol};font-size:8px;font-weight:700;letter-spacing:0.1em">${vlbl}</span></td>
+      <td style="padding:7px 8px">${cats}</td>
+      <td style="padding:7px 8px;font-size:8px;color:#555;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.notes||'')}">${esc(r.notes||'')}</td>
+    </tr>`;
+  }).join('');
+
+  const maxIssueCount = d.topIssues?.[0]?.count || 1;
+
+  body.innerHTML = `
+    <!-- SCORECARDS -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+      ${[
+        { label:'TOTAL TOURS', val:d.total, col:'#6366f1' },
+        { label:'GO',          val:d.go,    sub:goP+'%',  col:'#00e87a' },
+        { label:'NO-GO',       val:d.nogo,  sub:noP+'%',  col:'#e8003a' },
+        { label:'MAYBE',       val:d.maybe, sub:mayP+'%', col:'#ff8c00' },
+      ].map(s=>`<div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:14px 16px">
+        <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:6px">${s.label}</div>
+        <div style="font-size:26px;font-weight:800;color:${s.col};line-height:1">${s.val}</div>
+        ${s.sub?`<div style="font-size:9px;color:#555;margin-top:3px">${s.sub} of total</div>`:''}
+      </div>`).join('')}
+    </div>
+
+    <!-- VERDICT + TOP ISSUES -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+      <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:16px">
+        <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:12px">VERDICT BREAKDOWN</div>
+        ${verdictBar(d.go,    d.total,'#00e87a','GO')}
+        ${verdictBar(d.maybe, d.total,'#ff8c00','MAYBE')}
+        ${verdictBar(d.nogo,  d.total,'#e8003a','NO-GO')}
+      </div>
+      <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;padding:16px">
+        <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:12px">TOP OBJECTIONS</div>
+        ${d.topIssues&&d.topIssues.length ? d.topIssues.slice(0,8).map(i=>catPill(i.cat,i.count,maxIssueCount)).join('') : '<div style="color:#333;font-size:9px">None recorded</div>'}
+      </div>
+    </div>
+
+    <!-- PER-PROPERTY CARDS WITH AI -->
+    <div style="font-size:8px;letter-spacing:0.15em;color:#444;margin-bottom:10px">PROPERTY BREAKDOWN & AI RECOMMENDATIONS</div>
+    ${propCards}
+
+    <!-- FULL FEEDBACK LOG -->
+    <div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:6px;overflow:hidden;margin-top:8px">
+      <div style="padding:12px 16px;border-bottom:1px solid #1a1a1a;font-size:8px;letter-spacing:0.15em;color:#444">COMPLETE FEEDBACK LOG — ${d.total} ENTRIES</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid #1a1a1a">
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">DATE</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">GUEST</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">PROPERTY</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">VERDICT</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">ISSUES</th>
+            <th style="padding:6px 8px;text-align:left;font-size:7px;letter-spacing:0.1em;color:#333;font-weight:400">NOTES</th>
+          </tr></thead>
+          <tbody>${allRows||'<tr><td colspan="6" style="padding:16px;text-align:center;color:#333;font-size:9px">No feedback yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── PDF / Print download ──────────────────────────────────────
+async function downloadFeedbackReport() {
+  const btn = document.getElementById('fr-dl-btn');
+  if (btn) { btn.textContent = '⏳ BUILDING...'; btn.disabled = true; }
+  try {
+    const d = _frData;
+    if (!d) return;
+
+    // Collect AI recs that have already been generated (both paragraphs)
+    const aiRecs = {};
+    document.querySelectorAll('[id^="ai-rec-"]').forEach(el => {
+      // Grab all rendered paragraph divs inside the ai slot
+      const paras = el.querySelectorAll('div[style*="border-left"]');
+      if (paras.length) {
+        const card = el.closest('[style*="border-radius:6px"]');
+        const nameEl = card?.querySelector('[style*="font-weight:700"]');
+        if (nameEl) {
+          aiRecs[nameEl.textContent.trim()] = Array.from(paras).map(p => p.textContent.trim());
+        }
+      }
+    });
+
+    const dateStr = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+    const pct = n => d.total > 0 ? Math.round((n/d.total)*100) : 0;
+
+    const propSections = (d.byProperty||[]).map(p => {
+      const propName = p.property.split(' - ')[0];
+      const rec = aiRecs[propName] || [];
+      const issues = (p.topIssues||[]).map(i=>`${i.cat} (${i.count}x)`).join(', ') || 'None recorded';
+      const recHtml = rec.length === 0 ? '' :
+        rec.length === 1
+          ? `<div class="ai-rec"><strong>🤖 AI Recommendation:</strong><br>${rec[0]}</div>`
+          : `<div class="ai-rec" style="border-left-color:#6366f1"><strong>📋 Feedback-Based Recommendations:</strong><br>${rec[0]}</div>
+             <div class="ai-rec" style="border-left-color:#b35f00;background:#fffaf0"><strong>🏘 Competitive Market Analysis — Nearby Listings:</strong><br>${rec[1]}</div>`;
+      return `
+        <div class="prop-block">
+          <h3>${propName}</h3>
+          <div class="verdict-row">
+            <span class="go">GO: ${p.go}</span>
+            <span class="maybe">MAYBE: ${p.maybe}</span>
+            <span class="nogo">NO-GO: ${p.nogo}</span>
+            <span class="total">${p.total} total tours</span>
+          </div>
+          <div class="issues"><strong>Top Issues:</strong> ${issues}</div>
+          ${recHtml}
+        </div>`;
+    }).join('');
+
+    const allFeedback = (d.recent||[]).map(r => {
+      const dt = r.showing_time ? new Date(r.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+      const prop = (r.property||'').split(' - ')[0];
+      const vrd = r.verdict === 'go' ? 'GO' : r.verdict === 'no-go' ? 'NO-GO' : 'MAYBE';
+      const cats = (r.categories||[]).join(', ') || '—';
+      return `<tr>
+        <td>${dt}</td>
+        <td>${r.guest_name||'—'}</td>
+        <td>${prop}</td>
+        <td class="${r.verdict?.replace('-','')}">${vrd}</td>
+        <td>${cats}</td>
+        <td>${r.notes||''}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Tour Feedback Report — OKCREAL ${dateStr}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size:11px; color:#111; padding:32px 40px; max-width:900px; margin:0 auto; }
+  h1 { font-size:22px; font-weight:800; letter-spacing:0.05em; color:#111; margin-bottom:4px; }
+  h2 { font-size:14px; font-weight:700; letter-spacing:0.08em; color:#444; margin:28px 0 10px; border-bottom:2px solid #eee; padding-bottom:6px; }
+  h3 { font-size:12px; font-weight:700; color:#111; margin-bottom:6px; }
+  .meta { font-size:10px; color:#888; margin-bottom:32px; }
+  .scorecards { display:flex; gap:16px; margin-bottom:28px; }
+  .card { flex:1; border:1px solid #ddd; border-radius:6px; padding:14px; text-align:center; }
+  .card .num { font-size:28px; font-weight:800; }
+  .card .lbl { font-size:9px; letter-spacing:0.12em; color:#888; text-transform:uppercase; margin-bottom:4px; }
+  .card .sub { font-size:10px; color:#aaa; margin-top:3px; }
+  .green { color:#00804a; } .red { color:#c0002a; } .amber { color:#b35f00; } .purple { color:#4040c8; }
+  .go { color:#00804a; font-weight:700; } .nogo { color:#c0002a; font-weight:700; } .maybe { color:#b35f00; font-weight:700; }
+  .prop-block { border:1px solid #ddd; border-radius:6px; padding:16px; margin-bottom:14px; }
+  .verdict-row { display:flex; gap:16px; margin:6px 0 8px; font-size:11px; }
+  .total { color:#888; }
+  .issues { font-size:10px; color:#555; margin-bottom:8px; }
+  .ai-rec { background:#f5f5ff; border-left:3px solid #6366f1; padding:10px 14px; border-radius:0 4px 4px 0; font-size:11px; line-height:1.65; color:#333; font-style:italic; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th { text-align:left; font-size:9px; letter-spacing:0.1em; color:#888; text-transform:uppercase; padding:6px 8px; border-bottom:2px solid #eee; font-weight:600; }
+  td { padding:6px 8px; border-bottom:1px solid #f0f0f0; font-size:10px; vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  @media print { body { padding:20px; } }
+</style></head><body>
+<h1>📊 Tour Feedback Report</h1>
+<div class="meta">OKCREAL Property Management · Generated ${dateStr} · All Properties · All Time</div>
+
+<div class="scorecards">
+  <div class="card"><div class="lbl">Total Tours</div><div class="num purple">${d.total}</div></div>
+  <div class="card"><div class="lbl">GO</div><div class="num green">${d.go}</div><div class="sub">${pct(d.go)}% of total</div></div>
+  <div class="card"><div class="lbl">NO-GO</div><div class="num red">${d.nogo}</div><div class="sub">${pct(d.nogo)}% of total</div></div>
+  <div class="card"><div class="lbl">MAYBE</div><div class="num amber">${d.maybe}</div><div class="sub">${pct(d.maybe)}% of total</div></div>
+</div>
+
+<h2>PROPERTY BREAKDOWN & AI RECOMMENDATIONS</h2>
+${propSections}
+
+<h2>COMPLETE FEEDBACK LOG</h2>
+<table>
+  <thead><tr><th>Date</th><th>Guest</th><th>Property</th><th>Verdict</th><th>Issues</th><th>Notes</th></tr></thead>
+  <tbody>${allFeedback}</tbody>
+</table>
+</body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `OKCREAL_TourFeedback_${new Date().toISOString().slice(0,10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } finally {
+    if (btn) { btn.textContent = '⬇ DOWNLOAD PDF'; btn.disabled = false; }
+  }
+}
+</script>
+
+</body>
+</html>
