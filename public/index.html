@@ -7406,6 +7406,8 @@ async function refreshDashboard() {
     ]);
     _mcData   = stats;
     _mcGalaxy = galaxy;
+    window._mcGalaxy = galaxy;
+    window._mcData   = stats;
     renderMcPanels(stats, galaxy);
     initGalaxyCanvas(galaxy);
   } catch(e) {
@@ -7443,9 +7445,9 @@ function renderMcPanels(d, galaxy) {
       color:'green', note:'NOMINAL' },
     { label:'TWILIO', sublabel:'SMS · CALLS',
       color:'green', note:'NOMINAL' },
-    { label:`${d.onlineCount} AGENT${d.onlineCount!==1?'S':''}`, sublabel:'ONLINE NOW',
-      color: d.onlineCount===0?'red': d.onlineCount<2?'amber':'green',
-      flash: d.onlineCount===0, note: d.onlineCount===0?'NO CREW':'STAFFED' },
+    { label:`${(d._liveOnlineCount??d.onlineCount)} AGENT${(d._liveOnlineCount??d.onlineCount)!==1?'S':''}`, sublabel:'ONLINE NOW',
+      color: (d._liveOnlineCount??d.onlineCount)===0?'red': (d._liveOnlineCount??d.onlineCount)<2?'amber':'green',
+      flash: (d._liveOnlineCount??d.onlineCount)===0, note: (d._liveOnlineCount??d.onlineCount)===0?'NO CREW':'STAFFED' },
     { label:'SHOWINGS', sublabel:'DAILY REPORT',
       color: shStatus.color, flash: shStatus.flash, note: shStatus.note },
     { label:'RENT ROLL', sublabel:'UNIT DATA',
@@ -8340,11 +8342,8 @@ function connectAgentSse() {
   _agentSse = new EventSource('/api/events/stream');
   _agentSse.onopen = () => {
     console.log('[AgentSSE] connected');
-    // Re-fetch dashboard stats now that our SSE conn is registered server-side
-    // Small delay to ensure agentConnections map is updated before query runs
-    if (typeof refreshDashboard === 'function') {
-      setTimeout(refreshDashboard, 800);
-    }
+    // crew_online SSE event will arrive from the server immediately after open
+    // and will trigger a re-render with the correct online count — no polling needed
   };
   _agentSse.onerror = () => {
     console.warn('[AgentSSE] reconnecting...');
@@ -8371,10 +8370,22 @@ function connectAgentSse() {
         if (window._isShowingsList && currentListId && currentListId !== 'all') {
           loadPeople(currentListId);
         }
+      } else if (payload.type === 'crew_online') {
+        // SSE connection opened/closed — update the AGENTS caution light immediately without full refresh
+        if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
+          _mcData._liveOnlineCount  = payload.onlineCount;
+          _mcData._liveOnlineIds    = payload.onlineIds || [];
+          // Patch agents online flag in cached data
+          if (_mcData.agents) {
+            _mcData.agents.forEach(a => {
+              a.online = (_mcData._liveOnlineIds).includes(String(a.id));
+            });
+          }
+          renderMcPanels(_mcData, window._mcGalaxy);
+        }
       } else if (payload.type === 'agent_status') {
         // Another agent changed their status — refresh dashboard crew panel if visible
         if (currentView === 'dashboard' && typeof _mcData !== 'undefined' && _mcData) {
-          // Update in-memory data and re-render just the agents panel
           const ag = _mcData.agents?.find(a => String(a.id) === String(payload.agentId));
           if (ag) { ag.availability = payload.availability; }
           refreshDashboard();
