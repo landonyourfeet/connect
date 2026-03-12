@@ -1360,6 +1360,56 @@
       border-radius: 8px;
       border: 2px solid;
     }
+    .stage-banner-text.banner-delinquent {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 8px 28px;
+      flex-wrap: wrap;
+    }
+    .banner-delinquent-label {
+      font-family: var(--font-disp);
+      font-size: 26px;
+      letter-spacing: 0.3em;
+    }
+    .banner-delinquent-stats {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+      opacity: 0.92;
+    }
+    .banner-delinquent-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1.1;
+      border: 1px solid rgba(59,158,255,0.4);
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: rgba(59,158,255,0.06);
+    }
+    .banner-delinquent-stat-val {
+      font-size: 15px;
+      font-weight: 900;
+    }
+    .banner-delinquent-stat-lbl {
+      font-size: 8px;
+      letter-spacing: 0.18em;
+      opacity: 0.65;
+      text-transform: uppercase;
+      margin-top: 1px;
+    }
+    .banner-delinquent-divider {
+      width: 1px;
+      height: 28px;
+      background: rgba(59,158,255,0.3);
+    }
     .banner-resident {
       color: #00e8f0;
       border-color: #00e8f0;
@@ -2619,7 +2669,6 @@ async function launchApp() {
   document.getElementById('app').classList.add('visible');
   updateSidebarUser();
   await Promise.all([loadSmartLists(), loadInboxCount()]);
-  // Deep-link routing — handle direct URLs like /file/113
   const _path = window.location.pathname;
   const _fileMatch = _path.match(/^\/file\/(\d+)$/);
   const _listMatch = _path.match(/^\/list\/(\d+)$/);
@@ -2696,7 +2745,6 @@ function cycleStatus() {
 
 // ── NAVIGATION ──────────────────────────────────────────────────────
 function navigate(view, listId = null) {
-  // Keep browser URL in sync with current view
   try {
     if (view === 'people' && (!listId || listId === 'all')) {
       history.pushState({ view: 'people', listId: 'all' }, '', '/');
@@ -3326,6 +3374,7 @@ async function secSaveProfile() {
 
 
 function renderContactRecord(person, activities, tasks) {
+  window._currentPerson = person; // Store for banner updates
   const viewEl = document.getElementById('view-contact');
   const name = [person.first_name, person.last_name].filter(Boolean).join(' ') || 'Unknown';
   window._currentContactName = name;
@@ -3466,7 +3515,25 @@ function renderContactRecord(person, activities, tasks) {
     <div class="contact-center">
       <!-- Stage Banner -->
       <div id="stage-banner" class="${getStageBannerClass(stage) ? '' : 'banner-hidden'}">
-        ${getStageBannerClass(stage) ? `<div class="stage-banner-text ${getStageBannerClass(stage)}">${esc(stage)}</div>` : ''}
+        ${getStageBannerClass(stage) ? (() => {
+          const cls = getStageBannerClass(stage);
+          if (cls === 'banner-delinquent') {
+            const cf = person.custom_fields || {};
+            const bal = person.past_due_balance != null ? person.past_due_balance : cf.past_due_balance;
+            const days = person.past_due_days != null ? person.past_due_days : cf.past_due_days;
+            const balStr = (bal != null && bal !== '') ? `$${parseFloat(bal).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}` : null;
+            const daysStr = (days != null && days !== '') ? `${parseInt(days)} DAYS` : null;
+            return `<div class="stage-banner-text ${cls}">
+              <span class="banner-delinquent-label">⚠ DELINQUENT</span>
+              ${(balStr || daysStr) ? `<span class="banner-delinquent-divider"></span><span class="banner-delinquent-stats">
+                ${balStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${balStr}</span><span class="banner-delinquent-stat-lbl">PAST DUE</span></span>` : ''}
+                ${(balStr && daysStr) ? `<span style="opacity:0.3">|</span>` : ''}
+                ${daysStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${daysStr}</span><span class="banner-delinquent-stat-lbl">OVERDUE</span></span>` : ''}
+              </span>` : ''}
+            </div>`;
+          }
+          return `<div class="stage-banner-text ${cls}">${esc(stage)}</div>`;
+        })() : ''}
       </div>
       <div class="timeline-header">
         <div class="compose-area" id="compose-area">
@@ -3972,7 +4039,24 @@ async function updatePersonStage(personId, stage) {
     const cls = getStageBannerClass(stage);
     if (cls) {
       banner.className = '';
-      banner.innerHTML = `<div class="stage-banner-text ${cls}">${esc(stage)}</div>`;
+      if (cls === 'banner-delinquent') {
+        const p = window._currentPerson || {};
+        const cf = p.custom_fields || {};
+        const bal = p.past_due_balance != null ? p.past_due_balance : cf.past_due_balance;
+        const days = p.past_due_days != null ? p.past_due_days : cf.past_due_days;
+        const balStr = (bal != null && bal !== '') ? `$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}` : null;
+        const daysStr = (days != null && days !== '') ? `${parseInt(days)} DAYS` : null;
+        banner.innerHTML = `<div class="stage-banner-text ${cls}">
+          <span class="banner-delinquent-label">⚠ DELINQUENT</span>
+          ${(balStr || daysStr) ? `<span class="banner-delinquent-divider"></span><span class="banner-delinquent-stats">
+            ${balStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${balStr}</span><span class="banner-delinquent-stat-lbl">PAST DUE</span></span>` : ''}
+            ${(balStr && daysStr) ? `<span style="opacity:0.3">|</span>` : ''}
+            ${daysStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${daysStr}</span><span class="banner-delinquent-stat-lbl">OVERDUE</span></span>` : ''}
+          </span>` : ''}
+        </div>`;
+      } else {
+        banner.innerHTML = `<div class="stage-banner-text ${cls}">${esc(stage)}</div>`;
+      }
     } else {
       banner.className = 'banner-hidden';
       banner.innerHTML = '';
@@ -6389,6 +6473,36 @@ function connectAgentSse() {
       } else if (payload.type === 'new_lead') {
         toast(`🏠 New Lead: ${payload.name} (${payload.source||'Email'})`, 'success');
         if (currentListId === 'all') loadPeople('all');
+      } else if (payload.type === 'debt_update') {
+        // GrokFUB pushed updated balance/days — refresh banner if this contact is open
+        if (String(payload.personId) === String(currentPersonId) && window._currentPerson) {
+          if (payload.past_due_balance != null) window._currentPerson.past_due_balance = payload.past_due_balance;
+          if (payload.past_due_days    != null) window._currentPerson.past_due_days    = payload.past_due_days;
+          if (payload.stage) window._currentPerson.stage = payload.stage;
+          const stage = payload.stage || window._currentPerson.stage || 'Lead';
+          const banner = document.getElementById('stage-banner');
+          if (banner) {
+            const cls = getStageBannerClass(stage);
+            if (cls === 'banner-delinquent') {
+              const p = window._currentPerson;
+              const cf = p.custom_fields || {};
+              const bal  = p.past_due_balance != null ? p.past_due_balance : cf.past_due_balance;
+              const days = p.past_due_days    != null ? p.past_due_days    : cf.past_due_days;
+              const balStr  = (bal  != null && bal  !== '') ? `$${parseFloat(bal).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}` : null;
+              const daysStr = (days != null && days !== '') ? `${parseInt(days)} DAYS` : null;
+              banner.className = '';
+              banner.innerHTML = `<div class="stage-banner-text ${cls}">
+                <span class="banner-delinquent-label">⚠ DELINQUENT</span>
+                ${(balStr || daysStr) ? `<span class="banner-delinquent-divider"></span><span class="banner-delinquent-stats">
+                  ${balStr  ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${balStr}</span><span class="banner-delinquent-stat-lbl">PAST DUE</span></span>` : ''}
+                  ${(balStr && daysStr) ? `<span style="opacity:0.3">|</span>` : ''}
+                  ${daysStr ? `<span class="banner-delinquent-stat"><span class="banner-delinquent-stat-val">${daysStr}</span><span class="banner-delinquent-stat-lbl">OVERDUE</span></span>` : ''}
+                </span>` : ''}
+              </div>`;
+            }
+          }
+          toast(`🤖 GrokFUB updated debt info`, 'info');
+        }
       }
     } catch(err) {}
   };
