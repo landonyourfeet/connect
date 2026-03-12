@@ -2790,6 +2790,74 @@ app.get('/api/showings/feedback-report', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Quick AI rec for a single property — used in the feedback form
+app.get('/api/showings/property-ai-rec', auth, async (req, res) => {
+  try {
+    const { property } = req.query;
+    if (!property) return res.status(400).json({ error: 'property required' });
+
+    const grok = initGrok();
+    if (!grok) return res.status(503).json({ error: 'Grok not configured' });
+
+    // Pull stats for this property
+    const { rows } = await pool.query(`
+      SELECT f.verdict, f.categories, f.notes
+      FROM showing_feedback f
+      JOIN showings s ON s.id = f.showing_id
+      WHERE s.property = $1
+    `, [property]);
+
+    if (!rows.length) return res.json({ recommendation: null, total: 0 });
+
+    let go=0, nogo=0, maybe=0;
+    const catCounts = {};
+    const notes = [];
+    for (const r of rows) {
+      if (r.verdict === 'go')    go++;
+      if (r.verdict === 'no-go') nogo++;
+      if (r.verdict === 'maybe') maybe++;
+      for (const c of (r.categories||[])) catCounts[c] = (catCounts[c]||0)+1;
+      if (r.notes) notes.push(r.notes);
+    }
+    const topIssues = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).slice(0,8)
+      .map(([cat,count])=>({ cat, count }));
+    const issueList = topIssues.map(i=>`  - ${i.cat}: mentioned ${i.count}x`).join('\n') || '  - No issues tagged';
+    const notesSample = notes.slice(0,5).map((n,i)=>`  ${i+1}. "${n}"`).join('\n') || '  None recorded';
+
+    const propName = property.split(' - ')[0];
+
+    const prompt = `You are a property management advisor for OKCREAL in Oklahoma City, OK.
+
+PROPERTY: "${propName}"
+TOUR FEEDBACK:
+- Totals: ${rows.length} tours | GO: ${go} | MAYBE: ${maybe} | NO-GO: ${nogo}
+- Top objections:
+${issueList}
+- Sample agent notes:
+${notesSample}
+
+Write exactly TWO paragraphs separated by a blank line:
+
+PARAGRAPH 1 — FEEDBACK ANALYSIS: Based on this feedback, what specific changes should the owner make to get a GO on the next tour? Be direct and actionable (pricing, cosmetic updates, appliances, cleaning, curb appeal, finishes).
+
+PARAGRAPH 2 — COMPETITIVE MARKET ANALYSIS: Search Zillow, Apartments.com, and Realtor.com for rentals within 0.25 miles of "${propName}" in Oklahoma City, OK priced within 10% of this unit's market rent. What amenities or features are nearby competitors offering that this property lacks? Is a price adjustment warranted? What upgrades would close the gap fastest?
+
+Write ONLY the two paragraphs. No headers, no bullets.`;
+
+    const completion = await grok.chat.completions.create({
+      model: 'grok-3', max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }],
+      search_parameters: { mode: 'on', max_search_results: 5 }
+    });
+
+    const text = completion.choices?.[0]?.message?.content || '';
+    res.json({ recommendation: text.trim(), total: rows.length, go, nogo, maybe, topIssues });
+  } catch(e) {
+    console.error('property-ai-rec error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // AI property recommendation — feedback + live nearby listing search via Grok
 app.post('/api/showings/property-recommendation', auth, async (req, res) => {
   try {
