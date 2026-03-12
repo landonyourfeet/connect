@@ -5629,24 +5629,63 @@ const VoiceViz = (() => {
 })();
 
 // ── TWILIO ─────────────────────────────────────────────────────────────
+let _twilioInitPromise = null; // prevent double-init races
+
 async function initTwilio() {
   if (userStatus === 'offline') return;
-  try {
-    // Use GET — matches backend handler
-    const data = await api('/api/twilio/token', 'GET');
-    if (!data.token) return;
-    if (typeof Twilio === 'undefined') { console.warn('[Twilio] SDK not loaded'); return; }
+  // If already initializing, return the same promise
+  if (_twilioInitPromise) return _twilioInitPromise;
 
-    twilioReady = false;
-    twilioDevice = new Twilio.Device(data.token, { logLevel: 1, codecPreferences: ['opus', 'pcmu'] });
+  _twilioInitPromise = _doInitTwilio().finally(() => { _twilioInitPromise = null; });
+  return _twilioInitPromise;
+}
+
+async function _doInitTwilio() {
+  try {
+    if (typeof Twilio === 'undefined') {
+      console.warn('[Twilio] SDK not loaded — check network');
+      throw new Error('Twilio SDK failed to load. Check your connection and reload.');
+    }
+
+    const data = await api('/api/twilio/token', 'GET');
+    if (!data?.token) {
+      const msg = data?.error || 'No token returned';
+      console.warn('[Twilio] Token error:', msg);
+      throw new Error('Phone token error: ' + msg);
+    }
+
+    // Tear down any existing device cleanly
+    if (twilioDevice) {
+      try { twilioDevice.destroy(); } catch(e) {}
+      twilioDevice = null;
+      twilioReady  = false;
+    }
+
+    twilioDevice = new Twilio.Device(data.token, {
+      logLevel: 1,
+      codecPreferences: ['opus', 'pcmu'],
+      allowIncomingWhileBusy: true,
+    });
 
     twilioDevice.on('registered', () => {
       twilioReady = true;
-      console.log('[Twilio] Device ready');
+      console.log('[Twilio] Device ready ✅');
     });
     twilioDevice.on('error', err => {
+      const msg = err?.message || String(err);
       twilioReady = false;
-      console.warn('[Twilio] Error:', err.message || err);
+      console.warn('[Twilio] Device error:', msg);
+      // Auto re-init on token expiry
+      if (msg.includes('token') || msg.includes('expired') || msg.includes('31204') || msg.includes('31205')) {
+        console.log('[Twilio] Token expired — re-initializing in 2s');
+        setTimeout(() => { twilioDevice = null; initTwilio(); }, 2000);
+      }
+    });
+    twilioDevice.on('tokenWillExpire', () => {
+      console.log('[Twilio] Token expiring — refreshing');
+      api('/api/twilio/token', 'GET').then(d => {
+        if (d?.token) twilioDevice.updateToken(d.token);
+      }).catch(()=>{});
     });
     twilioDevice.on('incoming', handleIncomingCall);
     twilioDevice.on('disconnect', handleCallEnd);
@@ -5654,21 +5693,41 @@ async function initTwilio() {
     twilioDevice.register();
   } catch(e) {
     console.warn('[Twilio] Init failed:', e.message);
+    throw e; // re-throw so quickCall can surface it
   }
 }
 
-// Wait for Twilio device to become ready (with timeout)
-function waitForTwilioReady(timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
-    if (twilioReady) return resolve();
+// Wait for Twilio device to become ready — with one auto-retry
+async function waitForTwilioReady(timeoutMs = 12000) {
+  // Already ready
+  if (twilioReady) return;
+
+  // Wait for registration
+  await new Promise((resolve, reject) => {
     const start = Date.now();
     const check = setInterval(() => {
       if (twilioReady) { clearInterval(check); resolve(); }
       else if (Date.now() - start > timeoutMs) {
         clearInterval(check);
-        reject(new Error('Phone not ready — check Twilio configuration'));
+        reject(new Error('_timeout_'));
       }
-    }, 200);
+    }, 250);
+  }).catch(async (e) => {
+    if (e.message !== '_timeout_') throw e;
+    // One retry — destroy and re-init
+    console.warn('[Twilio] Registration timed out — retrying');
+    if (twilioDevice) { try { twilioDevice.destroy(); } catch(_){} twilioDevice = null; twilioReady = false; }
+    await initTwilio();
+    await new Promise((resolve, reject) => {
+      const start2 = Date.now();
+      const check2 = setInterval(() => {
+        if (twilioReady) { clearInterval(check2); resolve(); }
+        else if (Date.now() - start2 > 8000) {
+          clearInterval(check2);
+          reject(new Error('Phone unavailable — verify Twilio credentials & TwiML App in Railway env vars'));
+        }
+      }, 250);
+    });
   });
 }
 
@@ -5900,12 +5959,12 @@ async function quickCall(personId, phone, name) {
 
   // Ensure Twilio is initialized and ready before connecting
   if (!twilioDevice || !twilioReady) {
-    toast('Connecting phone…', 'info');
-    if (!twilioDevice) await initTwilio();
+    const toastId = toast('☎ Connecting phone…', 'info', 15000);
     try {
+      if (!twilioDevice) await initTwilio();
       await waitForTwilioReady();
     } catch(e) {
-      toast(e.message, 'error');
+      toast(e.message, 'error', 8000);
       return;
     }
   }
@@ -7489,10 +7548,18 @@ async function refreshDashboard() {
 
 // ── PANELS ───────────────────────────────────────────────────
 function renderMcPanels(d, galaxy) {
+  if (!d) return;
+  if (!d.uploads) d.uploads = {};
   const hoursAgo = dt => dt ? (Date.now() - new Date(dt).getTime()) / 3600000 : 9999;
-  const shAge = hoursAgo(d.uploads.showings?.created_at);
-  const rrAge = hoursAgo(d.uploads.rentRoll?.created_at);
-  const woAge = hoursAgo(d.uploads.workOrders?.created_at);
+  const fmtAge  = h => {
+    if (h > 9000) return 'NEVER UPLOADED';
+    if (h < 1)    return 'JUST NOW';
+    if (h < 24)   return Math.floor(h) + 'H AGO';
+    return Math.floor(h / 24) + 'D AGO';
+  };
+  const shAge = hoursAgo(d.uploads?.showings?.created_at);
+  const rrAge = hoursAgo(d.uploads?.rentRoll?.created_at);
+  const woAge = hoursAgo(d.uploads?.workOrders?.created_at);
 
   // Returns { color, flash, note } for an upload timestamp
   function uploadStatus(dt) {
@@ -7656,7 +7723,7 @@ function renderMcPanels(d, galaxy) {
       <div class="mc-upload-status" style="background:${dotCol};box-shadow:0 0 8px ${dotCol};${stale?'animation:mc-flash 1.2s ease-in-out infinite':''}"></div>
       <div class="mc-upload-info">
         <div class="mc-upload-name">${esc(u.label)}</div>
-        <div class="mc-upload-time" style="color:${stale?'#ff8c00':'#555'}">${stale?'⚠ ':''} ${fmtd}${u.count?' · '+u.count+(u.key==='showings'?' records':' units'):''}
+        <div class="mc-upload-time" style="color:${stale?'#ff8c00':'#555'}">${stale?'⚠ ':''} ${fmtd}${u.count?' · '+u.count+(u.key==='showings'||u.key==='workorders'?' records':' units'):''}
 </div>
       </div>
       <div class="mc-upload-btn-wrap">
