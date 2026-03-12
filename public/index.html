@@ -3121,15 +3121,24 @@ async function loadPeople(listId = 'all') {
     const total = data.total ?? peopleData.length;
     const listName = listId === 'all' ? 'All People' : (smartLists.find(l=>String(l.id)===String(listId))?.name || 'People');
     _isDelinqList = listName.toLowerCase().includes('delinquent');
+    const _isTourList = _listMeta?.filters?.type === 'toured_no_followup';
     const _listMeta = smartLists.find(l=>String(l.id)===String(listId));
-    window._isShowingsList = _listMeta?.filters?.type === 'upcoming_showings_72h';
+    window._isShowingsList     = _listMeta?.filters?.type === 'upcoming_showings_72h';
+    window._isTourFollowupList = _listMeta?.filters?.type === 'toured_no_followup';
     ['th-past-due','th-past-due-days'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display=_isDelinqList?'':'none'; });
     if (_isDelinqList && sortField !== 'past_due_days') { sortField='past_due_balance'; sortDir='desc'; }
     else if (!_isDelinqList && sortField==='past_due_balance') { sortField='name'; sortDir='asc'; }
     document.getElementById('header-title').textContent = listName;
     document.getElementById('people-count').innerHTML = `<strong>${total.toLocaleString()}</strong> people`;
     const badge = document.getElementById('badge-' + listId);
-    if (badge) badge.textContent = total;
+    if (badge) {
+      badge.textContent = total;
+      // Urgent red badge for actionable lists
+      if (_isDelinqList || _isTourList) {
+        badge.style.background = 'var(--red)';
+        badge.style.color = '#fff';
+      }
+    }
     // Show/hide the tactical list header bar
     const hdr = document.getElementById('sl-list-header');
     if (listId && listId !== 'all') {
@@ -3193,7 +3202,23 @@ function renderPeopleTable() {
         ? `<span class="contact-status-badge uncontacted">⚠ NEEDS CONTACT</span>`
         : `<span class="contact-status-badge contacted">✓ CONTACTED</span>`;
     }
-    const rowClass = (window._isShowingsList && p.needs_contact) ? 'needs-contact' : '';
+    // ── Tours No Follow-Up list extras ──
+    if (window._isTourFollowupList) {
+      const tourDt = p.last_tour_at ? new Date(p.last_tour_at) : null;
+      const daysAgo = tourDt ? Math.floor((Date.now() - tourDt) / 86400000) : null;
+      const propShort = (p.showing_property||'').split(' - ')[0].substring(0,28);
+      const tourCount = p.tour_count > 1 ? ` · ${p.tour_count} tours` : '';
+      const agingColor = daysAgo >= 30 ? '#e8003a' : daysAgo >= 14 ? '#ff8c00' : '#6366f1';
+      if (tourDt) {
+        showingTimeBadge = `<div style="margin-top:3px">
+          <span style="font-family:var(--font-mono);font-size:8px;letter-spacing:0.08em;color:${agingColor};background:${agingColor}18;padding:2px 7px;border-radius:3px">
+            🏠 TOURED ${daysAgo}D AGO${tourCount}
+          </span></div>
+          <div style="margin-top:2px;font-size:9px;color:var(--text-3);font-family:var(--font-mono)">${esc(propShort)}${p.showing_unit?' · Unit '+p.showing_unit:''}</div>`;
+      }
+      contactBadge = `<span class="contact-status-badge uncontacted">⚠ NO FOLLOW-UP</span>`;
+    }
+    const rowClass = ((window._isShowingsList || window._isTourFollowupList) && p.needs_contact) ? 'needs-contact' : '';
 
     return `<tr class="${rowClass}" onclick="openContact('${p.id}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="row-check" value="${p.id}" onchange="updateBulkActions()"></td>
@@ -8608,7 +8633,7 @@ function connectAgentSse() {
         shCheckActivityAlert(payload.personId, 'sms', payload.body);
       } else if (payload.type === 'new_activity') {
         // If we're on the Upcoming Showings list, an outbound contact may have cleared a "needs contact" flag
-        if (window._isShowingsList && currentListId && currentListId !== 'all') {
+        if ((window._isShowingsList || window._isTourFollowupList) && currentListId && currentListId !== 'all') {
           loadPeople(currentListId);
         }
       } else if (payload.type === 'crew_online') {
