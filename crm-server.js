@@ -2448,9 +2448,145 @@ function requireGrokfubToken(req, res, next) {
   next();
 }
 
+// ── JAREIH COMMAND LINE ──────────────────────────────────────────────────────
+app.post('/api/jareih/parse', auth, async (req, res) => {
+  const grok = initGrok();
+  if (!grok) return res.status(503).json({ error: 'AI not configured' });
+  const { command, context } = req.body;
+  if (!command) return res.status(400).json({ error: 'No command' });
+
+  // Build context string from recent people/showings if provided
+  const contextStr = context ? `\nCurrent context: ${JSON.stringify(context)}` : '';
+
+  // Fetch people names for matching
+  const peopleR = await pool.query(
+    `SELECT id, first_name, last_name, phone, stage FROM people ORDER BY updated_at DESC LIMIT 200`
+  ).catch(() => ({ rows: [] }));
+  const peopleList = peopleR.rows.map(p =>
+    `${p.id}|${p.first_name} ${p.last_name||''}|${p.phone||''}|${p.stage}`
+  ).join('\n');
+
+  const propertiesR = await pool.query(
+    `SELECT DISTINCT property FROM showings ORDER BY property`
+  ).catch(() => ({ rows: [] }));
+  const properties = propertiesR.rows.map(r => r.property).join(', ');
+
+  const today = new Date().toISOString();
+
+  try {
+    const completion = await grok.chat.completions.create({
+      model: 'grok-3',
+      max_tokens: 600,
+      messages: [{
+        role: 'system',
+        content: `You are Jareih, an AI assistant for OKCREAL Connect property management CRM.
+Parse the agent's natural language command into a structured action plan.
+Today is ${today}.
+Available people (id|name|phone|stage):\n${peopleList}
+Available properties: ${properties}
+${contextStr}
+
+Respond ONLY with valid JSON (no markdown). Schema:
+{
+  "action": one of: "send_sms" | "schedule_showing" | "add_note" | "create_contact" | "open_contact" | "navigate" | "add_task" | "unknown",
+  "summary": "One sentence human-readable description of what will happen",
+  "confirmPrompt": "Exact question to ask agent before executing, including all key details",
+  "params": { /* action-specific params */ }
+}
+
+Action params:
+- send_sms: { personId, personName, phone, message }
+- schedule_showing: { personId, personName, property, unit, date, time, showingType }
+- add_note: { personId, personName, note }
+- create_contact: { firstName, lastName, phone, email, stage }
+- open_contact: { personId, personName }
+- navigate: { view } (view = "dashboard"|"inbox"|"showings"|"people"|"admin")
+- add_task: { personId, personName, title, dueDate }
+- unknown: { clarification: "what you need to know" }
+
+Match person names fuzzily. For dates/times, resolve relative references like "tomorrow 2pm" to ISO strings.
+If multiple people match, pick the best match or set action=unknown and ask for clarification.`
+      }, {
+        role: 'user',
+        content: command
+      }]
+    });
+
+    const raw = completion.choices[0].message.content.trim();
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    res.json(parsed);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/jareih/people-search', auth, async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.json([]);
+  const r = await pool.query(
+    `SELECT id, first_name, last_name, phone, stage FROM people
+     WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR phone ILIKE $1
+     ORDER BY updated_at DESC LIMIT 8`,
+    [`%${q}%`]
+  ).catch(() => ({ rows: [] }));
+  res.json(r.rows);
+});
+
+app.get('/api/jareih/properties', auth, async (req, res) => {
+  const r = await pool.query(`SELECT DISTINCT property FROM showings ORDER BY property`).catch(() => ({ rows: [] }));
+  res.json(r.rows.map(r => r.property));
+});
+
+app.post('/api/jareih/showing', auth, async (req, res) => {
+  const { personId, personName, property, unit, date, time, showingType } = req.body;
+  if (!property || !date) return res.status(400).json({ error: 'Missing property or date' });
+  // Resolve person name if no personId
+  let pid = personId;
+  if (!pid && personName) {
+    const parts = personName.trim().split(/\s+/);
+    const r = await pool.query(
+      `SELECT id FROM people WHERE first_name ILIKE $1 AND (last_name ILIKE $2 OR $2='') LIMIT 1`,
+      [parts[0], parts[1]||'']
+    ).catch(() => ({ rows: [] }));
+    pid = r.rows[0]?.id || null;
+  }
+  try {
+    const showingTime = new Date(`${date}T${time||'09:00'}`).toISOString();
+    const guestName = personName || 'Guest';
+    const r = await pool.query(
+      `INSERT INTO showings (property, unit, guest_name, showing_time, status, showing_type, connect_person_id)
+       VALUES ($1, $2, $3, $4, 'Scheduled', $5, $6) RETURNING *`,
+      [property, unit||null, guestName, showingTime, showingType||'In-Person', pid ? String(pid) : null]
+    );
+    res.json({ ok: true, showing: r.rows[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/jareih/history', auth, async (req, res) => {
+  const r = await pool.query(
+    `SELECT * FROM jareih_history WHERE agent_id=$1 ORDER BY created_at DESC LIMIT 50`,
+    [req.agent.id]
+  ).catch(() => ({ rows: [] }));
+  res.json(r.rows);
+});
+
+app.post('/api/jareih/history', auth, async (req, res) => {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS jareih_history (id SERIAL PRIMARY KEY, agent_id UUID, command TEXT, result JSONB, created_at TIMESTAMPTZ DEFAULT NOW())`
+  ).catch(() => {});
+  const { command, result } = req.body;
+  await pool.query(
+    `INSERT INTO jareih_history (agent_id, command, result) VALUES ($1, $2, $3)`,
+    [req.agent.id, command, JSON.stringify(result)]
+  ).catch(() => {});
+  res.json({ ok: true });
+});
+
 app.get('/api/grokfub/people', requireGrokfubToken, async (req, res) => {
   try {
     const { phone, tag } = req.query;
+
     let rows = [];
     if (phone) {
       const digits = phone.replace(/\D/g, '').slice(-10);
