@@ -1834,6 +1834,88 @@
     .task-due.overdue { color: var(--red); }
     .no-tasks { font-size: 12px; color: var(--text-3); text-align: center; padding: 12px 0; }
 
+    /* ── SHOWINGS VIEW ─────────────────────────────────────────── */
+    .sh-header { padding:16px 20px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-shrink:0; background:var(--bg-2); }
+    .sh-title { font-family:var(--font-disp); font-size:22px; letter-spacing:0.12em; color:var(--text); }
+    .sh-subtitle { font-family:var(--font-mono); font-size:10px; color:var(--text-3); letter-spacing:0.1em; }
+    .sh-upload-btn { margin-left:auto; background:var(--red); color:#fff; border:none; padding:7px 16px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.15s; }
+    .sh-upload-btn:hover { background:#c00030; box-shadow:0 0 12px rgba(232,0,58,0.4); }
+    .sh-body { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:16px; }
+
+    /* Property cards */
+    .sh-prop-card { background:var(--bg-2); border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:all 0.15s; }
+    .sh-prop-card:hover { border-color:var(--border-hi); transform:translateY(-1px); box-shadow:0 4px 16px rgba(0,0,0,0.2); }
+    .sh-prop-card.active { border-color:var(--red); box-shadow:0 0 0 1px var(--red); }
+    .sh-prop-header { padding:12px 16px; display:flex; align-items:center; gap:10px; }
+    .sh-prop-address { flex:1; min-width:0; }
+    .sh-prop-name { font-family:var(--font-cond); font-size:14px; font-weight:700; letter-spacing:0.06em; color:var(--text); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sh-prop-meta { font-family:var(--font-mono); font-size:9px; color:var(--text-3); margin-top:1px; }
+    .sh-prop-stats { display:flex; gap:8px; flex-shrink:0; }
+    .sh-stat { display:flex; flex-direction:column; align-items:center; padding:4px 10px; border-radius:4px; border:1px solid; font-family:var(--font-mono); }
+    .sh-stat-val { font-size:16px; font-weight:900; line-height:1; }
+    .sh-stat-lbl { font-size:7px; letter-spacing:0.15em; text-transform:uppercase; margin-top:2px; opacity:0.7; }
+    .sh-stat.total  { border-color:rgba(255,255,255,0.1); color:var(--text-2); }
+    .sh-stat.go     { border-color:rgba(0,232,122,0.3); color:var(--green); background:var(--green-dim); }
+    .sh-stat.nogo   { border-color:rgba(232,0,58,0.3);  color:var(--red);   background:var(--red-dim); }
+    .sh-stat.maybe  { border-color:rgba(255,140,0,0.3); color:var(--amber); background:var(--amber-dim); }
+    [data-theme="light"] .sh-stat.total { border-color:var(--border); color:var(--text-2); }
+
+    /* Showings list panel */
+    .sh-list-panel { background:var(--bg-2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+    .sh-list-header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; background:var(--bg-3); }
+    .sh-list-title { font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--text-2); flex:1; }
+    .sh-showing-row { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; transition:background 0.1s; cursor:pointer; }
+    .sh-showing-row:last-child { border-bottom:none; }
+    .sh-showing-row:hover { background:var(--bg-3); }
+    .sh-showing-name { font-size:13px; font-weight:600; color:var(--text); flex:1; min-width:0; }
+    .sh-showing-meta { font-family:var(--font-mono); font-size:9px; color:var(--text-3); margin-top:2px; }
+    .sh-verdict-chip { font-family:var(--font-mono); font-size:8px; font-weight:800; letter-spacing:0.15em; padding:3px 8px; border-radius:20px; text-transform:uppercase; flex-shrink:0; }
+    .sh-verdict-chip.go    { background:var(--green-dim); color:var(--green); border:1px solid rgba(0,232,122,0.3); }
+    .sh-verdict-chip.nogo  { background:var(--red-dim);   color:var(--red);   border:1px solid rgba(232,0,58,0.3); }
+    .sh-verdict-chip.maybe { background:var(--amber-dim); color:var(--amber); border:1px solid rgba(255,140,0,0.3); }
+    .sh-verdict-chip.none  { background:var(--bg-4); color:var(--text-3); border:1px solid var(--border); }
+    .sh-type-badge { font-family:var(--font-mono); font-size:8px; padding:2px 6px; border-radius:3px; background:var(--bg-4); color:var(--text-3); border:1px solid var(--border); flex-shrink:0; }
+
+    /* Trends panel */
+    .sh-trends { padding:14px 16px; border-top:1px solid var(--border); background:var(--bg-3); }
+    .sh-trends-title { font-family:var(--font-mono); font-size:9px; letter-spacing:0.18em; text-transform:uppercase; color:var(--text-3); margin-bottom:10px; }
+    .sh-trend-bar { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+    .sh-trend-label { font-family:var(--font-mono); font-size:10px; color:var(--text-2); width:130px; flex-shrink:0; text-transform:capitalize; }
+    .sh-trend-track { flex:1; height:6px; background:var(--bg-5); border-radius:3px; overflow:hidden; }
+    .sh-trend-fill  { height:100%; background:var(--red); border-radius:3px; transition:width 0.4s; }
+    .sh-trend-count { font-family:var(--font-mono); font-size:10px; color:var(--text-3); width:24px; text-align:right; }
+
+    /* Feedback modal */
+    .sh-modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
+    .sh-modal { background:var(--bg-2); border:1px solid var(--border); border-radius:12px; width:480px; max-width:95vw; overflow:hidden; }
+    .sh-modal-head { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .sh-modal-title { font-family:var(--font-cond); font-size:16px; font-weight:800; letter-spacing:0.1em; text-transform:uppercase; color:var(--text); }
+    .sh-modal-close { background:none; border:none; color:var(--text-3); font-size:18px; cursor:pointer; padding:0 4px; }
+    .sh-modal-body { padding:20px; }
+    .sh-verdict-row { display:flex; gap:10px; margin-bottom:20px; }
+    .sh-verdict-btn { flex:1; padding:12px; border:2px solid var(--border); border-radius:8px; background:transparent; cursor:pointer; font-family:var(--font-cond); font-size:16px; font-weight:800; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-2); transition:all 0.15s; display:flex; flex-direction:column; align-items:center; gap:4px; }
+    .sh-verdict-btn .sh-vb-emoji { font-size:24px; }
+    .sh-verdict-btn:hover { transform:translateY(-2px); }
+    .sh-verdict-btn.go.selected   { border-color:var(--green); color:var(--green); background:var(--green-dim); box-shadow:0 0 16px rgba(0,232,122,0.2); }
+    .sh-verdict-btn.nogo.selected { border-color:var(--red);   color:var(--red);   background:var(--red-dim);   box-shadow:0 0 16px rgba(232,0,58,0.2); }
+    .sh-verdict-btn.maybe.selected{ border-color:var(--amber); color:var(--amber); background:var(--amber-dim); box-shadow:0 0 16px rgba(255,140,0,0.2); }
+    .sh-cat-label { font-family:var(--font-mono); font-size:9px; letter-spacing:0.15em; text-transform:uppercase; color:var(--text-3); margin-bottom:8px; }
+    .sh-cat-grid { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; }
+    .sh-cat-chip { padding:5px 10px; border:1px solid var(--border); border-radius:20px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.08em; cursor:pointer; background:var(--bg-3); color:var(--text-2); transition:all 0.12s; text-transform:capitalize; }
+    .sh-cat-chip.selected { border-color:var(--red); color:var(--red); background:var(--red-dim); }
+    .sh-notes-input { width:100%; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-body); font-size:13px; padding:10px 12px; resize:vertical; min-height:72px; box-sizing:border-box; margin-bottom:16px; }
+    .sh-notes-input:focus { outline:none; border-color:var(--border-hi); }
+    .sh-modal-footer { display:flex; gap:10px; justify-content:flex-end; }
+    .sh-save-btn { background:var(--red); color:#fff; border:none; padding:9px 24px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:6px; transition:all 0.15s; }
+    .sh-save-btn:hover { background:#c00030; }
+    .sh-cancel-btn { background:transparent; color:var(--text-3); border:1px solid var(--border); padding:9px 16px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:6px; }
+
+    /* Light theme overrides */
+    [data-theme="light"] .sh-prop-card { background:#fff; }
+    [data-theme="light"] .sh-list-panel { background:#fff; }
+    [data-theme="light"] .sh-modal { background:#fff; }
+    [data-theme="light"] .sh-notes-input { background:var(--bg-3); }
+
     /* ── INBOX VIEW ───────────────────────────────────────────── */
     #view-inbox { overflow: hidden; }
     .inbox-list { flex: 1; overflow-y: auto; }
@@ -2080,6 +2162,10 @@
           Security Alerts
           <span id="sec-alert-badge" style="display:none;margin-left:auto;background:#ff3b3b;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.05em"></span>
         </div>
+        <div class="nav-item" data-view="showings" onclick="navigate('showings')" id="nav-showings">
+          <span class="nav-icon">🏠</span>
+          Showings
+        </div>
       </div>
       <div class="sidebar-bottom">
         <!-- Privacy blur shortcut hint -->
@@ -2323,6 +2409,9 @@
       </div>
 
       <!-- VIEW: Security Alerts -->
+      <div class="view" id="view-showings">
+        <div id="showings-root" style="height:100%;overflow:hidden;display:flex;flex-direction:column"></div>
+      </div>
       <div class="view" id="view-security">
         <div class="people-toolbar" style="border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0">
           <div style="font-size:13px;font-weight:700;color:#ff3b3b;letter-spacing:0.05em;text-transform:uppercase">🚨 Watchlist — Last 30 Days</div>
@@ -2679,6 +2768,7 @@ async function launchApp() {
   document.getElementById('app').classList.add('visible');
   updateSidebarUser();
   await Promise.all([loadSmartLists(), loadInboxCount()]);
+  startShowingAlertPoller();
   const _path = window.location.pathname;
   const _fileMatch = _path.match(/^\/file\/(\d+)$/);
   const _listMatch = _path.match(/^\/list\/(\d+)$/);
@@ -2693,6 +2783,8 @@ async function launchApp() {
     navigate('admin');
   } else if (_path === '/security') {
     navigate('security');
+  } else if (_path === '/showings') {
+    navigate('showings');
   } else {
     navigate('people', 'all');
   }
@@ -2766,6 +2858,8 @@ function navigate(view, listId = null) {
       history.pushState({ view: 'admin' }, '', '/admin');
     } else if (view === 'security') {
       history.pushState({ view: 'security' }, '', '/security');
+    } else if (view === 'showings') {
+      history.pushState({ view: 'showings' }, '', '/showings');
     }
   } catch(e) {}
   currentView = view;
@@ -2785,6 +2879,7 @@ function navigate(view, listId = null) {
   else if (view === 'inbox') { loadInbox(); document.getElementById('header-title').textContent = 'Inbox'; }
   else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
   else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
+  else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
 }
 
 // ── SMART LISTS ─────────────────────────────────────────────────────
@@ -3072,6 +3167,7 @@ async function openContact(personId, fromNav=false) {
     loadHousehold(person.id);
     loadSecurityDetections(personId);
     loadCaseworkerPanel(personId, person.stage);
+    loadShowingRoster(person);
     // Announce presence
     api(`/api/presence/enter`, 'POST', { personId }).catch(()=>{});
     // Load current viewers
@@ -3603,7 +3699,13 @@ function renderContactRecord(person, activities, tasks) {
           ${(stage!=='Evicting'&&stage!=='Delinquent'&&!tags.some(t=>['eviction','delinquent','committed'].some(k=>t.toLowerCase().includes(k)))) ? '<div style="color:var(--tac-muted-2)">-- NO ACTIVE FLAGS --</div>' : ''}
         </div>
       </div>
-            <!-- CASEWORKER PANEL -->
+            <!-- SHOWING ROSTER -->
+      <div class="right-section" id="sh-roster-${person.id}">
+        <div class="right-section-header"><span class="right-section-title" style="color:var(--amber)">🏠 Showings</span></div>
+        <div id="sh-roster-body-${person.id}" style="font-family:var(--font-mono);font-size:10px;color:var(--text-3)">Loading…</div>
+      </div>
+
+      <!-- CASEWORKER PANEL -->
       <div class="right-section" id="cw-panel-wrap-${person.id}">
         <div class="right-section-header">
           <span class="right-section-title" style="color:rgba(168,85,247,0.7)">Caseworker</span>
@@ -6233,6 +6335,408 @@ function formatTranscript(transcript) {
 })();
 </script>
 
+<!-- SHOWINGS MODULE -->
+<script>
+// ── SHOWINGS STATE ──
+let _shProps = [], _shList = [], _shPropSelected = null, _shFeedbackId = null, _shVerdict = null, _shCats = [];
+
+const SH_CATS = ['smell','paint/walls','cleanliness','carpet/flooring','appliances','kitchen',
+  'bathroom','lighting','layout','curb appeal','parking','noise','neighborhood','price','other'];
+
+function renderShowingsView() {
+  const root = document.getElementById('showings-root');
+  if (!root) return;
+  root.innerHTML = `
+    <div class="sh-header">
+      <div>
+        <div class="sh-title">SHOWINGS</div>
+        <div class="sh-subtitle">PROPERTY TOUR INTELLIGENCE</div>
+      </div>
+      <label class="sh-upload-btn">
+        📁 UPLOAD DAILY REPORT
+        <input type="file" accept=".xlsx" style="display:none" onchange="shUpload(this)">
+      </label>
+    </div>
+    <div class="sh-body">
+      <div id="sh-props"></div>
+      <div id="sh-panel" style="display:none"></div>
+    </div>`;
+  shLoadProps();
+}
+
+async function shUpload(input) {
+  const file = input.files[0]; if (!file) return;
+  const lbl = input.closest('label'); const orig = lbl.textContent;
+  lbl.textContent = '⏳ UPLOADING...';
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const r = await fetch('/api/showings/upload', { method:'POST', headers:{ Authorization:'Bearer '+authToken }, body:fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    toast(`✅ Imported ${d.inserted} showings`, 'success');
+    shLoadProps();
+  } catch(e) { toast('Upload failed: '+e.message, 'error'); }
+  finally { lbl.textContent = orig; input.value=''; }
+}
+
+async function shLoadProps() {
+  const el = document.getElementById('sh-props'); if (!el) return;
+  el.innerHTML = '<div style="padding:24px;color:var(--text-3);font-family:var(--font-mono);font-size:11px">Loading...</div>';
+  try {
+    _shProps = await api('/api/showings/properties');
+    if (!_shProps.length) {
+      el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-3)">
+        <div style="font-size:44px;margin-bottom:14px">🏠</div>
+        <div style="font-family:var(--font-cond);font-size:20px;letter-spacing:0.1em;color:var(--text-2)">NO SHOWINGS YET</div>
+        <div style="font-family:var(--font-mono);font-size:11px;margin-top:8px">Upload the daily AppFolio report to get started</div>
+      </div>`;
+      return;
+    }
+    el.innerHTML = _shProps.map(shPropCard).join('');
+    if (_shPropSelected) shOpenProp(_shPropSelected);
+  } catch(e) { el.innerHTML = `<div style="color:var(--red);padding:20px">${e.message}</div>`; }
+}
+
+function shPropCard(p) {
+  const name = p.property.split(' - ')[0];
+  const pct = p.completed > 0 ? Math.round((p.feedback_count/p.completed)*100) : 0;
+  const active = _shPropSelected === p.property;
+  return `<div class="sh-prop-card${active?' active':''}" onclick="shOpenProp(${JSON.stringify(p.property)})">
+    <div class="sh-prop-header">
+      <div class="sh-prop-address">
+        <div class="sh-prop-name">${esc(name)}</div>
+        <div class="sh-prop-meta">${p.total_showings} showings &nbsp;·&nbsp; ${p.feedback_count} rated &nbsp;·&nbsp; ${pct}% coverage</div>
+      </div>
+      <div class="sh-prop-stats">
+        <div class="sh-stat total"><span class="sh-stat-val">${p.total_showings}</span><span class="sh-stat-lbl">Total</span></div>
+        ${p.go_count>0    ?`<div class="sh-stat go">   <span class="sh-stat-val">${p.go_count}</span>   <span class="sh-stat-lbl">Go</span></div>`:''}
+        ${p.maybe_count>0 ?`<div class="sh-stat maybe"><span class="sh-stat-val">${p.maybe_count}</span><span class="sh-stat-lbl">Maybe</span></div>`:''}
+        ${p.nogo_count>0  ?`<div class="sh-stat nogo"> <span class="sh-stat-val">${p.nogo_count}</span> <span class="sh-stat-lbl">No-Go</span></div>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function shOpenProp(property) {
+  _shPropSelected = property;
+  const el = document.getElementById('sh-props'); if (el) el.innerHTML = _shProps.map(shPropCard).join('');
+  const panel = document.getElementById('sh-panel'); if (!panel) return;
+  panel.style.display = '';
+  panel.innerHTML = '<div style="padding:20px;color:var(--text-3);font-family:var(--font-mono);font-size:11px">Loading...</div>';
+  try {
+    const [showings, trends] = await Promise.all([
+      api('/api/showings?property='+encodeURIComponent(property)),
+      api('/api/showings/trends?property='+encodeURIComponent(property))
+    ]);
+    _shList = showings;
+    panel.innerHTML = shBuildPanel(property, showings, trends);
+  } catch(e) { panel.innerHTML = `<div style="color:var(--red);padding:20px">${e.message}</div>`; }
+}
+
+function shBuildPanel(property, showings, trends) {
+  const name = property.split(' - ')[0];
+  const completed = showings.filter(s=>s.status==='Completed');
+  const scheduled = showings.filter(s=>s.status==='Scheduled');
+
+  // Trends bar chart
+  let trendsHTML = '';
+  if (trends.total > 0) {
+    const max = trends.topIssues[0]?.count || 1;
+    const verdictBar = `<div style="display:flex;gap:6px;margin-bottom:14px">
+      ${trends.go>0    ?`<div style="flex:${trends.go};background:var(--green-dim);border:1px solid rgba(0,232,122,0.3);border-radius:4px;padding:6px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--green)"><b>${trends.go}</b><br>GO</div>`:''}
+      ${trends.maybe>0 ?`<div style="flex:${trends.maybe};background:var(--amber-dim);border:1px solid rgba(255,140,0,0.3);border-radius:4px;padding:6px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--amber)"><b>${trends.maybe}</b><br>MAYBE</div>`:''}
+      ${trends.nogo>0  ?`<div style="flex:${trends.nogo};background:var(--red-dim);border:1px solid rgba(232,0,58,0.3);border-radius:4px;padding:6px;text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--red)"><b>${trends.nogo}</b><br>NO-GO</div>`:''}
+    </div>`;
+    const bars = trends.topIssues.slice(0,8).map(t=>`
+      <div class="sh-trend-bar">
+        <div class="sh-trend-label">${esc(t.cat)}</div>
+        <div class="sh-trend-track"><div class="sh-trend-fill" style="width:${Math.round((t.count/max)*100)}%"></div></div>
+        <div class="sh-trend-count">${t.count}×</div>
+      </div>`).join('');
+    const notes = trends.feedback.filter(f=>f.notes).slice(0,5).map(f=>
+      `<div style="padding:8px 12px;border-left:2px solid var(--red);margin-bottom:6px;font-size:12px;color:var(--text-2)">"${esc(f.notes)}" <span style="color:var(--text-3);font-size:10px;font-family:var(--font-mono)">— ${esc(f.agent_name||'Agent')}</span></div>`
+    ).join('');
+    trendsHTML = `<div class="sh-trends">
+      <div class="sh-trends-title">📊 OWNER REPORT — ${trends.total} RATED TOURS</div>
+      ${verdictBar}
+      ${trends.topIssues.length?`<div class="sh-trends-title" style="margin-bottom:6px">TOP ISSUES FLAGGED</div>${bars}`:''}
+      ${notes?`<div class="sh-trends-title" style="margin-top:12px;margin-bottom:6px">RECENT AGENT NOTES</div>${notes}`:''}
+    </div>`;
+  }
+
+  const renderSection = (list, icon, title) => !list.length ? '' : `
+    <div class="sh-list-panel">
+      <div class="sh-list-header"><span class="sh-list-title">${icon} ${title} (${list.length})</span></div>
+      ${list.map(s => {
+        const v = s.verdict||'none';
+        const dt = s.showing_time ? new Date(s.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}) : '—';
+        const cats = (s.categories||[]).join(', ');
+        return `<div class="sh-showing-row" onclick="shOpenFeedback('${s.id}')">
+          <div style="flex:1;min-width:0">
+            <div class="sh-showing-name">${esc(s.guest_name||'—')}</div>
+            <div class="sh-showing-meta">${esc(dt)}${s.unit?' · '+esc(s.unit):''}${s.showing_type?' · '+esc(s.showing_type):''}</div>
+            ${cats?`<div style="font-size:9px;color:var(--text-3);font-family:var(--font-mono);margin-top:2px">${esc(cats)}</div>`:''}
+            ${s.notes?`<div style="font-size:11px;color:var(--text-2);margin-top:3px;font-style:italic">"${esc(s.notes)}"</div>`:''}
+          </div>
+          <div class="sh-verdict-chip ${v==='no-go'?'nogo':v}">${v==='no-go'?'NO-GO':v==='none'?'RATE':v.toUpperCase()}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  return `
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;margin-bottom:12px">
+      <span style="font-family:var(--font-cond);font-size:14px;font-weight:800;letter-spacing:0.08em;color:var(--text);flex:1">${esc(name)}</span>
+      <button onclick="_shPropSelected=null;document.getElementById('sh-panel').style.display='none';document.getElementById('sh-props').innerHTML=_shProps.map(shPropCard).join('')"
+        style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px;padding:0 4px">✕</button>
+    </div>
+    ${trendsHTML}
+    ${renderSection(scheduled,'📅','Scheduled')}
+    ${renderSection(completed,'✅','Completed')}`;
+}
+
+// ── FEEDBACK MODAL ──
+function shOpenFeedback(showingId) {
+  const s = _shList.find(x=>x.id===showingId)||{};
+  _shFeedbackId = showingId;
+  _shVerdict = s.verdict||null;
+  _shCats = s.categories||[];
+
+  document.getElementById('sh-modal')?.remove();
+  const m = document.createElement('div');
+  m.className = 'sh-modal-bg'; m.id = 'sh-modal';
+  m.onclick = e=>{ if(e.target===m) m.remove(); };
+  m.innerHTML = `<div class="sh-modal">
+    <div class="sh-modal-head">
+      <div><div class="sh-modal-title">Tour Feedback</div>
+      <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:2px">${esc(s.guest_name||'')} · ${esc((s.property||'').split(' - ')[0])}</div></div>
+      <button class="sh-modal-close" onclick="document.getElementById('sh-modal').remove()">✕</button>
+    </div>
+    <div class="sh-modal-body">
+      <div class="sh-cat-label">Prospect Interest</div>
+      <div class="sh-verdict-row">
+        <button class="sh-verdict-btn go${_shVerdict==='go'?' selected':''}"     onclick="shSetVerdict('go')"    ><span class="sh-vb-emoji">✅</span>GO</button>
+        <button class="sh-verdict-btn maybe${_shVerdict==='maybe'?' selected':''}" onclick="shSetVerdict('maybe')" ><span class="sh-vb-emoji">🤔</span>MAYBE</button>
+        <button class="sh-verdict-btn nogo${_shVerdict==='no-go'?' selected':''}"  onclick="shSetVerdict('no-go')"  ><span class="sh-vb-emoji">❌</span>NO-GO</button>
+      </div>
+      <div class="sh-cat-label">Issues Flagged</div>
+      <div class="sh-cat-grid">
+        ${SH_CATS.map(c=>`<div class="sh-cat-chip${_shCats.includes(c)?' selected':''}" onclick="shToggleCat('${c}',this)">${c}</div>`).join('')}
+      </div>
+      <div class="sh-cat-label">Notes for Owner</div>
+      <textarea class="sh-notes-input" id="sh-notes" placeholder="Specific comments to share with the property owner...">${esc(s.notes||'')}</textarea>
+      <div class="sh-modal-footer">
+        <button class="sh-cancel-btn" onclick="document.getElementById('sh-modal').remove()">Cancel</button>
+        <button class="sh-save-btn" onclick="shSave()">Save Feedback</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+}
+
+function shSetVerdict(v) {
+  _shVerdict = v;
+  document.querySelectorAll('.sh-verdict-btn').forEach(b=>{
+    const match = (v==='go'&&b.classList.contains('go'))||(v==='maybe'&&b.classList.contains('maybe'))||(v==='no-go'&&b.classList.contains('nogo'));
+    b.classList.toggle('selected', match);
+  });
+}
+function shToggleCat(cat, el) {
+  if (_shCats.includes(cat)) { _shCats=_shCats.filter(c=>c!==cat); el.classList.remove('selected'); }
+  else { _shCats.push(cat); el.classList.add('selected'); }
+}
+async function shSave() {
+  if (!_shVerdict) { toast('Select Go, Maybe, or No-Go first','error'); return; }
+  const notes = document.getElementById('sh-notes')?.value||'';
+  try {
+    await api(`/api/showings/${_shFeedbackId}/feedback`,'POST',{verdict:_shVerdict,categories:_shCats,notes});
+    document.getElementById('sh-modal')?.remove();
+    toast('Feedback saved ✓','success');
+    shOpenProp(_shPropSelected);
+    shLoadProps();
+  } catch(e) { toast('Error: '+e.message,'error'); }
+}
+</script>
+
+<!-- SHOWING ROSTER + ALERT SYSTEM -->
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SHOWING ROSTER — loads on every contact record open
+// ═══════════════════════════════════════════════════════════════
+async function loadShowingRoster(person) {
+  const body = document.getElementById(`sh-roster-body-${person.id}`);
+  if (!body) return;
+
+  // Build search params — try phone AND email
+  const phones = [];
+  try {
+    const pr = await api(`/api/people/${person.id}/phones`);
+    (pr.phones||[]).forEach(p => { if(p.phone) phones.push(p.phone.replace(/\D/g,'').slice(-10)); });
+  } catch(e) {}
+  if (!phones.length && person.phone) phones.push(person.phone.replace(/\D/g,'').slice(-10));
+
+  const params = [];
+  if (phones.length)  params.push('phone='  + encodeURIComponent(phones[0]));
+  if (person.email)   params.push('email='  + encodeURIComponent(person.email));
+  if (person.first_name && person.last_name)
+    params.push('name=' + encodeURIComponent(`${person.last_name}, ${person.first_name}`));
+
+  if (!params.length) { body.textContent = 'No contact info to match showings'; return; }
+
+  try {
+    const showings = await api('/api/showings/by-contact?' + params.join('&'));
+    if (!showings.length) {
+      body.innerHTML = '<span style="color:var(--text-3)">No showings on record</span>';
+      return;
+    }
+    const upcoming   = showings.filter(s => s.status === 'Scheduled').sort((a,b) => new Date(a.showing_time)-new Date(b.showing_time));
+    const past       = showings.filter(s => s.status === 'Completed').sort((a,b) => new Date(b.showing_time)-new Date(a.showing_time));
+
+    const renderRow = s => {
+      const dt = s.showing_time ? new Date(s.showing_time) : null;
+      const when = dt ? dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '—';
+      const prop = (s.property||'').split(' - ')[0];
+      const isUpcoming = s.status === 'Scheduled';
+      const minsUntil = dt ? Math.round((dt - Date.now()) / 60000) : null;
+      const urgentBadge = (isUpcoming && minsUntil !== null && minsUntil >= 0 && minsUntil <= 90)
+        ? `<span style="background:var(--amber);color:#000;font-size:7px;font-weight:900;padding:1px 5px;border-radius:10px;margin-left:4px">IN ${minsUntil}m</span>` : '';
+      const v = s.verdict;
+      const chip = v ? `<span class="sh-verdict-chip ${v==='no-go'?'nogo':v}" style="font-size:7px;padding:2px 6px">${v==='no-go'?'NO-GO':v.toUpperCase()}</span>` : '';
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px">
+        <div style="display:flex;align-items:center;gap:4px;justify-content:space-between">
+          <span style="color:${isUpcoming?'var(--amber)':'var(--text-2)'};font-size:10px;font-weight:700">${isUpcoming?'📅':'✅'} ${esc(when)}</span>
+          ${chip}
+        </div>
+        <div style="color:var(--text-3);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(prop)}${s.unit?' · '+esc(s.unit):''}${urgentBadge}</div>
+        ${s.notes?`<div style="color:var(--text-2);font-size:9px;font-style:italic">"${esc(s.notes)}"</div>`:''}
+      </div>`;
+    };
+
+    body.innerHTML =
+      (upcoming.length ? `<div style="color:var(--amber);font-size:8px;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:4px">Upcoming (${upcoming.length})</div>${upcoming.map(renderRow).join('')}` : '') +
+      (past.length     ? `<div style="color:var(--text-3);font-size:8px;letter-spacing:0.15em;text-transform:uppercase;margin-top:8px;margin-bottom:4px">Completed (${past.length})</div>${past.map(renderRow).join('')}` : '');
+  } catch(e) {
+    body.innerHTML = `<span style="color:var(--text-3)">—</span>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SHOWING ALERT SYSTEM — polls every 60s for upcoming tours
+// ═══════════════════════════════════════════════════════════════
+const _shAlerted = new Set(); // showing IDs already alerted this session
+let _shAlertQueue = [];       // queue so alerts don't stack on top of each other
+let _shAlertShowing = false;
+
+async function shPollUpcoming() {
+  try {
+    const upcoming = await api('/api/showings/upcoming');
+    for (const s of upcoming) {
+      if (_shAlerted.has(s.id)) continue;
+      _shAlerted.add(s.id);
+      _shAlertQueue.push(s);
+    }
+    shDrainAlertQueue();
+  } catch(e) {}
+}
+
+function shDrainAlertQueue() {
+  if (_shAlertShowing || !_shAlertQueue.length) return;
+  const s = _shAlertQueue.shift();
+  shShowAlert(s);
+}
+
+function shShowAlert(s) {
+  _shAlertShowing = true;
+  document.getElementById('sh-alert-toast')?.remove();
+
+  const dt = s.showing_time ? new Date(s.showing_time) : null;
+  const when = dt ? dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '—';
+  const minsUntil = dt ? Math.round((dt - Date.now()) / 60000) : null;
+  const prop = (s.property||'').split(' - ')[0];
+  const name = s.guest_name || 'Prospect';
+  const urgency = minsUntil !== null && minsUntil <= 15 ? 'var(--red)' : 'var(--amber)';
+  const urgencyText = minsUntil !== null && minsUntil <= 0 ? 'NOW' : minsUntil !== null ? `IN ${minsUntil}m` : '';
+
+  const el = document.createElement('div');
+  el.id = 'sh-alert-toast';
+  el.style.cssText = `
+    position:fixed;bottom:24px;right:24px;z-index:9999;
+    background:var(--bg-2);border:2px solid ${urgency};border-radius:14px;
+    width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.5),0 0 0 1px ${urgency}44;
+    animation:sh-alert-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
+    font-family:var(--font-body);
+  `;
+  el.innerHTML = `
+    <style>
+      @keyframes sh-alert-in { from{transform:translateX(120%);opacity:0} to{transform:translateX(0);opacity:1} }
+      @keyframes sh-alert-out { to{transform:translateX(120%);opacity:0} }
+      #sh-alert-toast .sh-al-pulse { animation:sh-pulse-ring 1.4s ease-in-out infinite; }
+      @keyframes sh-pulse-ring { 0%,100%{box-shadow:0 0 0 0 ${urgency}66} 50%{box-shadow:0 0 0 8px transparent} }
+    </style>
+    <div style="padding:14px 16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div class="sh-al-pulse" style="width:40px;height:40px;border-radius:50%;background:${urgency}22;border:2px solid ${urgency};display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">🏠</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-cond);font-size:13px;font-weight:900;letter-spacing:0.08em;color:var(--text);text-transform:uppercase">Showing Alert</div>
+          <div style="font-family:var(--font-mono);font-size:9px;color:${urgency};letter-spacing:0.15em;margin-top:1px">${urgencyText ? urgencyText+' · ' : ''}${esc(when)}</div>
+        </div>
+        <button onclick="shDismissAlert()" style="background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;padding:0;line-height:1">✕</button>
+      </div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px">${esc(name)}</div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(prop)}${s.unit?' · '+esc(s.unit):''}</div>
+      <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:3px">${s.showing_type||'In-Person'}</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        ${s.connect_person_id ? `<button onclick="shAlertOpenFile('${s.connect_person_id}')"
+          style="flex:1;padding:9px;background:${urgency};color:#000;border:none;border-radius:8px;font-family:var(--font-mono);font-size:10px;font-weight:800;letter-spacing:0.1em;cursor:pointer;text-transform:uppercase">
+          VIEW LEAD FILE →
+        </button>` : `<button onclick="shAlertFindLead('${esc(s.guest_name||'')}','${esc(s.phone||'')}','${esc(s.email||'')}')"
+          style="flex:1;padding:9px;background:${urgency};color:#000;border:none;border-radius:8px;font-family:var(--font-mono);font-size:10px;font-weight:800;letter-spacing:0.1em;cursor:pointer;text-transform:uppercase">
+          FIND LEAD →
+        </button>`}
+        <button onclick="shDismissAlert()"
+          style="padding:9px 14px;background:transparent;color:var(--text-3);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono);font-size:10px;cursor:pointer">
+          Dismiss
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+
+  // Auto-dismiss after 45 seconds
+  setTimeout(() => shDismissAlert(), 45000);
+}
+
+function shDismissAlert() {
+  const el = document.getElementById('sh-alert-toast');
+  if (!el) { _shAlertShowing = false; shDrainAlertQueue(); return; }
+  el.style.animation = 'sh-alert-out 0.25s ease both';
+  setTimeout(() => {
+    el.remove();
+    _shAlertShowing = false;
+    shDrainAlertQueue();
+  }, 260);
+}
+
+function shAlertOpenFile(personId) {
+  shDismissAlert();
+  openContact(personId);
+}
+
+function shAlertFindLead(name, phone, email) {
+  shDismissAlert();
+  navigate('people','all');
+  // Pre-fill search with name
+  setTimeout(() => {
+    const srch = document.getElementById('people-search');
+    if (srch) { srch.value = name; srch.dispatchEvent(new Event('input')); }
+  }, 300);
+}
+
+// Start polling after auth — called from launchApp
+function startShowingAlertPoller() {
+  shPollUpcoming(); // immediate first check
+  setInterval(shPollUpcoming, 60000); // every minute
+}
+</script>
+
 <!-- POPSTATE: browser back/forward -->
 <script>
 window.addEventListener('popstate', (e) => {
@@ -6248,6 +6752,8 @@ window.addEventListener('popstate', (e) => {
     navigate('admin');
   } else if (state.view === 'security') {
     navigate('security');
+  } else if (state.view === 'showings') {
+    navigate('showings');
   }
 });
 </script>
