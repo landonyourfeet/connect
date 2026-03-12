@@ -1920,6 +1920,99 @@
     [data-theme="light"] .sh-modal { background:#fff; }
     [data-theme="light"] .sh-notes-input { background:var(--bg-3); }
 
+    /* ── MISSION CONTROL DASHBOARD ────────────────────────────── */
+    #view-dashboard { overflow-y:auto; background:#0a0a0a; }
+    #view-dashboard.active { display:flex !important; flex-direction:column; }
+    [data-theme="light"] #view-dashboard { background:#f0f0f0; }
+
+    .mc-wrap { padding:20px 24px; min-height:100%; font-family:var(--font-mono); }
+    .mc-masthead { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid #1e1e1e; }
+    .mc-title { font-family:var(--font-cond); font-size:22px; font-weight:900; letter-spacing:0.18em; color:#eee; text-transform:uppercase; }
+    .mc-title span { color:var(--red); }
+    .mc-clock { font-family:var(--font-mono); font-size:13px; color:#555; letter-spacing:0.12em; }
+
+    /* Grid layout */
+    .mc-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+    .mc-grid-wide { grid-column:span 2; }
+    .mc-grid-full { grid-column:span 3; }
+
+    /* Panels */
+    .mc-panel { background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:14px 16px; position:relative; overflow:hidden; }
+    .mc-panel::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--panel-accent,#333); }
+    .mc-panel-title { font-size:8px; letter-spacing:0.2em; text-transform:uppercase; color:#555; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+    [data-theme="light"] .mc-panel { background:#fff; border-color:#ddd; }
+    [data-theme="light"] .mc-panel-title { color:#999; }
+    [data-theme="light"] .mc-masthead { border-color:#ddd; }
+    [data-theme="light"] .mc-title { color:#111; }
+
+    /* Caution lights */
+    .mc-caution-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .mc-light { display:flex; flex-direction:column; align-items:center; gap:5px; min-width:70px; }
+    .mc-bulb { width:28px; height:28px; border-radius:50%; position:relative; transition:all 0.3s; }
+    .mc-bulb::after { content:''; position:absolute; top:25%; left:25%; width:25%; height:25%; border-radius:50%; background:rgba(255,255,255,0.6); }
+    .mc-bulb.green  { background:#00e87a; box-shadow:0 0 12px rgba(0,232,122,0.9),0 0 28px rgba(0,232,122,0.4); }
+    .mc-bulb.amber  { background:#ff8c00; box-shadow:0 0 12px rgba(255,140,0,0.9),0 0 28px rgba(255,140,0,0.4); }
+    .mc-bulb.red    { background:#e8003a; box-shadow:0 0 12px rgba(232,0,58,0.9),0 0 28px rgba(232,0,58,0.4); }
+    .mc-bulb.grey   { background:#2a2a2a; box-shadow:none; }
+    .mc-bulb.flash  { animation:mc-flash 1.2s ease-in-out infinite; }
+    @keyframes mc-flash { 0%,100%{opacity:1} 50%{opacity:0.15} }
+    .mc-bulb-label { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; color:#555; text-align:center; line-height:1.3; }
+    [data-theme="light"] .mc-bulb.grey { background:#ddd; }
+    [data-theme="light"] .mc-bulb-label { color:#aaa; }
+
+    /* Toggle switches */
+    .mc-toggle-row { display:flex; flex-direction:column; gap:8px; }
+    .mc-toggle-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #1a1a1a; }
+    .mc-toggle-item:last-child { border-bottom:none; }
+    .mc-toggle-label { font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:#888; flex:1; }
+    .mc-toggle-val { font-size:9px; letter-spacing:0.1em; color:#555; margin-right:8px; }
+    .mc-switch { width:34px; height:18px; background:#1e1e1e; border:1px solid #333; border-radius:9px; position:relative; cursor:pointer; flex-shrink:0; transition:background 0.2s; }
+    .mc-switch.on { background:#004d20; border-color:#00e87a; }
+    .mc-switch::after { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; background:#333; border-radius:50%; transition:all 0.2s; }
+    .mc-switch.on::after { left:18px; background:#00e87a; box-shadow:0 0 6px #00e87a; }
+    [data-theme="light"] .mc-switch { background:#e0e0e0; border-color:#ccc; }
+    [data-theme="light"] .mc-switch::after { background:#bbb; }
+
+    /* Upload module */
+    .mc-upload-row { display:flex; flex-direction:column; gap:8px; }
+    .mc-upload-item { display:flex; align-items:center; gap:10px; padding:8px 10px; background:#0d0d0d; border:1px solid #1e1e1e; border-radius:4px; }
+    [data-theme="light"] .mc-upload-item { background:#f8f8f8; border-color:#e0e0e0; }
+    .mc-upload-status { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .mc-upload-info { flex:1; min-width:0; }
+    .mc-upload-name { font-size:9px; letter-spacing:0.15em; text-transform:uppercase; color:#888; }
+    .mc-upload-time { font-size:8px; color:#555; margin-top:2px; }
+    .mc-upload-btn-wrap label { display:inline-flex; align-items:center; gap:6px; font-size:8px; letter-spacing:0.15em; text-transform:uppercase; padding:5px 10px; border:1px solid #333; border-radius:3px; cursor:pointer; color:#888; transition:all 0.15s; white-space:nowrap; }
+    .mc-upload-btn-wrap label:hover { border-color:#666; color:#ccc; }
+    .mc-upload-btn-wrap label.stale { border-color:rgba(255,140,0,0.6); color:#ff8c00; animation:mc-flash 1.4s ease-in-out infinite; }
+
+    /* Big numbers */
+    .mc-stat-row { display:flex; gap:10px; flex-wrap:wrap; }
+    .mc-stat { flex:1; min-width:60px; }
+    .mc-stat-val { font-size:28px; font-weight:900; line-height:1; color:#eee; letter-spacing:-0.02em; }
+    .mc-stat-lbl { font-size:7px; letter-spacing:0.15em; text-transform:uppercase; color:#555; margin-top:3px; }
+    [data-theme="light"] .mc-stat-val { color:#111; }
+    [data-theme="light"] .mc-stat-lbl { color:#aaa; }
+
+    /* Agent roster */
+    .mc-agent-grid { display:flex; flex-direction:column; gap:6px; }
+    .mc-agent-row { display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:3px; background:#0d0d0d; }
+    [data-theme="light"] .mc-agent-row { background:#f5f5f5; }
+    .mc-agent-avatar { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:#fff; flex-shrink:0; }
+    .mc-agent-name { flex:1; font-size:10px; letter-spacing:0.06em; color:#ccc; text-transform:uppercase; }
+    [data-theme="light"] .mc-agent-name { color:#333; }
+    .mc-agent-status { font-size:7px; letter-spacing:0.12em; text-transform:uppercase; padding:2px 7px; border-radius:10px; }
+    .mc-agent-status.online  { background:rgba(0,232,122,0.12); color:#00e87a; border:1px solid rgba(0,232,122,0.3); }
+    .mc-agent-status.offline { background:#1a1a1a; color:#444; border:1px solid #222; }
+    .mc-agent-calls { font-size:9px; color:#555; font-family:var(--font-mono); white-space:nowrap; }
+
+    /* Response time gauge */
+    .mc-gauge-track { height:6px; background:#1a1a1a; border-radius:3px; overflow:hidden; margin:8px 0; }
+    .mc-gauge-fill  { height:100%; border-radius:3px; transition:width 0.6s; }
+    .mc-response-row { display:flex; justify-content:space-between; font-size:9px; color:#555; }
+
+    /* Divider scanline */
+    .mc-scanline { height:1px; background:repeating-linear-gradient(90deg,#1a1a1a 0,#1a1a1a 4px,transparent 4px,transparent 8px); margin:6px 0; }
+
     /* ── RENT ROLL STYLES ──────────────────────────────────────── */
     .sh-rented-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(0,232,122,0.12);border:1px solid rgba(0,232,122,0.4);color:var(--green);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
     .sh-vacant-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(232,0,58,0.1);border:1px solid rgba(232,0,58,0.3);color:var(--red);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
@@ -2158,6 +2251,9 @@
         </div>
       </div>
       <div class="sidebar-nav" id="sidebar-nav">
+        <div class="nav-item" data-view="dashboard" onclick="navigate('dashboard')" id="nav-dashboard">
+          <span class="nav-icon">⚡</span><span class="nav-label">Mission Control</span>
+        </div>
         <div class="nav-item" data-view="inbox" onclick="navigate('inbox')">
           <span class="nav-icon">📥</span>
           Inbox
@@ -2435,6 +2531,7 @@
       <div class="view" id="view-showings">
         <div id="showings-root" style="height:100%;overflow:hidden;display:flex;flex-direction:column"></div>
       </div>
+      <div class="view" id="view-dashboard"></div>
       <div class="view" id="view-security">
         <div class="people-toolbar" style="border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0">
           <div style="font-size:13px;font-weight:700;color:#ff3b3b;letter-spacing:0.05em;text-transform:uppercase">🚨 Watchlist — Last 30 Days</div>
@@ -2808,8 +2905,10 @@ async function launchApp() {
     navigate('security');
   } else if (_path === '/showings') {
     navigate('showings');
+  } else if (_path === '/dashboard') {
+    navigate('dashboard');
   } else {
-    navigate('people', 'all');
+    navigate('dashboard');
   }
   initTwilio();
   JirehOrganic.init();
@@ -2883,6 +2982,8 @@ function navigate(view, listId = null) {
       history.pushState({ view: 'security' }, '', '/security');
     } else if (view === 'showings') {
       history.pushState({ view: 'showings' }, '', '/showings');
+    } else if (view === 'dashboard') {
+      history.pushState({ view: 'dashboard' }, '', '/dashboard');
     }
   } catch(e) {}
   currentView = view;
@@ -2903,6 +3004,13 @@ function navigate(view, listId = null) {
   else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
   else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
   else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
+  else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Mission Control'; setTimeout(renderDashboard, 0); }
+  // Cancel galaxy animation when leaving dashboard
+  if (view !== 'dashboard' && typeof _mcAnimFrame !== 'undefined' && _mcAnimFrame) {
+    cancelAnimationFrame(_mcAnimFrame); _mcAnimFrame = null;
+    if (typeof _mcInterval !== 'undefined' && _mcInterval) { clearInterval(_mcInterval); _mcInterval = null; }
+    if (typeof _mcClockInterval !== 'undefined' && _mcClockInterval) { clearInterval(_mcClockInterval); _mcClockInterval = null; }
+  }
 }
 
 // ── SMART LISTS ─────────────────────────────────────────────────────
@@ -7114,6 +7222,518 @@ function startShowingAlertPoller() {
   setInterval(shPollUpcoming, 60000); // every minute
 }
 </script>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- MISSION CONTROL DASHBOARD + GALACTIC MAP                   -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<script>
+let _mcData = null, _mcGalaxy = null;
+let _mcInterval = null, _mcClockInterval = null;
+let _mcCanvas = null, _mcCtx = null, _mcStars = [];
+let _mcHovered = null, _mcAnimFrame = null;
+let _mcTooltip = { visible:false, x:0, y:0, prop:null };
+
+// ── Entry point ──────────────────────────────────────────────
+async function renderDashboard() {
+  const el = document.getElementById('view-dashboard');
+  if (!el) return;
+
+  el.innerHTML = `
+  <div class="mc-wrap">
+    <div class="mc-masthead">
+      <div>
+        <div class="mc-title" style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--red);font-size:28px;line-height:1">⬡</span>
+          OKC<span style="color:var(--red)">REAL</span>&nbsp;CONNECT
+        </div>
+        <div style="font-size:8px;letter-spacing:0.22em;color:#444;margin-top:3px;text-transform:uppercase">Mission Control · Property Management Command</div>
+      </div>
+      <div style="text-align:right">
+        <div class="mc-clock" id="mc-clock"></div>
+        <div style="font-size:8px;color:#333;letter-spacing:0.12em;margin-top:2px" id="mc-date"></div>
+      </div>
+    </div>
+
+    <!-- CAUTION LIGHTS ROW -->
+    <div class="mc-panel" style="--panel-accent:#e8003a;margin-bottom:14px">
+      <div class="mc-panel-title">⚠ SYSTEM STATUS — CAUTION INDICATORS</div>
+      <div id="mc-lights" class="mc-caution-row" style="justify-content:space-between"></div>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
+
+      <!-- LEFT COLUMN -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <!-- AGENT ROSTER -->
+        <div class="mc-panel" style="--panel-accent:#00e87a">
+          <div class="mc-panel-title">👥 CREW STATUS</div>
+          <div id="mc-agents" class="mc-agent-grid"></div>
+        </div>
+
+        <!-- CALL STATS TODAY -->
+        <div class="mc-panel" style="--panel-accent:#6366f1">
+          <div class="mc-panel-title">📞 COMM ACTIVITY — LAST 24H</div>
+          <div id="mc-calls"></div>
+        </div>
+
+        <!-- RESPONSE TIME -->
+        <div class="mc-panel" style="--panel-accent:#ff8c00">
+          <div class="mc-panel-title">⚡ LEAD RESPONSE TIME — 30 DAYS</div>
+          <div id="mc-response"></div>
+        </div>
+
+        <!-- UPLOAD CONTROLS -->
+        <div class="mc-panel" style="--panel-accent:#888">
+          <div class="mc-panel-title">💾 DATA FEEDS — UPLOAD CONTROL</div>
+          <div class="mc-upload-row" id="mc-uploads"></div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT COLUMN — GALACTIC MAP -->
+      <div class="mc-panel" style="--panel-accent:#00e87a;padding:0;overflow:hidden;min-height:600px;position:relative">
+        <div style="padding:12px 16px 8px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;justify-content:space-between">
+          <div class="mc-panel-title" style="margin-bottom:0">🌌 GALACTIC PROPERTY MAP — LIVE UNIT STATUS</div>
+          <div style="display:flex;gap:10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase">
+            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e87a;box-shadow:0 0 6px #00e87a;vertical-align:middle;margin-right:4px"></span>OCCUPIED</span>
+            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 6px #e8003a;vertical-align:middle;margin-right:4px"></span>DELINQUENT</span>
+            <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff8c00;box-shadow:0 0 6px #ff8c00;vertical-align:middle;margin-right:4px"></span>VACANT</span>
+          </div>
+        </div>
+        <canvas id="mc-galaxy-canvas" style="width:100%;display:block;cursor:crosshair"></canvas>
+        <div id="mc-galaxy-tooltip" style="position:absolute;pointer-events:none;display:none;z-index:10;
+          background:rgba(0,0,0,0.9);border:1px solid #2a2a2a;border-radius:6px;padding:10px 14px;
+          font-family:var(--font-mono);font-size:10px;min-width:180px;backdrop-filter:blur(8px)"></div>
+        <div id="mc-galaxy-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+          color:#333;font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em">
+          INITIALIZING TELEMETRY...
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+
+  // Start clock
+  if (_mcClockInterval) clearInterval(_mcClockInterval);
+  const tick = () => {
+    const now = new Date();
+    const cl = document.getElementById('mc-clock');
+    const cd = document.getElementById('mc-date');
+    if (cl) cl.textContent = now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+    if (cd) cd.textContent = now.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}).toUpperCase();
+  };
+  tick(); _mcClockInterval = setInterval(tick, 1000);
+
+  await refreshDashboard();
+  if (_mcInterval) clearInterval(_mcInterval);
+  _mcInterval = setInterval(refreshDashboard, 30000);
+}
+
+async function refreshDashboard() {
+  try {
+    const [stats, galaxy] = await Promise.all([
+      api('/api/dashboard/stats'),
+      api('/api/dashboard/galaxy').catch(() => [])
+    ]);
+    _mcData   = stats;
+    _mcGalaxy = galaxy;
+    renderMcPanels(stats, galaxy);
+    initGalaxyCanvas(galaxy);
+  } catch(e) {
+    console.error('[Dashboard]', e);
+  }
+}
+
+// ── PANELS ───────────────────────────────────────────────────
+function renderMcPanels(d, galaxy) {
+  const hoursAgo = dt => dt ? (Date.now() - new Date(dt).getTime()) / 3600000 : 9999;
+  const fmtAge = h => h > 9000 ? 'NEVER' : h < 1 ? 'JUST NOW' : h < 24 ? `${Math.floor(h)}H AGO` : `${Math.floor(h/24)}D AGO`;
+  const shAge = hoursAgo(d.uploads.showings?.created_at);
+  const rrAge = hoursAgo(d.uploads.rentRoll?.created_at);
+
+  // ── Caution lights ──
+  const totalUnits   = (galaxy||[]).reduce((s,p) => s+p.total, 0);
+  const totalVacant  = (galaxy||[]).reduce((s,p) => s+p.vacant, 0);
+  const vacancyPct   = totalUnits ? Math.round((totalVacant/totalUnits)*100) : 0;
+
+  const lights = [
+    { label:'DATABASE', sublabel:'POSTGRES',
+      color: 'green', note:'NOMINAL' },
+    { label:'TWILIO', sublabel:'SMS · CALLS',
+      color: 'green', note:'NOMINAL' },
+    { label:`${d.onlineCount} AGENT${d.onlineCount!==1?'S':''}`, sublabel:'ONLINE NOW',
+      color: d.onlineCount===0?'red': d.onlineCount<2?'amber':'green',
+      flash: d.onlineCount===0, note: d.onlineCount===0?'NO CREW':'STAFFED' },
+    { label:'SHOWINGS', sublabel:'DAILY REPORT',
+      color: shAge>24?'amber':'green', flash: shAge>24, note: fmtAge(shAge) },
+    { label:'RENT ROLL', sublabel:'UNIT DATA',
+      color: rrAge>24?'amber':'green', flash: rrAge>24, note: fmtAge(rrAge) },
+    { label:`${d.calls.missed||0} MISSED`, sublabel:'CALLS TODAY',
+      color: (d.calls.missed||0)>10?'red':(d.calls.missed||0)>3?'amber':'green',
+      flash: (d.calls.missed||0)>10, note: (d.calls.missed||0)===0?'CLEAN':'REVIEW' },
+    { label:`${vacancyPct}% VACANT`, sublabel:`${totalVacant}/${totalUnits} UNITS`,
+      color: vacancyPct>20?'red': vacancyPct>10?'amber':'green',
+      flash: vacancyPct>20, note: vacancyPct>20?'HIGH VAC':'IN RANGE' },
+    { label:`$${Math.round((galaxy||[]).reduce((s,p)=>s+(parseFloat(p.total_past_due)||0),0)).toLocaleString()}`, sublabel:'PAST DUE',
+      color: (galaxy||[]).reduce((s,p)=>s+(parseFloat(p.total_past_due)||0),0) > 5000 ? 'amber' : 'green',
+      note: 'COLLECTIONS' },
+  ];
+
+  document.getElementById('mc-lights').innerHTML = lights.map(l => `
+    <div class="mc-light">
+      <div class="mc-bulb ${l.color}${l.flash?' flash':''}"></div>
+      <div class="mc-bulb-label">${esc(l.label)}</div>
+      <div class="mc-bulb-label" style="color:#383838">${esc(l.sublabel||'')}</div>
+      <div class="mc-bulb-label" style="color:${l.color==='green'?'#1a5c33':l.color==='amber'?'#5c3a00':'#5c0010'};font-size:7px">${esc(l.note||'')}</div>
+    </div>`).join('');
+
+  // ── Agent roster ──
+  const agentCallMap = {};
+  (d.agentCallStats||[]).forEach(a => { agentCallMap[a.agent_id] = a; });
+  document.getElementById('mc-agents').innerHTML = d.agents.map(a => {
+    const cs = agentCallMap[a.id] || {};
+    const initials = (a.name||'?').split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+    return `<div class="mc-agent-row">
+      <div class="mc-agent-avatar" style="background:${a.avatar_color||'#444'}">${esc(initials)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="mc-agent-name" style="font-size:9px">${esc(a.name||'Agent')}</div>
+        ${cs.total_calls ? `<div style="font-size:8px;color:#444;margin-top:1px">${cs.total_calls} calls · ${Math.floor((cs.avg_duration||0)/60)}m avg</div>` : '<div style="font-size:8px;color:#333">No calls this week</div>'}
+      </div>
+      <span class="mc-agent-status ${a.online?'online':'offline'}">${a.online?'ONLINE':'AWAY'}</span>
+    </div>`;
+  }).join('');
+
+  // ── Call stats ──
+  const c = d.calls;
+  const answerRate = c.inbound_total > 0 ? Math.round((c.inbound_answered/c.inbound_total)*100) : 0;
+  document.getElementById('mc-calls').innerHTML = `
+    <div class="mc-stat-row" style="margin-bottom:12px">
+      <div class="mc-stat"><div class="mc-stat-val" style="color:#6366f1">${c.inbound_total||0}</div><div class="mc-stat-lbl">INBOUND</div></div>
+      <div class="mc-stat"><div class="mc-stat-val" style="color:#888">${c.outbound_total||0}</div><div class="mc-stat-lbl">OUTBOUND</div></div>
+      <div class="mc-stat"><div class="mc-stat-val" style="color:var(--red)">${c.missed||0}</div><div class="mc-stat-lbl">MISSED</div></div>
+    </div>
+    <div class="mc-scanline"></div>
+    <div style="margin-top:8px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:8px;letter-spacing:0.1em;color:#555;text-transform:uppercase">Answer Rate</span>
+        <span style="font-size:9px;color:${answerRate>80?'#00e87a':answerRate>60?'#ff8c00':'#e8003a'}">${answerRate}%</span>
+      </div>
+      <div class="mc-gauge-track"><div class="mc-gauge-fill" style="width:${answerRate}%;background:${answerRate>80?'#00e87a':answerRate>60?'#ff8c00':'#e8003a'}"></div></div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <div style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:3px;padding:6px;text-align:center">
+        <div style="font-size:14px;font-weight:800;color:#eee">${c.avg_duration ? Math.floor(c.avg_duration/60)+'m '+String(c.avg_duration%60).padStart(2,'0')+'s' : '—'}</div>
+        <div style="font-size:7px;letter-spacing:0.1em;color:#444;text-transform:uppercase;margin-top:2px">Avg Duration</div>
+      </div>
+      <div style="flex:1;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:3px;padding:6px;text-align:center">
+        <div style="font-size:14px;font-weight:800;color:#eee">${d.sms?.sent||0}</div>
+        <div style="font-size:7px;letter-spacing:0.1em;color:#444;text-transform:uppercase;margin-top:2px">SMS Sent</div>
+      </div>
+    </div>`;
+
+  // ── Response time ──
+  const rt = d.responseTime || {};
+  const avgMin = rt.avg_minutes || 0;
+  const rtColor = avgMin <= 5 ? '#00e87a' : avgMin <= 60 ? '#ff8c00' : '#e8003a';
+  document.getElementById('mc-response').innerHTML = `
+    <div style="text-align:center;padding:8px 0 12px">
+      <div style="font-size:32px;font-weight:900;color:${rtColor};line-height:1">${avgMin > 0 ? (avgMin >= 60 ? Math.floor(avgMin/60)+'h '+(avgMin%60)+'m' : avgMin+'m') : '—'}</div>
+      <div style="font-size:7px;letter-spacing:0.15em;color:#444;text-transform:uppercase;margin-top:4px">AVG RESPONSE TO NEW LEAD · BIZ HRS</div>
+    </div>
+    <div class="mc-scanline"></div>
+    ${rt.sample_size > 0 ? `
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">
+      ${[['Under 5min',rt.under_5min,'#00e87a'],['5min – 1hr',rt.under_1hr,'#ff8c00'],['Over 1hr',rt.over_1hr,'#e8003a']].map(([lbl,val,col])=>`
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:8px;color:#555;width:70px;flex-shrink:0;text-transform:uppercase;letter-spacing:0.08em">${lbl}</span>
+        <div class="mc-gauge-track" style="flex:1"><div class="mc-gauge-fill" style="width:${rt.sample_size?Math.round((val/rt.sample_size)*100):0}%;background:${col}"></div></div>
+        <span style="font-size:9px;color:${col};width:20px;text-align:right">${val||0}</span>
+      </div>`).join('')}
+    </div>` : '<div style="font-size:9px;color:#333;text-align:center;padding:8px">No data available</div>'}`;
+
+  // ── Upload controls ──
+  const uploads = [
+    { key:'showings', label:'SHOWINGS REPORT', sublabel:'AppFolio daily export',
+      age: shAge, count: d.uploads.showings?.record_count,
+      accept:'.xlsx', fn:'shUpload', btnId:'mc-sh-upload-btn' },
+    { key:'rentroll', label:'RENT ROLL', sublabel:'AppFolio unit status',
+      age: rrAge, count: d.uploads.rentRoll?.unit_count,
+      accept:'.xlsx', fn:'rrUpload', btnId:'mc-rr-upload-btn' },
+  ];
+  document.getElementById('mc-uploads').innerHTML = uploads.map(u => {
+    const stale = u.age > 24;
+    const dotCol = stale ? '#ff8c00' : '#00e87a';
+    const fmtd = fmtAge(u.age);
+    return `<div class="mc-upload-item">
+      <div class="mc-upload-status" style="background:${dotCol};box-shadow:0 0 8px ${dotCol};${stale?'animation:mc-flash 1.2s ease-in-out infinite':''}"></div>
+      <div class="mc-upload-info">
+        <div class="mc-upload-name">${esc(u.label)}</div>
+        <div class="mc-upload-time" style="color:${stale?'#ff8c00':'#555'}">${stale?'⚠ ':''} ${fmtd}${u.count?' · '+u.count+(u.key==='showings'?' records':' units'):''}
+</div>
+      </div>
+      <div class="mc-upload-btn-wrap">
+        <label class="${stale?'stale':''}">
+          ↑ UPLOAD
+          <input type="file" accept="${u.accept}" style="display:none" onchange="${u.fn}(this);renderDashboard()">
+        </label>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── GALACTIC CANVAS MAP ───────────────────────────────────────
+function initGalaxyCanvas(galaxy) {
+  const loading = document.getElementById('mc-galaxy-loading');
+  const canvas  = document.getElementById('mc-galaxy-canvas');
+  if (!canvas || !galaxy || !galaxy.length) return;
+  if (loading) loading.style.display = 'none';
+
+  // Size canvas to container
+  const parent = canvas.parentElement;
+  const W = parent.clientWidth;
+  const H = Math.max(520, parent.clientHeight - 50);
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  _mcCanvas = canvas;
+  _mcCtx    = ctx;
+
+  // Generate stars
+  _mcStars = Array.from({length:200}, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    r: Math.random() * 1.2 + 0.3,
+    a: Math.random(),
+    speed: Math.random() * 0.008 + 0.002
+  }));
+
+  // Position planets — spiral layout
+  const props = galaxy.filter(p => p.property !== 'ACCOUNTING PURPOSES (Service Team Accounting)');
+  const maxUnits = Math.max(...props.map(p => p.total));
+
+  // Assign positions in a galaxy spiral
+  const cx = W * 0.52, cy = H * 0.5;
+  props.forEach((p, i) => {
+    const angle = (i / props.length) * Math.PI * 2 - Math.PI / 2;
+    // Bigger properties toward center
+    const normalized = 1 - (p.total / maxUnits);
+    const radiusMult = 0.25 + normalized * 0.36;
+    p._x = cx + Math.cos(angle) * W * radiusMult;
+    p._y = cy + Math.sin(angle) * H * radiusMult * 0.72;
+    p._planetR = Math.max(14, Math.min(38, 10 + (p.total / maxUnits) * 32));
+    p._angle = angle;
+    p._orbitPhase = Math.random() * Math.PI * 2;
+  });
+
+  // Mouse interaction
+  canvas.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const my = (e.clientY - rect.top)  * scaleY;
+    let hit = null;
+    for (const p of props) {
+      const dx = mx - p._x, dy = my - p._y;
+      if (Math.sqrt(dx*dx+dy*dy) < p._planetR + 16) { hit = p; break; }
+    }
+    _mcHovered = hit;
+    const tip = document.getElementById('mc-galaxy-tooltip');
+    if (hit && tip) {
+      const scaleBack = rect.width / canvas.width;
+      const tx = (hit._x * scaleBack) + rect.left - parent.getBoundingClientRect().left;
+      const ty = (hit._y * scaleBack) + rect.top  - parent.getBoundingClientRect().top;
+      const name = hit.property.replace(/ - .*$/, '');
+      const occPct = hit.total > 0 ? Math.round(((hit.total-hit.vacant)/hit.total)*100) : 0;
+      tip.style.display = 'block';
+      tip.style.left = (tx + 20) + 'px';
+      tip.style.top  = Math.max(40, ty - 60) + 'px';
+      tip.innerHTML = `
+        <div style="font-weight:800;letter-spacing:0.1em;color:#eee;margin-bottom:6px;font-size:11px">${esc(name)}</div>
+        <div style="color:#555;font-size:8px;letter-spacing:0.12em;margin-bottom:8px;text-transform:uppercase">${hit.total} UNITS · ${occPct}% OCCUPIED</div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <div style="display:flex;justify-content:space-between;gap:20px"><span style="color:#00e87a">● OCCUPIED</span><span>${hit.occupied}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:20px"><span style="color:#e8003a">● DELINQUENT</span><span>${hit.delinquent}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:20px"><span style="color:#ff8c00">● VACANT</span><span>${hit.vacant}</span></div>
+          ${parseFloat(hit.total_past_due)>0 ? `<div style="margin-top:4px;padding-top:4px;border-top:1px solid #222;color:#e8003a">PAST DUE: $${Math.round(parseFloat(hit.total_past_due)).toLocaleString()}</div>` : ''}
+        </div>`;
+    } else if (tip) {
+      tip.style.display = 'none';
+    }
+  };
+  canvas.onmouseleave = () => {
+    _mcHovered = null;
+    const tip = document.getElementById('mc-galaxy-tooltip');
+    if (tip) tip.style.display = 'none';
+  };
+
+  // Cancel previous animation
+  if (_mcAnimFrame) cancelAnimationFrame(_mcAnimFrame);
+  let t = 0;
+  let scanX = 0;
+
+  function drawFrame() {
+    if (!document.getElementById('mc-galaxy-canvas')) return; // navigated away
+    t += 0.012;
+    scanX = (scanX + 1.2) % W;
+    ctx.clearRect(0, 0, W, H);
+
+    // Background gradient
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, W * 0.7);
+    bg.addColorStop(0, '#0d0f14');
+    bg.addColorStop(1, '#080a0c');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Scan line
+    const scanGrad = ctx.createLinearGradient(scanX-60, 0, scanX+20, 0);
+    scanGrad.addColorStop(0, 'transparent');
+    scanGrad.addColorStop(0.6, 'rgba(0,232,122,0.03)');
+    scanGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = scanGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Stars
+    _mcStars.forEach(s => {
+      s.a += s.speed;
+      const alpha = 0.2 + Math.abs(Math.sin(s.a)) * 0.6;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(200,210,255,${alpha})`;
+      ctx.fill();
+    });
+
+    // Draw connection lines between props with same street cluster
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,232,122,0.04)';
+    ctx.lineWidth = 0.5;
+    for (let i=0; i<props.length; i++) {
+      for (let j=i+1; j<props.length; j++) {
+        const dx = props[i]._x - props[j]._x;
+        const dy = props[i]._y - props[j]._y;
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        if (dist < W * 0.22) {
+          ctx.beginPath();
+          ctx.moveTo(props[i]._x, props[i]._y);
+          ctx.lineTo(props[j]._x, props[j]._y);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+
+    // Draw each property
+    props.forEach((p, pi) => {
+      const isHovered = _mcHovered === p;
+      const pr = p._planetR;
+
+      // Outer glow halo (pulse)
+      const pulseR = pr + 8 + Math.sin(t + pi * 0.8) * 4;
+      const haloAlpha = isHovered ? 0.25 : 0.08 + Math.sin(t + pi) * 0.04;
+      const haloColor = p.delinquent > 3 ? '232,0,58' : p.vacant > 3 ? '255,140,0' : '0,232,122';
+      const halo = ctx.createRadialGradient(p._x, p._y, pr*0.5, p._x, p._y, pulseR + 12);
+      halo.addColorStop(0, `rgba(${haloColor},${haloAlpha * 1.5})`);
+      halo.addColorStop(1, 'transparent');
+      ctx.beginPath();
+      ctx.arc(p._x, p._y, pulseR + 12, 0, Math.PI*2);
+      ctx.fillStyle = halo;
+      ctx.fill();
+
+      // Planet body gradient
+      const grad = ctx.createRadialGradient(p._x - pr*0.3, p._y - pr*0.3, pr*0.1, p._x, p._y, pr);
+      const baseH = p.delinquent > p.occupied * 0.3 ? '232,0,58' : p.vacant > p.occupied ? '255,140,0' : '20,40,30';
+      grad.addColorStop(0, `rgba(${p.delinquent>p.occupied*0.3?'80,10,20': p.vacant>p.total*0.3?'60,40,10':'20,60,40'},0.95)`);
+      grad.addColorStop(0.5, '#111820');
+      grad.addColorStop(1, '#080c10');
+      ctx.beginPath();
+      ctx.arc(p._x, p._y, pr, 0, Math.PI*2);
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Planet ring (for large props)
+      if (p.total >= 20) {
+        ctx.save();
+        ctx.translate(p._x, p._y);
+        ctx.scale(1, 0.28);
+        ctx.beginPath();
+        ctx.arc(0, 0, pr * 1.7, 0, Math.PI*2);
+        ctx.strokeStyle = `rgba(0,232,122,${isHovered?0.3:0.1})`;
+        ctx.lineWidth = isHovered ? 2 : 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Planet border
+      ctx.beginPath();
+      ctx.arc(p._x, p._y, pr, 0, Math.PI*2);
+      ctx.strokeStyle = isHovered ? `rgba(0,232,122,0.8)` : `rgba(0,232,122,0.2)`;
+      ctx.lineWidth = isHovered ? 1.5 : 0.8;
+      ctx.stroke();
+
+      // Highlight glint
+      ctx.beginPath();
+      ctx.arc(p._x - pr*0.28, p._y - pr*0.28, pr*0.2, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fill();
+
+      // ── Unit dots orbiting the planet ──
+      const units = p.units || [];
+      const orbitR = pr + 16 + Math.min(units.length * 1.2, 28);
+      units.forEach((u, ui) => {
+        const angle = (ui / units.length) * Math.PI * 2 + t * 0.18 + p._orbitPhase;
+        const ux = p._x + Math.cos(angle) * orbitR;
+        const uy = p._y + Math.sin(angle) * orbitR * 0.55;
+        const pastDue = parseFloat(u.past_due||0);
+        const isCurrent = u.status === 'Current';
+        const isDelinquent = isCurrent && pastDue > 0;
+        const isVacant = !isCurrent;
+        const dotColor = isDelinquent ? '#e8003a' : isVacant ? '#ff8c00' : '#00e87a';
+        const dotAlpha = isDelinquent ? 0.95 : isVacant ? 0.85 : 0.7;
+        const dotR = isDelinquent ? 3 : isVacant ? 2.5 : 2;
+
+        // Glow
+        const dotGlow = ctx.createRadialGradient(ux, uy, 0, ux, uy, dotR * 3);
+        dotGlow.addColorStop(0, dotColor + '88');
+        dotGlow.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.arc(ux, uy, dotR * 3, 0, Math.PI*2);
+        ctx.fillStyle = dotGlow;
+        ctx.fill();
+
+        // Dot
+        ctx.beginPath();
+        ctx.arc(ux, uy, dotR, 0, Math.PI*2);
+        ctx.fillStyle = dotColor;
+        ctx.globalAlpha = dotAlpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+
+      // Property label
+      const labelY = p._y + pr + orbitR * 0.55 + 14;
+      const shortName = p.property.split(' - ')[0].replace(/ (DUPLEX|FOURPLEX|APARTMENTS|TOWNHOMES)$/i, '').substring(0, 22);
+      ctx.font = `${isHovered?'700':'500'} ${isHovered?10:8}px 'JetBrains Mono', monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = isHovered ? 'rgba(0,232,122,0.9)' : 'rgba(150,170,160,0.55)';
+      ctx.fillText(shortName.toUpperCase(), p._x, labelY);
+
+      // Unit count badge on planet
+      ctx.font = `800 ${Math.max(8, pr*0.38)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText(p.total, p._x, p._y + pr*0.13);
+    });
+
+    _mcAnimFrame = requestAnimationFrame(drawFrame);
+  }
+
+  drawFrame();
+}
+</script>
+
 
 <!-- IN-PROGRESS BANNER POLLER -->
 <script>
