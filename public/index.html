@@ -1918,6 +1918,23 @@
     [data-theme="light"] .sh-modal { background:#fff; }
     [data-theme="light"] .sh-notes-input { background:var(--bg-3); }
 
+    /* ── RENT ROLL STYLES ──────────────────────────────────────── */
+    .sh-rented-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(0,232,122,0.12);border:1px solid rgba(0,232,122,0.4);color:var(--green);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
+    .sh-vacant-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(232,0,58,0.1);border:1px solid rgba(232,0,58,0.3);color:var(--red);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
+    .sh-notice-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(255,140,0,0.1);border:1px solid rgba(255,140,0,0.3);color:var(--amber);font-family:var(--font-mono);font-size:8px;font-weight:800;letter-spacing:0.15em;padding:3px 8px;border-radius:20px;text-transform:uppercase; }
+    .rr-rent-pill { font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--green);background:rgba(0,232,122,0.08);border:1px solid rgba(0,232,122,0.2);padding:2px 8px;border-radius:12px;display:inline-block; }
+    [data-theme="light"] .sh-rented-badge { background:rgba(0,160,80,0.08); }
+    [data-theme="light"] .rr-rent-pill { background:rgba(0,160,80,0.08); }
+    /* ── SHOWING IN-PROGRESS BANNER ──────────────────────────── */
+    #sh-inprogress-banner { position:fixed; bottom:0; left:0; right:0; z-index:800; padding:10px 20px; display:flex; align-items:center; gap:14px; transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.34,1.2,0.64,1); pointer-events:none; }
+    #sh-inprogress-banner.visible { transform:translateY(0); pointer-events:all; }
+    @keyframes sh-banner-pulse { 0%,100%{background:#b36000} 50%{background:#e07800} }
+    #sh-inprogress-banner { animation:sh-banner-pulse 2s ease-in-out infinite; background:#b36000; }
+    .sh-banner-dot { width:10px; height:10px; border-radius:50%; background:#fff; flex-shrink:0; animation:sl-pulse-dot 1.2s ease-in-out infinite; box-shadow:0 0 8px #fff; }
+    .sh-banner-text { flex:1; font-family:var(--font-cond); font-size:14px; font-weight:800; letter-spacing:0.08em; color:#fff; text-transform:uppercase; }
+    .sh-banner-sub { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.8); letter-spacing:0.06em; }
+    .sh-banner-btn { background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.4); color:#fff; padding:6px 14px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:4px; flex-shrink:0; }
+    .sh-banner-btn:hover { background:rgba(0,0,0,0.5); }
     /* ── INBOX VIEW ───────────────────────────────────────────── */
     #view-inbox { overflow: hidden; }
     .inbox-list { flex: 1; overflow-y: auto; }
@@ -3172,6 +3189,7 @@ async function openContact(personId, fromNav=false) {
     loadSecurityDetections(personId);
     loadCaseworkerPanel(personId, person.stage);
     loadShowingRoster(person);
+    loadRentRollInfo(person);
     // Announce presence
     api(`/api/presence/enter`, 'POST', { personId }).catch(()=>{});
     // Load current viewers
@@ -6343,6 +6361,8 @@ function formatTranscript(transcript) {
 <script>
 // ── SHOWINGS STATE ──
 let _shProps = [], _shList = [], _shPropSelected = null, _shFeedbackId = null, _shVerdict = null, _shCats = [];
+let _rrByProp = {}; // rent roll units indexed by unit name for current property
+let _rrOccupancy = {}; // property -> { occupied, vacant, total_units } from rent roll
 
 const SH_CATS = ['smell','paint/walls','cleanliness','carpet/flooring','appliances','kitchen',
   'bathroom','lighting','layout','curb appeal','parking','noise','neighborhood','price','other'];
@@ -6356,12 +6376,23 @@ function renderShowingsView() {
         <div class="sh-title">SHOWINGS</div>
         <div class="sh-subtitle">PROPERTY TOUR INTELLIGENCE</div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:auto">
-        <label class="sh-upload-btn" id="sh-upload-lbl">
-          📁 UPLOAD DAILY REPORT
-          <input type="file" accept=".xlsx" style="display:none" onchange="shUpload(this)">
-        </label>
-        <div id="sh-last-upload-info" style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:0.08em;text-align:right"></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-left:auto">
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+            <label class="sh-upload-btn" id="rr-upload-lbl" style="background:var(--text-3);font-size:9px;padding:6px 12px">
+              🏘 RENT ROLL
+              <input type="file" accept=".xlsx" style="display:none" onchange="rrUpload(this)">
+            </label>
+            <div id="rr-last-upload-info" style="font-family:var(--font-mono);font-size:8px;color:var(--text-3);letter-spacing:0.06em"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+            <label class="sh-upload-btn" id="sh-upload-lbl">
+              📁 SHOWINGS
+              <input type="file" accept=".xlsx" style="display:none" onchange="shUpload(this)">
+            </label>
+            <div id="sh-last-upload-info" style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:0.08em;text-align:right"></div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="sh-body">
@@ -6370,6 +6401,7 @@ function renderShowingsView() {
     </div>`;
   shLoadProps();
   shCheckLastUpload();
+  rrCheckLastUpload();
 }
 
 async function shUpload(input) {
@@ -6467,6 +6499,133 @@ async function shUpload(input) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// RENT ROLL — upload + stale check
+// ═══════════════════════════════════════════════════════════════
+async function rrUpload(input) {
+  const file = input.files[0]; if (!file) return;
+  const lbl = document.getElementById('rr-upload-lbl');
+  const setLabel = txt => {
+    if (!lbl) return;
+    const tn = [...lbl.childNodes].find(n => n.nodeType === 3);
+    if (tn) tn.nodeValue = '\n              ' + txt + '\n              ';
+  };
+  setLabel('⏳ PARSING...');
+  if (lbl) { lbl.style.pointerEvents='none'; lbl.style.opacity='0.7'; }
+
+  try {
+    if (typeof XLSX === 'undefined') throw new Error('SheetJS not loaded — refresh');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+    // Find header row
+    let hi = -1;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] && raw[i][0] === 'Unit' && raw[i][3] === 'Tenant') { hi = i; break; }
+    }
+    if (hi === -1) throw new Error('Invalid file — "Unit" header not found. Is this the AppFolio rent roll export?');
+
+    const h = raw[hi];
+    const ci = k => h.indexOf(k);
+    const cols = {
+      unit: ci('Unit'), tags: ci('Tags'), bdba: ci('BD/BA'), tenant: ci('Tenant'),
+      status: ci('Status'), sqft: ci('Sqft'), mktRent: ci('Market Rent'),
+      rent: ci('Rent'), deposit: ci('Deposit'), leaseFrom: ci('Lease From'),
+      leaseTo: ci('Lease To'), moveIn: ci('Move-in'), moveOut: ci('Move-out'),
+      pastDue: ci('Past Due'), nsf: ci('NSF Count'), late: ci('Late Count'),
+    };
+
+    const toDate = v => {
+      if (!v) return null;
+      if (v instanceof Date) return isNaN(v) ? null : v.toISOString();
+      if (typeof v === 'number') { const d = new Date(Math.round((v-25569)*86400000)); return isNaN(d)?null:d.toISOString(); }
+      const d = new Date(v); return isNaN(d) ? null : d.toISOString();
+    };
+
+    const rows = [];
+    let currentProperty = '';
+    const SKIP_STATUSES = new Set(['100.0% Occupied','50.0% Occupied','90.0% Occupied','91.8% Occupied','68.1% Occupied']);
+
+    for (let i = hi + 1; i < raw.length; i++) {
+      const r = raw[i];
+      if (!r || !r[cols.unit]) continue;
+      const statusVal = String(r[cols.status] || '');
+      // Property header row: unit col has property name, rest empty
+      if (!r[cols.tenant] && !r[cols.status] && !r[cols.rent]) {
+        currentProperty = String(r[cols.unit]).trim(); continue;
+      }
+      // Summary rows (e.g. "4 Units ... 100.0% Occupied")
+      if (SKIP_STATUSES.has(statusVal) || statusVal.includes('% Occupied')) continue;
+      if (!r[cols.status]) continue;
+      rows.push({
+        property:    currentProperty,
+        unit:        String(r[cols.unit]).trim(),
+        tenant_name: r[cols.tenant] ? String(r[cols.tenant]).trim() : null,
+        status:      statusVal || null,
+        bedrooms:    r[cols.bdba] || null,
+        sqft:        r[cols.sqft] ? parseInt(r[cols.sqft]) : null,
+        market_rent: r[cols.mktRent] || null,
+        rent:        r[cols.rent] || null,
+        deposit:     r[cols.deposit] || null,
+        lease_from:  toDate(r[cols.leaseFrom]),
+        lease_to:    toDate(r[cols.leaseTo]),
+        move_in:     toDate(r[cols.moveIn]),
+        move_out:    toDate(r[cols.moveOut]),
+        past_due:    r[cols.pastDue] || 0,
+        nsf_count:   r[cols.nsf] || 0,
+        late_count:  r[cols.late] || 0,
+      });
+    }
+
+    if (!rows.length) throw new Error('No unit rows found in rent roll');
+    setLabel('⏳ SAVING ' + rows.length + ' UNITS...');
+
+    const resp = await fetch('/api/rent-roll/upload', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+authToken },
+      body: JSON.stringify({ rows, filename: file.name })
+    });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.error || 'Server error');
+
+    toast(`✅ Rent roll updated — ${d.upserted} units`, 'success');
+    rrCheckLastUpload();
+    // Refresh current property view if open
+    if (_shPropSelected) shOpenProp(_shPropSelected);
+    shLoadProps(); // refresh occupancy on cards
+  } catch(e) {
+    console.error('[rrUpload]', e);
+    toast('Rent roll error: ' + e.message, 'error');
+  } finally {
+    setLabel('🏘 RENT ROLL');
+    if (lbl) { lbl.style.pointerEvents=''; lbl.style.opacity=''; lbl.classList.remove('sh-btn-flash'); }
+    input.value = '';
+  }
+}
+
+async function rrCheckLastUpload() {
+  const info = document.getElementById('rr-last-upload-info');
+  const lbl  = document.getElementById('rr-upload-lbl');
+  if (!info) return;
+  try {
+    const d = await api('/api/rent-roll/last-upload');
+    if (!d) {
+      info.innerHTML = '<span style="color:var(--red)">⚠ Not uploaded</span>';
+      if (lbl) lbl.classList.add('sh-btn-flash');
+      return;
+    }
+    const hoursAgo = (Date.now() - new Date(d.created_at).getTime()) / 3600000;
+    const when = hoursAgo < 1 ? 'just now' : hoursAgo < 24 ? Math.floor(hoursAgo)+'h ago' : Math.floor(hoursAgo/24)+'d ago';
+    const stale = hoursAgo > 24;
+    info.innerHTML = stale
+      ? `<span style="color:var(--red)">⚠ ${when}</span>`
+      : `<span style="color:var(--green)">✓ ${when} · ${d.unit_count} units</span>`;
+    if (lbl) lbl.classList.toggle('sh-btn-flash', stale);
+  } catch(e) {}
+}
+
 async function shCheckLastUpload() {
   const info = document.getElementById('sh-last-upload-info');
   const lbl  = document.getElementById('sh-upload-lbl');
@@ -6497,7 +6656,13 @@ async function shLoadProps() {
   const el = document.getElementById('sh-props'); if (!el) return;
   el.innerHTML = '<div style="padding:24px;color:var(--text-3);font-family:var(--font-mono);font-size:11px">Loading...</div>';
   try {
-    _shProps = await api('/api/showings/properties');
+    const [_propsData, _occData] = await Promise.all([
+      api('/api/showings/properties'),
+      api('/api/rent-roll/occupancy').catch(()=>[])
+    ]);
+    _shProps = _propsData;
+    _rrOccupancy = {};
+    for (const o of _occData) _rrOccupancy[o.property] = o;
     if (!_shProps.length) {
       el.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text-3)">
         <div style="font-size:44px;margin-bottom:14px">🏠</div>
@@ -6515,11 +6680,11 @@ function shPropCard(p) {
   const name = p.property.split(' - ')[0];
   const pct = p.completed > 0 ? Math.round((p.feedback_count/p.completed)*100) : 0;
   const active = _shPropSelected === p.property;
-  return `<div class="sh-prop-card${active?' active':''}" onclick="shOpenProp(${JSON.stringify(p.property)})">
+  return `<div class="sh-prop-card${active?' active':''}" data-prop="${esc(p.property)}" onclick="shOpenProp(this.dataset.prop)">
     <div class="sh-prop-header">
       <div class="sh-prop-address">
         <div class="sh-prop-name">${esc(name)}</div>
-        <div class="sh-prop-meta">${p.total_showings} showings &nbsp;·&nbsp; ${p.feedback_count} rated &nbsp;·&nbsp; ${pct}% coverage</div>
+        <div class="sh-prop-meta">${p.total_showings} showings &nbsp;·&nbsp; ${p.feedback_count} rated &nbsp;·&nbsp; ${pct}% coverage${(_rrOccupancy[p.property] ? ' &nbsp;·&nbsp; <span style="color:var(--green)">'+_rrOccupancy[p.property].occupied+'/'+_rrOccupancy[p.property].total_units+' occupied</span>' : '')}</div>
       </div>
       <div class="sh-prop-stats">
         <div class="sh-stat total"><span class="sh-stat-val">${p.total_showings}</span><span class="sh-stat-lbl">Total</span></div>
@@ -6531,6 +6696,14 @@ function shPropCard(p) {
   </div>`;
 }
 
+function shCloseProp() {
+  _shPropSelected = null;
+  const panel = document.getElementById('sh-panel');
+  if (panel) panel.style.display = 'none';
+  const el = document.getElementById('sh-props');
+  if (el) el.innerHTML = _shProps.map(shPropCard).join('');
+}
+
 async function shOpenProp(property) {
   _shPropSelected = property;
   const el = document.getElementById('sh-props'); if (el) el.innerHTML = _shProps.map(shPropCard).join('');
@@ -6538,10 +6711,14 @@ async function shOpenProp(property) {
   panel.style.display = '';
   panel.innerHTML = '<div style="padding:20px;color:var(--text-3);font-family:var(--font-mono);font-size:11px">Loading...</div>';
   try {
-    const [showings, trends] = await Promise.all([
+    const [showings, trends, rrUnits] = await Promise.all([
       api('/api/showings?property='+encodeURIComponent(property)),
-      api('/api/showings/trends?property='+encodeURIComponent(property))
+      api('/api/showings/trends?property='+encodeURIComponent(property)),
+      api('/api/rent-roll/by-property?property='+encodeURIComponent(property)).catch(()=>[])
     ]);
+    // Index rent roll by unit name for O(1) lookup
+    _rrByProp = {};
+    for (const u of rrUnits) _rrByProp[(u.unit||'').toLowerCase().trim()] = u;
     _shList = showings;
     panel.innerHTML = shBuildPanel(property, showings, trends);
   } catch(e) { panel.innerHTML = `<div style="color:var(--red);padding:20px">${e.message}</div>`; }
@@ -6585,14 +6762,28 @@ function shBuildPanel(property, showings, trends) {
         const v = s.verdict||'none';
         const dt = s.showing_time ? new Date(s.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}) : '—';
         const cats = (s.categories||[]).join(', ');
-        return `<div class="sh-showing-row" onclick="shOpenFeedback('${s.id}')">
+        // Check rent roll status for this showing's unit
+        const rrKey = (s.unit||'').toLowerCase().trim();
+        const rrUnit = _rrByProp[rrKey] || Object.values(_rrByProp).find(u =>
+          u.unit && s.unit && u.unit.toLowerCase().trim() === rrKey
+        );
+        const isRented = rrUnit && rrUnit.status === 'Current';
+        const isVacant = rrUnit && rrUnit.status && rrUnit.status.includes('Vacant');
+        const isNotice = rrUnit && rrUnit.status && rrUnit.status.includes('Notice');
+        const rentBadge = isRented
+          ? `<span class="sh-rented-badge">✓ RENTED${rrUnit.tenant_name?' · '+esc(rrUnit.tenant_name.split(' ').slice(0,2).join(' ')):''}</span>`
+          : isNotice ? `<span class="sh-notice-badge">⚡ NOTICE</span>`
+          : isVacant ? `<span class="sh-vacant-badge">◯ VACANT</span>` : '';
+
+        return `<div class="sh-showing-row${isRented?' sh-showing-rented':''}" onclick="${isRented?'':` shOpenFeedback('${s.id}')`}" style="${isRented?'opacity:0.7;cursor:default':''}">
           <div style="flex:1;min-width:0">
-            <div class="sh-showing-name">${esc(s.guest_name||'—')}</div>
+            <div class="sh-showing-name" style="${isRented?'text-decoration:line-through;color:var(--text-3)':''}">${esc(s.guest_name||'—')}</div>
             <div class="sh-showing-meta">${esc(dt)}${s.unit?' · '+esc(s.unit):''}${s.showing_type?' · '+esc(s.showing_type):''}</div>
+            ${rentBadge ? `<div style="margin-top:4px">${rentBadge}</div>` : ''}
             ${cats?`<div style="font-size:9px;color:var(--text-3);font-family:var(--font-mono);margin-top:2px">${esc(cats)}</div>`:''}
             ${s.notes?`<div style="font-size:11px;color:var(--text-2);margin-top:3px;font-style:italic">"${esc(s.notes)}"</div>`:''}
           </div>
-          <div class="sh-verdict-chip ${v==='no-go'?'nogo':v}">${v==='no-go'?'NO-GO':v==='none'?'RATE':v.toUpperCase()}</div>
+          ${!isRented ? `<div class="sh-verdict-chip ${v==='no-go'?'nogo':v}">${v==='no-go'?'NO-GO':v==='none'?'RATE':v.toUpperCase()}</div>` : ''}
         </div>`;
       }).join('')}
     </div>`;
@@ -6600,7 +6791,7 @@ function shBuildPanel(property, showings, trends) {
   return `
     <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;margin-bottom:12px">
       <span style="font-family:var(--font-cond);font-size:14px;font-weight:800;letter-spacing:0.08em;color:var(--text);flex:1">${esc(name)}</span>
-      <button onclick="_shPropSelected=null;document.getElementById('sh-panel').style.display='none';document.getElementById('sh-props').innerHTML=_shProps.map(shPropCard).join('')"
+      <button onclick="shCloseProp()"
         style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px;padding:0 4px">✕</button>
     </div>
     ${trendsHTML}
@@ -6697,7 +6888,8 @@ async function loadShowingRoster(person) {
   if (!params.length) { body.textContent = 'No contact info to match showings'; return; }
 
   try {
-    const showings = await api('/api/showings/by-contact?' + params.join('&'));
+    const thirtyDaysAgo = new Date(Date.now() - 30*24*3600000).toISOString();
+    const showings = await api('/api/showings/by-contact?' + params.join('&') + '&since=' + encodeURIComponent(thirtyDaysAgo));
     if (!showings.length) {
       body.innerHTML = '<span style="color:var(--text-3)">No showings on record</span>';
       return;
@@ -6731,6 +6923,48 @@ async function loadShowingRoster(person) {
   } catch(e) {
     body.innerHTML = `<span style="color:var(--text-3)">—</span>`;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENT ROLL — contact record integration
+// ═══════════════════════════════════════════════════════════════
+async function loadRentRollInfo(person) {
+  const wrap = document.getElementById(`sh-roster-${person.id}`);
+  if (!wrap) return;
+  const name = [person.last_name, person.first_name].filter(Boolean).join(', ') ||
+               [person.first_name, person.last_name].filter(Boolean).join(' ');
+  if (!name) return;
+  try {
+    const rr = await api('/api/rent-roll/by-person?name=' + encodeURIComponent(name));
+    if (!rr) return; // no match — silent
+    // Inject rent info section into right column above the showings roster
+    const existing = document.getElementById(`rr-info-${person.id}`);
+    if (existing) existing.remove();
+    const div = document.createElement('div');
+    div.id = `rr-info-${person.id}`;
+    div.className = 'right-section';
+    const leaseEnd = rr.lease_to ? new Date(rr.lease_to).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    const moveIn   = rr.move_in  ? new Date(rr.move_in).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})  : '—';
+    const isLate = rr.past_due && parseFloat(rr.past_due) > 0;
+    div.innerHTML = `
+      <div class="right-section-header">
+        <span class="right-section-title" style="color:var(--green)">🏠 Tenancy</span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:10px;display:flex;flex-direction:column;gap:5px">
+        <div class="detail-row"><span class="detail-label">Unit</span><span class="detail-value">${esc(rr.unit)} · ${esc((rr.property||'').split(' - ')[0])}</span></div>
+        <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value" style="color:${rr.status==='Current'?'var(--green)':'var(--amber)'};font-weight:700">${esc(rr.status||'—')}</span></div>
+        <div class="detail-row"><span class="detail-label">Rent</span><span class="rr-rent-pill">$${parseFloat(rr.rent||0).toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span></div>
+        ${rr.market_rent && parseFloat(rr.market_rent) !== parseFloat(rr.rent) ? `<div class="detail-row"><span class="detail-label">Market</span><span class="detail-value" style="color:var(--text-3);font-size:11px">$${parseFloat(rr.market_rent).toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span></div>` : ''}
+        <div class="detail-row"><span class="detail-label">Move-in</span><span class="detail-value">${moveIn}</span></div>
+        <div class="detail-row"><span class="detail-label">Lease end</span><span class="detail-value">${leaseEnd}</span></div>
+        ${rr.bedrooms ? `<div class="detail-row"><span class="detail-label">Bed/Bath</span><span class="detail-value">${esc(rr.bedrooms)}</span></div>` : ''}
+        ${isLate ? `<div class="detail-row"><span class="detail-label">Past Due</span><span class="detail-value" style="color:var(--red);font-weight:700">$${Math.abs(parseFloat(rr.past_due)).toFixed(2)}</span></div>` : ''}
+        ${rr.late_count > 0 ? `<div class="detail-row"><span class="detail-label">Late Count</span><span class="detail-value" style="color:${rr.late_count>=4?'var(--red)':'var(--amber)'};">${rr.late_count}×</span></div>` : ''}
+      </div>`;
+    // Insert before the showings roster section
+    const rosterWrap = document.getElementById(`sh-roster-${person.id}`);
+    if (rosterWrap) rosterWrap.parentNode.insertBefore(div, rosterWrap);
+  } catch(e) {}
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -6849,6 +7083,50 @@ function startShowingAlertPoller() {
   shPollUpcoming(); // immediate first check
   setInterval(shPollUpcoming, 60000); // every minute
 }
+</script>
+
+<!-- IN-PROGRESS BANNER POLLER -->
+<script>
+let _shInProgress = [];
+
+async function shPollInProgress() {
+  try {
+    const rows = await api('/api/showings/in-progress');
+    _shInProgress = rows;
+    const banner = document.getElementById('sh-inprogress-banner');
+    const textEl = document.getElementById('sh-banner-text');
+    const subEl  = document.getElementById('sh-banner-sub');
+    if (!banner) return;
+
+    if (!rows.length) {
+      banner.classList.remove('visible');
+      return;
+    }
+
+    // Build banner text
+    if (rows.length === 1) {
+      const s = rows[0];
+      const name = s.guest_name || 'Prospect';
+      const prop = (s.property||'').split(' - ')[0];
+      const dt = s.showing_time ? new Date(s.showing_time) : null;
+      const startedMins = dt ? Math.round((Date.now() - dt.getTime()) / 60000) : 0;
+      textEl.textContent = `🏠 SHOWING IN PROGRESS — ${name.split(',').reverse().join(' ').trim()}`;
+      subEl.textContent  = `${prop}${s.unit?' · Unit '+s.unit:''} · Started ${startedMins}m ago · Ends in ~${Math.max(0,15-startedMins)}m`;
+    } else {
+      textEl.textContent = `🏠 ${rows.length} SHOWINGS IN PROGRESS`;
+      subEl.textContent  = rows.map(s => (s.guest_name||'').split(',').reverse().join(' ').trim() || 'Prospect').join(' · ');
+    }
+    banner.classList.add('visible');
+  } catch(e) {}
+}
+
+// Hook into startShowingAlertPoller so it starts at the same time
+const _origStartPoller = window.startShowingAlertPoller;
+window.startShowingAlertPoller = function() {
+  if (_origStartPoller) _origStartPoller();
+  shPollInProgress();
+  setInterval(shPollInProgress, 60000);
+};
 </script>
 
 <!-- POPSTATE: browser back/forward -->
@@ -7468,5 +7746,15 @@ window.navigate = function(view, listId) {
   <!-- @mention dropdown — body level to escape overflow:hidden ancestors -->
   <div id="mention-dropdown" style="display:none;position:fixed;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.55);z-index:9999;min-width:220px;max-width:300px;overflow:hidden"></div>
 
+  <!-- SHOWING IN-PROGRESS BANNER -->
+  <div id="sh-inprogress-banner">
+    <div class="sh-banner-dot"></div>
+    <div>
+      <div class="sh-banner-text" id="sh-banner-text">SHOWING IN PROGRESS</div>
+      <div class="sh-banner-sub" id="sh-banner-sub"></div>
+    </div>
+    <button class="sh-banner-btn" onclick="navigate('showings')">VIEW SHOWINGS</button>
+    <button class="sh-banner-btn" onclick="document.getElementById('sh-inprogress-banner').classList.remove('visible')">✕</button>
+  </div>
 </body>
 </html>
