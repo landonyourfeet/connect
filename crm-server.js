@@ -4350,7 +4350,7 @@ function jcConferenceName(callId) { return `jcall-${callId}`; }
 
 // ─── TTS: Deepgram Aura Ara ───────────────────────────────────────────────────
 async function araTTS(text) {
-  const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000&container=none';
+  const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mp3';
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
@@ -4367,15 +4367,32 @@ async function speakToCall(callId, text) {
     const audio = await araTTS(text);
     const token = crypto.randomBytes(12).toString('hex');
     ttsAudioCache.set(token, audio);
-    // Clean up cache after 60s
-    setTimeout(() => ttsAudioCache.delete(token), 60000);
-    const audioUrl = `${process.env.APP_URL}/api/jareih/tts/${token}.ulaw`;
+    setTimeout(() => ttsAudioCache.delete(token), 120000);
+    const audioUrl = `${process.env.APP_URL}/api/jareih/tts/${token}.mp3`;
+
+    // Wait up to 6s for conferenceSid if not yet captured
+    if (!session.conferenceSid) {
+      await new Promise(resolve => {
+        const start = Date.now();
+        const poll = setInterval(() => {
+          if (session.conferenceSid || Date.now() - start > 6000) {
+            clearInterval(poll); resolve();
+          }
+        }, 100);
+      });
+    }
+
+    if (!session.conferenceSid) {
+      console.warn('[Ara] No conferenceSid after wait — cannot play TTS for', callId);
+      return;
+    }
+
     const tc = initTwilioFull();
     if (!tc) return;
-    if (session.conferenceSid) {
-      // Play Ara's voice to everyone in the conference room
-      await tc.conferences(session.conferenceSid).update({ announceUrl: audioUrl, announceMethod: 'GET' });
-    }
+
+    // announceUrl must return TwiML — serve a wrapper that <Play>s the mp3
+    const twimlUrl = `${process.env.APP_URL}/api/jareih/tts-twiml/${token}`;
+    await tc.conferences(session.conferenceSid).update({ announceUrl: twimlUrl, announceMethod: 'GET' });
   } catch(e) { console.error('[Ara TTS]', e.message); }
 }
 
@@ -4548,7 +4565,7 @@ function setupJareihCallWS(server) {
               const greeting = await araRespond(callId, null);
               if (greeting) await speakToCall(callId, greeting);
             } catch(e) { console.error('[Ara greeting]', e.message); }
-          }, 800);
+          }, 2000);
           break;
         case 'media':
           if (dgWs.readyState === WebSocket.OPEN && msg.media?.payload) {
@@ -4699,13 +4716,22 @@ app.post('/api/jareih/conf-events/:callId', (req, res) => {
   console.log(`[Ara conf] ${StatusCallbackEvent} callId=${callId}`);
 });
 
-// Serve TTS audio buffers — short-lived URLs used by conference announceUrl
-app.get('/api/jareih/tts/:token.ulaw', (req, res) => {
+// Serve TTS audio as MP3
+app.get('/api/jareih/tts/:token.mp3', (req, res) => {
   const buf = ttsAudioCache.get(req.params.token);
   if (!buf) return res.status(404).end();
-  res.setHeader('Content-Type', 'audio/basic');
+  res.setHeader('Content-Type', 'audio/mpeg');
   res.setHeader('Cache-Control', 'no-store');
   res.send(buf);
+});
+
+// TwiML wrapper — announceUrl must return TwiML, not raw audio
+app.get('/api/jareih/tts-twiml/:token', (req, res) => {
+  const buf = ttsAudioCache.get(req.params.token);
+  if (!buf) { res.type('text/xml'); return res.send('<Response/>'); }
+  const audioUrl = `${process.env.APP_URL}/api/jareih/tts/${req.params.token}.mp3`;
+  res.type('text/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Play>${audioUrl}</Play></Response>`);
 });
 
 // Contact/status callback
