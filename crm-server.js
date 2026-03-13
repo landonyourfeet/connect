@@ -346,7 +346,8 @@ app.get('/api/people/:id', auth, async (req, res) => {
       SELECT id, first_name, last_name, phone, email, stage, source, background, tags,
              custom_fields, address, city, state, zip, assigned_to, unifi_person_id,
              id_photo_b64, id_photo_name, security_notes, criminal_history,
-             dv_victim, dv_notes, created_at, updated_at
+             dv_victim, dv_notes, dob, ssn, is_military, appfolio_unit, appfolio_property,
+             created_at, updated_at
       FROM people WHERE id=$1
     `, [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
@@ -456,7 +457,7 @@ async function notifyCaseworkers(residentId, triggerType, agentId) {
 
 app.put('/api/people/:id', auth, async (req, res) => {
   try {
-    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip } = req.body;
+    const { firstName, lastName, phone, email, stage, source, background, tags, customFields, assignedTo, address, city, state, zip, dob, ssn, isMilitary } = req.body;
     const r = await pool.query(
       `UPDATE people SET
         first_name=COALESCE($1,first_name), last_name=COALESCE($2,last_name),
@@ -466,12 +467,15 @@ app.put('/api/people/:id', auth, async (req, res) => {
         custom_fields=custom_fields||COALESCE($9::jsonb,'{}'),
         address=COALESCE($10,address), city=COALESCE($11,city),
         state=COALESCE($12,state), zip=COALESCE($13,zip),
+        dob=COALESCE($15::date,dob), ssn=COALESCE($16,ssn),
+        is_military=COALESCE($17,is_military),
         updated_at=NOW()
        WHERE id=$14 RETURNING *`,
       [firstName||null, lastName||null, phone||null, email||null, stage||null,
        source||null, background||null, tags||null,
        customFields ? JSON.stringify(customFields) : null,
-       address||null, city||null, state||null, zip||null, req.params.id]
+       address||null, city||null, state||null, zip||null, req.params.id,
+       dob||null, ssn||null, isMilitary!=null?isMilitary:null]
     );
     const updated = r.rows[0];
     if (stage && (stage === 'Delinquent' || stage === 'Evicting')) {
@@ -644,6 +648,411 @@ app.post('/api/people/:id/lease-violation', auth, async (req, res) => {
     await notifyCaseworkers(req.params.id, 'lease_violation', agentId);
     res.json(act.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ─── FED WORKSHEET PDF ────────────────────────────────────────────────────────
+app.post('/api/people/:id/fed-worksheet', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT p.*, p.dob, p.ssn, p.is_military,
+             p.custom_fields->>'past_due_balance' AS past_due_balance,
+             p.custom_fields->>'unit_number' AS unit_number,
+             p.custom_fields->>'lease_end_date' AS lease_end_date,
+             p.appfolio_property, p.appfolio_unit
+      FROM people p WHERE p.id=$1
+    `, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
+    const p = r.rows[0];
+
+    // ── Validate required fields ──────────────────────────────────────────────
+    const missing = [];
+    if (!p.first_name || !p.last_name) missing.push('Full name');
+    if (!p.address)                    missing.push('Tenant address (street)');
+    if (!p.city)                       missing.push('City');
+    if (!p.state)                      missing.push('State');
+    if (!p.zip)                        missing.push('ZIP code');
+    if (!p.dob)                        missing.push('Date of birth');
+    if (!p.past_due_balance && p.past_due_balance !== 0) missing.push('Past due balance (custom field)');
+    if (missing.length) return res.status(422).json({ error: 'Missing required fields', missing });
+
+    const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([612, 792]); // letter
+    const { width, height } = page.getSize();
+    const bold   = await doc.embedFont(StandardFonts.HelveticaBold);
+    const normal = await doc.embedFont(StandardFonts.Helvetica);
+
+    const draw = (text, x, y, { font=normal, size=10, color=rgb(0,0,0) }={}) =>
+      page.drawText(String(text||''), { x, y, size, font, color });
+
+    const line = (x1, y1, x2, y2, thickness=0.5) =>
+      page.drawLine({ start:{x:x1,y:y1}, end:{x:x2,y:y2}, thickness, color:rgb(0,0,0) });
+
+    const box = (x, y, w, h, thickness=0.5) => {
+      line(x,y,x+w,y,thickness); line(x,y+h,x+w,y+h,thickness);
+      line(x,y,x,y+h,thickness); line(x+w,y,x+w,y+h,thickness);
+    };
+
+    const M = 54; // margin
+    let y = height - M;
+
+    // Header
+    draw('GOLDMAN LAW FED WORKSHEET', M, y, { font:bold, size:13 });
+    y -= 22;
+
+    const field = (label, value, lx, ly, fw=220) => {
+      draw(label, lx, ly, { size:8, color:rgb(0.4,0.4,0.4) });
+      draw(value||'', lx, ly-13, { size:10 });
+      line(lx, ly-15, lx+fw, ly-15, 0.5);
+    };
+
+    // Two-column layout
+    field('LEGAL OWNERSHIP NAME', 'OKCREAL LLC',                    M,   y);
+    field('APT. OR MANAGEMENT CO. NAME', 'OKCREAL LLC',             340, y);
+    y -= 36;
+    field('MANAGEMENT CO. ADDRESS', '6608 N Western Ave #1358, OKC OK 73116', M, y, 460);
+    y -= 36;
+    field('MANAGEMENT CO PHONE #', '405-256-2156',                  M,   y);
+    field('EMAIL ADDRESS', 'Leasing@OKCREAL.com',                   340, y);
+    y -= 36;
+
+    const tenantName = `${p.first_name} ${p.last_name}`;
+    const tenantAddr = `${p.address}, ${p.city}, ${p.state} ${p.zip}`;
+    field('RESIDENT(S) NAME', tenantName + ' and all occupants',    M,   y, 460);
+    y -= 36;
+    field('ADDRESS OF RESIDENT', tenantAddr,                        M,   y, 300);
+    field('COUNTY', p.city || 'Oklahoma',                           380, y, 170);
+    y -= 36;
+
+    const dobStr = p.dob ? new Date(p.dob).toLocaleDateString('en-US') : '';
+    const ssnStr = p.ssn ? `***-**-${String(p.ssn).slice(-4)}` : 'Not on file';
+    field('DATE OF BIRTH', dobStr,                                  M,   y);
+    field('RESIDENT SSN (last 4)', ssnStr,                          230, y);
+    field('MILITARY?', p.is_military ? 'YES' : 'NO',               400, y, 100);
+    y -= 36;
+
+    // Base rent + months owed
+    const balance = parseFloat(p.past_due_balance || 0);
+    const noticeDate = req.body.noticeDate || new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+    field('BASE RENT', `$${balance.toFixed(2)}`,                    M,   y);
+    field('SERVICE DATE OF NOTICE', noticeDate,                     340, y);
+    y -= 36;
+    field('HOW SERVED', req.body.howServed || 'Posted and mailed certified', M, y, 460);
+    y -= 36;
+
+    // Divider
+    draw('(pro-ration to be completed by attorney)', M, y, { size:8, color:rgb(0.5,0.5,0.5) });
+    y -= 20;
+    line(M, y, width-M, y, 1);
+    y -= 16;
+    draw('— Do not fill out below —', width/2 - 55, y, { size:8, color:rgb(0.5,0.5,0.5) });
+    y -= 20;
+
+    field('SUB-TOTAL $', '',        M,    y);
+    field('LATE FEE $', '',         200,  y);
+    field('TOTAL DUE $', '',        340,  y);
+    field('ATTY FEE (10%) $', '',   460,  y, 96);
+    y -= 36;
+    field('COURT DATE & JUDGE', '', M,    y, 460);
+
+    // Footer
+    y = 40;
+    draw('Generated by OKCREAL Connect · ' + new Date().toLocaleDateString(), M, y, { size:8, color:rgb(0.6,0.6,0.6) });
+
+    const pdfBytes = await doc.save();
+    const filename = `FED_Worksheet_${p.last_name}_${Date.now()}.pdf`;
+    res.setHeader('Content-Type','application/pdf');
+    res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+    res.end(Buffer.from(pdfBytes));
+
+    // Log activity
+    await pool.query(
+      `INSERT INTO activities (person_id,agent_id,type,body,direction) VALUES ($1,$2,'note',$3,'internal')`,
+      [req.params.id, req.agent?.id||null, '📋 FED Worksheet generated and downloaded']
+    );
+  } catch(e) {
+    console.error('[FED worksheet]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── 5-DAY NOTICE TO QUIT PDF ─────────────────────────────────────────────────
+app.post('/api/people/:id/five-day-notice', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT p.*,
+             p.custom_fields->>'past_due_balance' AS past_due_balance,
+             p.custom_fields->>'unit_number' AS unit_number,
+             p.appfolio_property, p.appfolio_unit
+      FROM people p WHERE p.id=$1
+    `, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Not found' });
+    const p = r.rows[0];
+
+    const missing = [];
+    if (!p.first_name || !p.last_name) missing.push('Full name');
+    if (!p.address)                    missing.push('Tenant address');
+    if (!p.city || !p.state)           missing.push('City / State');
+    if (!p.past_due_balance && p.past_due_balance !== 0) missing.push('Past due balance');
+    if (missing.length) return res.status(422).json({ error: 'Missing required fields', missing });
+
+    const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+    const balance  = parseFloat(p.past_due_balance || 0);
+    const postingFee = 25;
+    const totalDue   = balance + postingFee;
+
+    const today    = new Date();
+    const dueDate  = new Date(today); dueDate.setDate(today.getDate() + 5);
+    const fmtDate  = d => d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    const fmtShort = d => d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    const tenantName = `${p.first_name} ${p.last_name}`;
+    const unitNum    = p.appfolio_unit || p.unit_number || req.body.unit || '';
+    const property   = p.appfolio_property || req.body.property || 'OKCREAL Property';
+    const propAddr   = `${p.address}, ${p.city}, ${p.state} ${p.zip||''}`.trim();
+
+    // ── PAGE 1: Five-Day Notice ───────────────────────────────────────────────
+    const doc  = await PDFDocument.create();
+    const addPage = () => {
+      const pg = doc.addPage([612, 792]);
+      return pg;
+    };
+
+    const embedFonts = async () => ({
+      bold:   await doc.embedFont(StandardFonts.HelveticaBold),
+      normal: await doc.embedFont(StandardFonts.Helvetica),
+      oblique:await doc.embedFont(StandardFonts.HelveticaOblique),
+    });
+    const F = await embedFonts();
+
+    const txt = (pg, text, x, y, opts={}) => pg.drawText(String(text||''), {
+      x, y, size: opts.size||10, font: opts.font||F.normal, color: opts.color||rgb(0,0,0)
+    });
+    const ln = (pg, x1,y1,x2,y2, t=0.5) => pg.drawLine({
+      start:{x:x1,y:y1},end:{x:x2,y:y2},thickness:t,color:rgb(0,0,0)
+    });
+    const rect = (pg, x,y,w,h,fill,stroke) => {
+      pg.drawRectangle({x,y,width:w,height:h,
+        color:fill||undefined, borderColor:stroke||rgb(0,0,0), borderWidth:0.5});
+    };
+
+    // ── Notice page ───────────────────────────────────────────────────────────
+    const pg1 = addPage();
+    const M = 54, W = 612-M*2;
+    let y = 738;
+
+    // Header bar
+    rect(pg1, M, y-2, W, 28, rgb(0.05,0.05,0.05));
+    txt(pg1, 'OKCREAL PROPERTY MANAGEMENT', M+8, y+6, { font:F.bold, size:13, color:rgb(1,1,1) });
+    y -= 36;
+    txt(pg1, 'FIVE-DAY NOTICE TO PAY RENT OR QUIT', M, y, { font:F.bold, size:14 });
+    y -= 14;
+    txt(pg1, 'Pursuant to Oklahoma Statutes Title 41, Section 131(B)', M, y, { size:9, color:rgb(0.4,0.4,0.4), font:F.oblique });
+    y -= 24;
+    ln(pg1, M, y, M+W, y, 1);
+    y -= 16;
+
+    // Four-cell info grid
+    const cell = (label, value, x, cy, w=240) => {
+      txt(pg1, label, x, cy, { size:8, color:rgb(0.5,0.5,0.5), font:F.bold });
+      txt(pg1, value, x, cy-14, { size:10 });
+    };
+    cell('TO (TENANT)',     tenantName + (unitNum?`\nUnit ${unitNum}`:''),     M,   y);
+    cell('FROM (LANDLORD)', 'OKCREAL Property Management\n405-256-1696',       360, y);
+    y -= 42;
+    cell('DATE OF NOTICE',  fmtDate(today),                                   M,   y);
+    cell('PROPERTY ADDRESS', propAddr,                                         360, y);
+    y -= 42;
+    ln(pg1, M, y, M+W, y, 0.5);
+    y -= 20;
+
+    // Amount box
+    rect(pg1, M, y-70, W, 80, rgb(0.97,0.97,0.97));
+    txt(pg1, 'AMOUNT REQUIRED TO CURE DEFAULT:', M+8, y-4, { font:F.bold, size:11 });
+    txt(pg1, `Unpaid rent (as of ${fmtDate(today)}):`, M+16, y-22, { size:10 });
+    txt(pg1, `$${balance.toFixed(2)}`, M+W-80, y-22, { font:F.bold, size:10 });
+    txt(pg1, 'Door posting administrative fee:', M+16, y-38, { size:10 });
+    txt(pg1, `$${postingFee.toFixed(2)}`, M+W-80, y-38, { size:10 });
+    ln(pg1, M+W-120, y-46, M+W-8, y-46, 0.5);
+    txt(pg1, 'TOTAL DUE:', M+16, y-58, { font:F.bold, size:11 });
+    txt(pg1, `$${totalDue.toFixed(2)}`, M+W-80, y-58, { font:F.bold, size:11, color:rgb(0.85,0,0.1) });
+    y -= 96;
+
+    // Notice body
+    const wrap = (pg, text, x, startY, maxW, lineH=14, opts={}) => {
+      const words = text.split(' ');
+      const sz = opts.size||10;
+      const fn = opts.font||F.normal;
+      let line2 = ''; let cy = startY;
+      for (const w of words) {
+        const test = line2 ? line2+' '+w : w;
+        const tw = fn.widthOfTextAtSize(test, sz);
+        if (tw > maxW && line2) {
+          txt(pg, line2, x, cy, opts);
+          line2 = w; cy -= lineH;
+        } else line2 = test;
+      }
+      if (line2) { txt(pg, line2, x, cy, opts); cy -= lineH; }
+      return cy;
+    };
+
+    const body = `YOU ARE HEREBY NOTIFIED that you are in default in the payment of rent for the above-described premises in the amount of $${balance.toFixed(2)}, which is now due and owing. You are hereby DEMANDED to pay said rent in full within FIVE (5) DAYS from the date of service of this notice (on or before ${fmtShort(dueDate)}), or to vacate and surrender possession of the premises. Failure to do so will result in commencement of legal proceedings for recovery of possession, all rent due, and other damages as permitted by Oklahoma law.`;
+    y = wrap(pg1, body, M, y, W, 15, { size:10 });
+    y -= 20;
+
+    // Personal message box
+    rect(pg1, M, y-88, W, 98, rgb(0.96,0.98,0.97));
+    txt(pg1, 'A PERSONAL MESSAGE FROM OKCREAL:', M+8, y-6, { font:F.bold, size:10 });
+    const msg = `${p.first_name}, we want you to know that filing for eviction is a last resort — it is never our goal. We value your tenancy and genuinely want to help you stay in your home. This notice is a legal requirement we must serve, but it does not mean the situation is beyond repair. If you are experiencing a hardship or need to discuss a payment arrangement, please contact us immediately at 405-256-1696 or text us any time. Payment can be made online at teamokcreal.appfolio.com or in cash using your Pay Near Me barcode at CVS or 7-Eleven. Every day counts — please reach out today.`;
+    wrap(pg1, msg, M+8, y-22, W-16, 13, { size:9, font:F.normal, color:rgb(0.2,0.2,0.2) });
+    y -= 112;
+
+    // Deadline callout
+    txt(pg1, `\u25A0 PAYMENT DEADLINE: ${fmtShort(dueDate)} \u25A0`, M+W/2-120, y, { font:F.bold, size:11 });
+    y -= 28;
+    ln(pg1, M, y, M+180, y, 0.5);
+    txt(pg1, 'Authorized Representative, OKCREAL Property Management', M, y-14, { size:9, color:rgb(0.4,0.4,0.4) });
+
+    // ── PAGE 2: Proof of Service ──────────────────────────────────────────────
+    const pg2 = addPage();
+    y = 738;
+    rect(pg2, M, y-2, W, 28, rgb(0.05,0.05,0.05));
+    txt(pg2, 'OKCREAL PROPERTY MANAGEMENT', M+8, y+6, { font:F.bold, size:13, color:rgb(1,1,1) });
+    y -= 48;
+    txt(pg2, 'PROOF OF SERVICE', M, y, { font:F.bold, size:14 });
+    y -= 14;
+    txt(pg2, 'TO BE COMPLETED BY LEASING OFFICER', M, y, { size:9, font:F.oblique, color:rgb(0.4,0.4,0.4) });
+    y -= 24;
+    ln(pg2, M, y, M+W, y, 1);
+    y -= 18;
+    txt(pg2, `Served on: ${tenantName}${unitNum?' | Unit '+unitNum:''} | ${property}`, M, y, { font:F.bold, size:11 });
+    y -= 28;
+    ln(pg2, M, y, M+W, y, 0.5);
+
+    // Option A
+    y -= 20;
+    rect(pg2, M, y-3, 10, 10);
+    txt(pg2, 'OPTION A \u2014 Personal Service', M+16, y, { font:F.bold, size:11 });
+    y -= 16;
+    txt(pg2, 'Notice was handed directly to the tenant on the date stated. Tenant signature below (or write "Refused"):', M+8, y, { size:9 });
+    y -= 22;
+    txt(pg2, 'Tenant Signature:', M+8, y, { size:9 });
+    ln(pg2, M+90, y-2, M+W-100, y-2, 0.5);
+    txt(pg2, 'Date/Time:', M+W-98, y, { size:9 });
+    ln(pg2, M+W-50, y-2, M+W, y-2, 0.5);
+    y -= 28;
+    ln(pg2, M, y, M+W, y, 0.3);
+
+    // Option B
+    y -= 20;
+    rect(pg2, M, y-3, 10, 10);
+    txt(pg2, 'OPTION B \u2014 Door Posting (Certified Mail Required)', M+16, y, { font:F.bold, size:11 });
+    y -= 16;
+    txt(pg2, 'Notice posted on primary entry door. Date-stamped photo taken. Certified mail copy to be sent upon return to office.', M+8, y, { size:9 });
+    y -= 22;
+    txt(pg2, 'Officer Initials:', M+8, y, { size:9 });
+    ln(pg2, M+80, y-2, M+160, y-2, 0.5);
+    txt(pg2, 'Date/Time Posted:', M+170, y, { size:9 });
+    ln(pg2, M+255, y-2, M+360, y-2, 0.5);
+    txt(pg2, 'Cert. Mail #:', M+370, y, { size:9 });
+    ln(pg2, M+430, y-2, M+W, y-2, 0.5);
+    y -= 40;
+    ln(pg2, M, y, M+W, y, 0.5);
+    y -= 16;
+    wrap(pg2, 'This notice is served pursuant to Oklahoma Statutes Title 41, \u00A7 131(B). Demand for past due rent is deemed a demand for possession of the premises. The door posting fee is an administrative charge separate from the rent demand and does not constitute rent under Oklahoma law. Personal service is complete upon delivery to the tenant. Door posting service requires follow-up certified mailing.', M, y, W, 13, { size:8, color:rgb(0.45,0.45,0.45) });
+
+    const pdfBytes = await doc.save();
+    const safeName = p.last_name.replace(/[^a-zA-Z0-9]/g,'_');
+    const filename = `5Day_Notice_${safeName}_${Date.now()}.pdf`;
+    res.setHeader('Content-Type','application/pdf');
+    res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+    res.end(Buffer.from(pdfBytes));
+
+    await pool.query(
+      `INSERT INTO activities (person_id,agent_id,type,body,direction) VALUES ($1,$2,'note',$3,'internal')`,
+      [req.params.id, req.agent?.id||null, `📄 5-Day Notice generated — $${totalDue.toFixed(2)} total due, deadline ${fmtShort(dueDate)}`]
+    );
+  } catch(e) {
+    console.error('[5-day notice]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── TENANT DIRECTORY IMPORT (AppFolio xlsx sync) ────────────────────────────
+app.post('/api/import/tenant-directory', auth, async (req, res) => {
+  try {
+    const { rows } = req.body; // [{name,email,phone,property,unit,moveIn,leaseTo,rent,dob,status}]
+    if (!rows?.length) return res.status(400).json({ error: 'No rows provided' });
+
+    let updated = 0, notFound = 0;
+    const notFoundList = [];
+
+    for (const row of rows) {
+      // Try to match by email first, then by name
+      let match = null;
+      if (row.email) {
+        const r = await pool.query(
+          `SELECT id FROM people WHERE LOWER(email)=LOWER($1) LIMIT 1`, [row.email]
+        );
+        match = r.rows[0];
+      }
+      if (!match && row.name) {
+        // AppFolio: 'A. Last, First' or 'Last, First' — strip leading initial prefix
+        const cleanName = row.name.replace(/^[A-Z]\. /, '');
+        let last, first;
+        if (cleanName.includes(',')) {
+          last  = cleanName.split(',')[0].trim();
+          first = cleanName.split(',').slice(1).join(',').trim().split(' ')[0];
+        } else {
+          const np = cleanName.trim().split(' ');
+          last = np[np.length-1]; first = np[0];
+        }
+        const r = await pool.query(
+          `SELECT id FROM people WHERE LOWER(first_name) ILIKE $1 AND LOWER(last_name) ILIKE $2 LIMIT 1`,
+          [`%${first.toLowerCase()}%`, `%${last.toLowerCase()}%`]
+        );
+        match = r.rows[0];
+      }
+
+      if (!match) {
+        notFound++;
+        notFoundList.push(row.name);
+        continue;
+      }
+
+      const updates = {};
+      const params = [];
+      const sets = [];
+      let idx = 1;
+
+      if (row.dob)       { sets.push(`dob=$${idx++}::date`);             params.push(row.dob); }
+      if (row.unit)      { sets.push(`appfolio_unit=$${idx++}`);          params.push(row.unit); }
+      if (row.property)  { sets.push(`appfolio_property=$${idx++}`);      params.push(row.property); }
+      if (row.phone)     { sets.push(`phone=COALESCE(phone,$${idx++})`);  params.push(row.phone); }
+
+      // Merge rent + lease info into custom_fields
+      const cf = {};
+      if (row.moveIn)  cf.move_in_date  = row.moveIn;
+      if (row.leaseTo) cf.lease_end_date = row.leaseTo;
+      if (row.rent)    cf.base_rent     = String(row.rent).replace(/,/g,'');
+      if (Object.keys(cf).length) {
+        sets.push(`custom_fields=custom_fields||$${idx++}::jsonb`);
+        params.push(JSON.stringify(cf));
+      }
+      sets.push(`updated_at=NOW()`);
+      params.push(match.id);
+
+      if (sets.length > 1) { // at least one real field
+        await pool.query(`UPDATE people SET ${sets.join(',')} WHERE id=$${idx}`, params);
+        updated++;
+      }
+    }
+
+    res.json({ ok:true, updated, notFound, notFoundList: notFoundList.slice(0,20) });
+  } catch(e) {
+    console.error('[tenant-dir import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/people/:id/caseworkers', auth, async (req, res) => {
@@ -1946,6 +2355,10 @@ async function initDB() {
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS zip TEXT`, 'people.zip');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS fub_id TEXT`, 'people.fub_id');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS dob DATE`, 'people.dob');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS ssn TEXT`, 'people.ssn');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS is_military BOOLEAN DEFAULT FALSE`, 'people.is_military');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS appfolio_unit TEXT`, 'people.appfolio_unit');
+  await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS appfolio_property TEXT`, 'people.appfolio_property');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE`, 'people.is_blocked');
   await run(`ALTER TABLE people ADD COLUMN IF NOT EXISTS notes TEXT`, 'people.notes');
   await run(`ALTER TABLE people ALTER COLUMN first_name TYPE TEXT`, 'people.first_name->TEXT');
