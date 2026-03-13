@@ -10566,6 +10566,14 @@ function renderLccDetail(callId) {
       <button onclick="lccHangup('${callId}')" style="flex:1;min-width:100px;height:32px;background:rgba(232,0,58,0.2);color:var(--red);border:1px solid rgba(232,0,58,0.4);border-radius:6px;font-size:10px;font-weight:800;font-family:var(--font-mono);cursor:pointer">📴 HANG UP</button>
     </div>
 
+    <!-- Coach bar -->
+    <div style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0;background:rgba(255,180,0,0.04)">
+      <input id="lcc-coach-${callId}" type="text" placeholder="Coach Ara… (e.g. 'ask about move-in date')"
+        onkeydown="if(event.key==='Enter')lccCoach('${callId}')"
+        style="flex:1;height:30px;background:var(--bg-3);border:1px solid rgba(255,180,0,0.3);border-radius:6px;color:var(--text);font-size:11px;padding:0 10px;font-family:var(--font-body);outline:none" />
+      <button onclick="lccCoach('${callId}')" style="height:30px;padding:0 12px;background:rgba(255,180,0,0.15);color:#ffb400;border:1px solid rgba(255,180,0,0.4);border-radius:6px;font-size:10px;font-weight:800;font-family:var(--font-mono);cursor:pointer;white-space:nowrap">⬡ COACH</button>
+    </div>
+
     <!-- Split: transcript + contact file -->
     <div style="flex:1;display:flex;overflow:hidden">
 
@@ -10634,6 +10642,24 @@ async function lccToggleAra(callId, mute) {
   } catch(e) { toast('Error: '+e.message,'error'); }
 }
 
+async function lccCoach(callId) {
+  const input = document.getElementById(`lcc-coach-${callId}`);
+  if (!input) return;
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = '';
+  input.disabled = true;
+  try {
+    await api('/api/jareih/coach', 'POST', { callId, message });
+    toast('Coaching sent to Ara', 'success');
+  } catch(e) {
+    toast('Coach error: ' + e.message, 'error');
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
 async function lccHangup(callId) {
   if (!confirm('Hang up this call?')) return;
   try {
@@ -10650,22 +10676,21 @@ async function lccJoinCall(callId, mode) {
   try {
     const r = await api('/api/jareih/call-join','POST',{ callId, mode });
     if (!r.ok) { toast(r.error||'Join failed','error'); return; }
-    toast(`${mode==='speak'?'Joining call — Ara muted':'Listening in on call'}…`,'success');
 
-    // Init Twilio Voice SDK and join the conference
     if (!_lccVoiceDevice) {
       const tokenR = await api('/api/twilio/token','POST',{});
       const { Device } = Twilio;
       _lccVoiceDevice = new Device(tokenR.token, { codecPreferences:['opus','pcmu'], edge:'ashburn' });
       await _lccVoiceDevice.register();
     }
-    // Call ourselves (use the conference TwiML app endpoint)
-    _lccVoiceConn = await _lccVoiceDevice.connect({
-      params: { To: r.confName, Muted: mode === 'listen' ? 'true' : 'false' }
-    });
-    toast(mode === 'speak' ? '🎤 You are live on the call' : '👂 Listening to call audio', 'success');
 
-    // Show leave button
+    const muted = mode === 'listen';
+    // Pass confName + confMuted — /api/twilio/voice detects confName and routes to <Conference>
+    _lccVoiceConn = await _lccVoiceDevice.connect({
+      params: { To: 'monitor', confName: r.confName, confMuted: muted ? 'true' : 'false' }
+    });
+    toast(muted ? '👂 Listening to call audio' : '🎤 You are live on the call', 'success');
+
     const existing = document.getElementById('lcc-leave-btn');
     if (!existing) {
       const leaveBtn = document.createElement('button');
