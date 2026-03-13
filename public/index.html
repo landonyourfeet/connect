@@ -712,7 +712,7 @@
     }
     .sec-hist-btn.footage { background:rgba(255,59,59,0.15); color:#ff3b3b; border:1px solid rgba(255,59,59,0.35); }
     .sec-hist-btn.footage:hover { background:rgba(255,59,59,0.28); }
-    .sec-hist-btn.open { background:var(--bg-3); color:var(--text); border:1px solid var(--border); }
+    .sec-hist-btn.open { background:#161616; color:var(--text); border:1px solid #222; }
     .sec-hist-btn.open:hover { border-color:var(--accent); color:var(--accent); }
 
     /* ── SECURITY PROFILE PANEL ──────────────────────────────────── */
@@ -6047,9 +6047,13 @@ function handleJareihCallUpdate(payload) {
     const emoji = goalAchieved ? '✅' : '📋';
     Jareih.appendCallLine('result', null, );
     window._jareihActiveCall = null;
-    // Hide hangup button
     const btn = document.getElementById('jareih-hangup-btn');
     if (btn) btn.style.display = 'none';
+    // Close the live call panel
+    closeLccDetail();
+    _lccOpen = false;
+    const lccPanel = document.getElementById('live-calls-panel');
+    if (lccPanel) lccPanel.style.display = 'none';
     // Refresh timeline if on this contact
     if (String(payload.personId) === String(currentPersonId)) {
       setTimeout(() => {
@@ -10390,8 +10394,8 @@ ${propSections}
      LIVE CALL CONTROL CENTER PANEL
 ══════════════════════════════════════════════════════════════════════════════ -->
 <div id="live-calls-panel" style="display:none;position:fixed;top:0;right:0;width:480px;height:100vh;
-  background:var(--bg-1);border-left:1px solid var(--border);z-index:8800;
-  display:none;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,0.4)">
+  background:#0a0a0a;border-left:1px solid #2a2a2a;z-index:8800;
+  flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,0.7)">
 
   <!-- Panel header -->
   <div style="display:flex;align-items:center;justify-content:space-between;
@@ -10419,8 +10423,8 @@ ${propSections}
 
 <!-- Individual call detail panel (slides over the list) -->
 <div id="lcp-detail" style="display:none;position:fixed;top:0;right:0;width:480px;height:100vh;
-  background:var(--bg-1);border-left:1px solid var(--border);z-index:8900;flex-direction:column;
-  box-shadow:-8px 0 40px rgba(0,0,0,0.4)">
+  background:#0a0a0a;border-left:1px solid #2a2a2a;z-index:8900;flex-direction:column;
+  box-shadow:-8px 0 40px rgba(0,0,0,0.7)">
   <div id="lcp-detail-inner" style="display:flex;flex-direction:column;height:100%"></div>
 </div>
 
@@ -10547,25 +10551,25 @@ function renderLccDetail(callId) {
 
   inner.innerHTML = `
     <!-- HEADER -->
-    <div style="padding:14px 16px;background:var(--bg-1);border-bottom:2px solid rgba(232,0,58,0.25);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+    <div style="padding:14px 16px;background:#0a0a0a;border-bottom:2px solid rgba(232,0,58,0.3);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
       <div style="display:flex;align-items:center;gap:10px">
-        <button onclick="closeLccDetail()" style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:20px;line-height:1;padding:0;transition:color .15s"
-          onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-3)'">‹</button>
+        <button onclick="closeLccDetail()" style="background:none;border:none;color:#666;cursor:pointer;font-size:20px;line-height:1;padding:0;transition:color .15s"
+          onmouseover="this.style.color='#e8e8e8'" onmouseout="this.style.color='#666'">‹</button>
         <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,rgba(232,0,58,0.3),rgba(232,0,58,0.1));border:2px solid rgba(232,0,58,0.4);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">🤖</div>
         <div>
-          <div style="font-size:15px;font-weight:700;color:var(--text);line-height:1.2">${esc(call?.contactName||'Unknown')}</div>
+          <div style="font-size:15px;font-weight:700;color:#e8e8e8;line-height:1.2">${esc(call?.contactName||'Unknown')}</div>
           <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
             <span style="width:7px;height:7px;border-radius:50%;background:${statusDot};display:inline-block;${isConnected?'box-shadow:0 0 6px '+statusDot:''}"></span>
-            <span style="font-size:11px;color:var(--text-3);font-family:var(--font-mono)">${(call?.status||'INITIATED').toUpperCase()} · ${mm}:${ss}</span>
+            <span style="font-size:11px;color:#666;font-family:monospace">${(call?.status||'INITIATED').toUpperCase()} · ${mm}:${ss}</span>
           </div>
         </div>
       </div>
       ${person ? `<button onclick="openContact('${call?.personId}');closeLccDetail();"
-        style="font-size:11px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);cursor:pointer;font-weight:600">📋 File</button>` : ''}
+        style="font-size:11px;padding:6px 12px;border-radius:8px;border:1px solid #1e1e1e;background:#141414;color:#aaa;cursor:pointer;font-weight:600">📋 File</button>` : ''}
     </div>
 
     <!-- CONTROLS -->
-    <div style="padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;gap:8px">
+    <div style="padding:10px 14px;border-bottom:1px solid #1e1e1e;flex-shrink:0;display:flex;gap:8px">
       ${call?.araActive
         ? `<button onclick="lccToggleAra('${callId}',true)"
             style="flex:1;height:36px;border-radius:8px;border:1px solid rgba(232,0,58,0.35);background:rgba(232,0,58,0.1);color:#ff4466;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s"
@@ -10575,8 +10579,8 @@ function renderLccDetail(callId) {
             onmouseover="this.style.background='rgba(0,200,120,0.2)'" onmouseout="this.style.background='rgba(0,200,120,0.1)'">▶ Resume Ara</button>`
       }
       <button onclick="lccJoinCall('${callId}','listen')"
-        style="flex:1;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s"
-        onmouseover="this.style.background='var(--bg-2)'" onmouseout="this.style.background='var(--bg-3)'">👂 Listen</button>
+        style="flex:1;height:36px;border-radius:8px;border:1px solid #1e1e1e;background:#1a1a1a;color:#aaa;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s"
+        onmouseover="this.style.background='#252525'" onmouseout="this.style.background='#1a1a1a'">👂 Listen</button>
       <button onclick="lccJoinCall('${callId}','speak')"
         style="flex:1;height:36px;border-radius:8px;border:1px solid rgba(80,130,255,0.35);background:rgba(80,130,255,0.1);color:#6699ff;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s"
         onmouseover="this.style.background='rgba(80,130,255,0.2)'" onmouseout="this.style.background='rgba(80,130,255,0.1)'">🎤 Join</button>
@@ -10586,18 +10590,18 @@ function renderLccDetail(callId) {
     </div>
 
     <!-- GOAL -->
-    <div style="padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0;background:rgba(255,180,0,0.04);display:flex;align-items:baseline;gap:8px">
-      <span style="font-size:10px;font-weight:700;color:#ffb400;font-family:var(--font-mono);letter-spacing:0.06em;flex-shrink:0">GOAL</span>
-      <span style="font-size:12px;color:var(--text-2);line-height:1.4">${esc(call?.goal||'')}</span>
+    <div style="padding:8px 14px;border-bottom:1px solid #1e1e1e;flex-shrink:0;background:rgba(255,180,0,0.06);display:flex;align-items:baseline;gap:8px">
+      <span style="font-size:10px;font-weight:700;color:#ffb400;font-family:monospace;letter-spacing:0.06em;flex-shrink:0">GOAL</span>
+      <span style="font-size:12px;color:#aaa;line-height:1.4">${esc(call?.goal||'')}</span>
     </div>
 
     <!-- COACH -->
-    <div style="padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;gap:8px;align-items:center">
+    <div style="padding:8px 14px;border-bottom:1px solid #1e1e1e;flex-shrink:0;display:flex;gap:8px;align-items:center">
       <input id="lcc-coach-${callId}" type="text"
         placeholder="Coach Jie-rah… e.g. 'pivot to asking about timeline'"
         onkeydown="if(event.key==='Enter')lccCoach('${callId}')"
-        style="flex:1;height:34px;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;padding:0 12px;outline:none;transition:border-color .15s"
-        onfocus="this.style.borderColor='#ffb400'" onblur="this.style.borderColor='var(--border)'" />
+        style="flex:1;height:34px;background:#141414;border:1px solid #2a2a2a;border-radius:8px;color:#eee;font-size:12px;padding:0 12px;outline:none;transition:border-color .15s"
+        onfocus="this.style.borderColor='#ffb400'" onblur="this.style.borderColor='#2a2a2a'" />
       <button onclick="lccCoach('${callId}')"
         style="height:34px;padding:0 14px;border-radius:8px;border:1px solid rgba(255,180,0,0.35);background:rgba(255,180,0,0.1);color:#ffb400;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s"
         onmouseover="this.style.background='rgba(255,180,0,0.2)'" onmouseout="this.style.background='rgba(255,180,0,0.1)'">⬡ Coach</button>
@@ -10605,25 +10609,25 @@ function renderLccDetail(callId) {
 
     <!-- LIVE TRANSCRIPT -->
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-      <div style="padding:8px 14px;font-size:10px;font-weight:700;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.08em;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;justify-content:space-between;align-items:center">
+      <div style="padding:8px 14px;font-size:10px;font-weight:700;color:#666;font-family:monospace;letter-spacing:0.08em;border-bottom:1px solid #1e1e1e;flex-shrink:0;display:flex;justify-content:space-between;align-items:center">
         <span>LIVE TRANSCRIPT</span>
-        ${(call?.transcript||[]).length === 0 ? '<span style="color:var(--text-3);font-weight:400;font-size:10px;font-family:var(--font-body)">Waiting for connection…</span>' : ''}
+        ${(call?.transcript||[]).length === 0 ? '<span style="color:#666;font-weight:400;font-size:10px;font-family:var(--font-body)">Waiting for connection…</span>' : ''}
       </div>
       <div id="lcc-transcript-${callId}"
         style="flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth">
         ${(call?.transcript||[]).length === 0
-          ? `<div style="color:var(--text-3);font-size:12px;text-align:center;margin-top:24px;opacity:0.5">Transcript will appear here once connected</div>`
+          ? `<div style="color:#555;font-size:12px;text-align:center;margin-top:24px;opacity:0.5">Transcript will appear here once connected</div>`
           : (call?.transcript||[]).map(t => {
               const isAra = t.role === 'ara';
               const isAgent = t.role === 'agent';
               const isCoach = t.role === 'agent' && t.text?.startsWith('[Coach');
               const name = isAra ? '🤖 Jie-rah' : isAgent ? '🎤 You' : `👤 ${esc(call?.contactName||'')}`;
-              const bg = isCoach ? 'rgba(255,180,0,0.08)' : isAra ? 'rgba(0,200,120,0.07)' : isAgent ? 'rgba(80,130,255,0.07)' : 'var(--bg-3)';
-              const border = isCoach ? '1px solid rgba(255,180,0,0.2)' : isAra ? '1px solid rgba(0,200,120,0.15)' : isAgent ? '1px solid rgba(80,130,255,0.15)' : '1px solid var(--border)';
-              const nameColor = isCoach ? '#ffb400' : isAra ? '#00cc78' : isAgent ? '#6699ff' : 'var(--text-3)';
+              const bg = isCoach ? 'rgba(255,180,0,0.08)' : isAra ? 'rgba(0,200,120,0.07)' : isAgent ? 'rgba(80,130,255,0.07)' : '#141414';
+              const border = isCoach ? '1px solid rgba(255,180,0,0.2)' : isAra ? '1px solid rgba(0,200,120,0.15)' : isAgent ? '1px solid rgba(80,130,255,0.15)' : '1px solid #1e1e1e';
+              const nameColor = isCoach ? '#ffb400' : isAra ? '#00cc78' : isAgent ? '#6699ff' : '#666';
               return `<div style="display:flex;flex-direction:column;${!isAra && !isAgent ? 'align-items:flex-end' : ''}">
                 <div style="font-size:10px;font-weight:700;color:${nameColor};margin-bottom:3px;padding:0 2px">${name}</div>
-                <div style="max-width:90%;padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.5;background:${bg};border:${border};color:var(--text)">${esc(t.text)}</div>
+                <div style="max-width:90%;padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.5;background:${bg};border:${border};color:#e8e8e8">${esc(t.text)}</div>
               </div>`;
             }).join('')
         }
