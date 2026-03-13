@@ -5177,11 +5177,12 @@ app.get('/jireh-toggle.js', (req, res) => {
 (function () {
   'use strict';
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // ── Auth ─────────────────────────────────────────────────────────────────
   function getToken() {
     return localStorage.getItem('token') || localStorage.getItem('connect_token') || '';
   }
 
+  // ── API ──────────────────────────────────────────────────────────────────
   async function fetchSetting() {
     try {
       const r = await fetch('/api/jareih/settings', {
@@ -5203,158 +5204,234 @@ app.get('/jireh-toggle.js', (req, res) => {
     } catch(e) { console.warn('[Jireh toggle] save failed', e); }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Styles ────────────────────────────────────────────────────────────────
+  // Uses ONLY CSS variables from the app theme — works in both stealth & daylight.
+  // No hardcoded colors so the bar inherits whatever theme is active on <html>.
   function injectStyles() {
     if (document.getElementById('jireh-toggle-styles')) return;
     const s = document.createElement('style');
     s.id = 'jireh-toggle-styles';
     s.textContent = \`
+      /* ── Jireh toggle bar ───────────────────────────────────────────────
+         Sits inside #app, above .app-body — does NOT affect 100vh layout.
+         All colors come from the active theme's CSS variables.
+      ─────────────────────────────────────────────────────────────────── */
       #jireh-toggle-bar {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 7px 16px;
-        background: #0d0d0d;
-        border-bottom: 1px solid #1f1f1f;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        position: relative;
-        z-index: 9999;
-        user-select: none;
+        padding: 0 16px;
+        height: 36px;
+        min-height: 36px;
         flex-shrink: 0;
+        background: var(--bg-2);
+        border-bottom: 1px solid var(--border);
+        font-family: var(--font-body, sans-serif);
+        position: relative;
+        z-index: 200;
+        user-select: none;
+        box-sizing: border-box;
       }
+
+      /* Icon */
       #jireh-toggle-bar .jtb-icon {
-        width: 18px; height: 18px; flex-shrink: 0;
-        color: #e63946;
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        color: var(--red);
+        opacity: 0.85;
       }
+
+      /* Label */
       #jireh-toggle-bar .jtb-label {
+        font-family: var(--font-cond, sans-serif);
         font-size: 11px;
         font-weight: 700;
-        letter-spacing: .1em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: #aaa;
+        color: var(--text-2);
         flex-shrink: 0;
       }
-      /* Toggle switch */
+
+      /* Toggle pill */
       .jtb-switch {
         position: relative;
         display: inline-flex;
-        width: 44px;
-        height: 24px;
+        align-items: center;
+        width: 40px;
+        height: 22px;
         flex-shrink: 0;
         cursor: pointer;
       }
-      .jtb-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+      .jtb-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+        position: absolute;
+        pointer-events: none;
+      }
       .jtb-slider {
-        position: absolute; inset: 0;
-        background: #2a2a2a;
-        border-radius: 24px;
-        transition: background .2s;
-        border: 1px solid #333;
+        position: absolute;
+        inset: 0;
+        background: var(--bg-4);
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        transition: background 0.18s, border-color 0.18s;
       }
       .jtb-slider::before {
         content: '';
         position: absolute;
-        width: 18px; height: 18px;
-        left: 2px; top: 2px;
-        background: #555;
+        width: 16px;
+        height: 16px;
+        left: 2px;
+        top: 2px;
+        background: var(--text-3);
         border-radius: 50%;
-        transition: transform .2s, background .2s;
+        transition: transform 0.18s, background 0.18s;
       }
       .jtb-switch input:checked + .jtb-slider {
-        background: rgba(230, 57, 70, .18);
-        border-color: #e63946;
+        background: color-mix(in srgb, var(--red) 15%, var(--bg-2));
+        border-color: var(--red);
       }
       .jtb-switch input:checked + .jtb-slider::before {
-        transform: translateX(20px);
-        background: #e63946;
+        transform: translateX(18px);
+        background: var(--red);
       }
+
+      /* Status text */
       #jireh-toggle-status {
-        font-size: 12px;
-        color: #555;
-        transition: color .2s;
-      }
-      #jireh-toggle-status.on { color: #e63946; }
-      #jireh-toggle-bar .jtb-badge {
-        margin-left: auto;
-        font-size: 10px;
-        letter-spacing: .12em;
-        text-transform: uppercase;
-        color: #333;
+        font-family: var(--font-cond, sans-serif);
+        font-size: 11px;
         font-weight: 600;
+        letter-spacing: 0.08em;
+        color: var(--text-3);
+        transition: color 0.18s;
+        min-width: 24px;
+      }
+      #jireh-toggle-status.jtb-on {
+        color: var(--red);
+      }
+
+      /* Right-side hint */
+      #jireh-toggle-bar .jtb-hint {
+        margin-left: auto;
+        font-family: var(--font-cond, sans-serif);
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        opacity: 0.55;
+        flex-shrink: 0;
       }
     \`;
     document.head.appendChild(s);
   }
 
+  // ── HTML ─────────────────────────────────────────────────────────────────
   function buildBar() {
     const bar = document.createElement('div');
     bar.id = 'jireh-toggle-bar';
     bar.innerHTML = \`
-      <svg class="jtb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg class="jtb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.07 12 19.79 19.79 0 0 1 1 3.18 2 2 0 0 1 2.99 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.09 8.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21 16z"/>
       </svg>
-      <span class="jtb-label">Jireh Auto-Answer</span>
-      <label class="jtb-switch" title="Toggle Jireh auto-answer after 4 rings">
+      <span class="jtb-label">Jireh</span>
+      <label class="jtb-switch" title="Jireh answers after 4 rings when ON">
         <input type="checkbox" id="jireh-toggle-input">
         <span class="jtb-slider"></span>
       </label>
-      <span id="jireh-toggle-status">Loading…</span>
-      <span class="jtb-badge">Answers after 4 rings when ON</span>
+      <span id="jireh-toggle-status">–</span>
+      <span class="jtb-hint">Answers after 4 rings when ON</span>
     \`;
     return bar;
   }
 
+  // ── State ─────────────────────────────────────────────────────────────────
   function applyState(enabled) {
     const input = document.getElementById('jireh-toggle-input');
     const status = document.getElementById('jireh-toggle-status');
     if (!input || !status) return;
     input.checked = !!enabled;
-    status.textContent = enabled ? 'ON' : 'OFF';
-    status.className = enabled ? 'on' : '';
+    if (enabled === null) {
+      status.textContent = '–';
+      status.className = '';
+    } else {
+      status.textContent = enabled ? 'ON' : 'OFF';
+      status.className = enabled ? 'jtb-on' : '';
+    }
   }
 
   // ── Mount ─────────────────────────────────────────────────────────────────
-  async function mount() {
+  // Injects the bar INSIDE #app, ABOVE .app-body.
+  // This preserves the 100vh flex-column layout and respects sidebar width.
+  // Falls back to body prepend only if #app never appears (login screen etc.)
+  function tryMount() {
+    if (document.getElementById('jireh-toggle-bar')) return true;
+
+    // Target: #app element (the main app shell, flex column, 100vh)
+    const appEl = document.getElementById('app');
+    if (!appEl) return false; // not ready yet
+
     injectStyles();
-
-    // Wait for the body to exist and contain a real app root
-    const target = document.body;
-    if (!target) return;
-
-    // Don't double-inject
-    if (document.getElementById('jireh-toggle-bar')) return;
-
     const bar = buildBar();
-    target.insertBefore(bar, target.firstChild);
+
+    // Insert as first child of #app, before .app-body
+    appEl.insertBefore(bar, appEl.firstChild);
 
     const input = document.getElementById('jireh-toggle-input');
-    input.addEventListener('change', async () => {
-      const enabled = input.checked;
-      applyState(enabled); // optimistic update
-      await saveSetting(enabled);
-    });
+    if (input) {
+      input.addEventListener('change', async () => {
+        const enabled = input.checked;
+        applyState(enabled);
+        await saveSetting(enabled);
+      });
+    }
 
-    const enabled = await fetchSetting();
-    applyState(enabled);
+    // Load current state from DB
+    fetchSetting().then(applyState);
+    return true;
   }
 
-  // Mount once DOM is ready
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  // Poll until #app exists (SPA may render it after DOMContentLoaded)
+  let mountInterval = null;
+
+  function startPolling() {
+    if (mountInterval) return;
+    mountInterval = setInterval(() => {
+      if (tryMount()) {
+        clearInterval(mountInterval);
+        mountInterval = null;
+      }
+    }, 80);
+    // Give up after 10s to avoid running forever on login screen
+    setTimeout(() => {
+      if (mountInterval) { clearInterval(mountInterval); mountInterval = null; }
+    }, 10000);
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount);
+    document.addEventListener('DOMContentLoaded', startPolling);
   } else {
-    // DOMContentLoaded already fired — wait a tick for SPA frameworks to boot
-    setTimeout(mount, 0);
+    startPolling();
   }
 
-  // Re-mount on client-side navigation (SPA route changes)
+  // Re-mount after SPA navigation (pushState / popstate)
   const _pushState = history.pushState.bind(history);
-  history.pushState = function(...args) {
+  history.pushState = function (...args) {
     _pushState(...args);
-    setTimeout(() => { if (!document.getElementById('jireh-toggle-bar')) mount(); }, 50);
+    setTimeout(() => { if (!document.getElementById('jireh-toggle-bar')) startPolling(); }, 60);
   };
   window.addEventListener('popstate', () => {
-    setTimeout(() => { if (!document.getElementById('jireh-toggle-bar')) mount(); }, 50);
+    setTimeout(() => { if (!document.getElementById('jireh-toggle-bar')) startPolling(); }, 60);
   });
+
+  // Re-mount if #app becomes visible (login → dashboard transition)
+  const _observer = new MutationObserver(() => {
+    if (!document.getElementById('jireh-toggle-bar')) tryMount();
+  });
+  _observer.observe(document.body || document.documentElement, { childList: true, subtree: false, attributes: true, attributeFilter: ['class', 'style'] });
+
 })();
 `);
 });
