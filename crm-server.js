@@ -1268,6 +1268,11 @@ app.post('/api/twilio/inbound', async (req, res) => {
     const VoiceResponse = require('twilio').twiml.VoiceResponse;
     const response = new VoiceResponse();
     const { To: toNum, From: fromNum, CallSid: callSid } = req.body;
+
+    // Check if Jireh inbound is enabled
+    const jireh_setting = await pool.query(`SELECT value FROM app_settings WHERE key='jireh_inbound_enabled'`);
+    const jireh_inbound = jireh_setting.rows[0]?.value === 'true';
+
     const lineR = await pool.query('SELECT * FROM call_lines WHERE twilio_number=$1', [toNum]);
     const line = lineR.rows[0];
     const normalizedFrom = fromNum.replace(/\D/g,'');
@@ -1286,6 +1291,59 @@ app.post('/api/twilio/inbound', async (req, res) => {
       const pR = await pool.query(`SELECT * FROM people WHERE regexp_replace(phone,'\\D','','g')=$1 LIMIT 1`, [normalizedFrom]);
       person = pR.rows[0] || null;
     }
+
+    if (jireh_inbound) {
+      // Route inbound call to Jireh AI
+      const callId = `jc-inbound-${Date.now()}-${require('crypto').randomBytes(4).toString('hex')}`;
+      const greetingR = await pool.query(`SELECT value FROM app_settings WHERE key='jireh_inbound_greeting'`);
+      const greeting = greetingR.rows[0]?.value || 'Hi, thanks for calling O.K.C. Real!';
+
+      const callDbR = await pool.query(
+        `INSERT INTO calls (twilio_call_sid, person_id, direction, status, from_number, to_number, started_at, call_source)
+         VALUES ($1, $2, 'inbound', 'ringing', $3, $4, NOW(), 'jireh') RETURNING id`,
+        [callSid, person?.id||null, fromNum, toNum]
+      );
+
+      const agentId = null; // inbound Jireh — no specific agent
+      const wsBase = process.env.APP_URL?.replace(/^http/, 'ws') || 'wss://localhost:3000';
+
+      // Store session in jareihCalls so WS handler works
+      jareihCalls.set(callId, {
+        personId: String(person?.id||''),
+        agentId: null,
+        goal: 'Answer the inbound caller, identify their need, and assist them or take a message.',
+        context: {
+          name: person ? `${person.first_name} ${person.last_name||''}`.trim() : 'Unknown caller',
+          phone: fromNum, stage: person?.stage||'Unknown',
+          notes: person?.notes||'', email: person?.email||'',
+          recentActivity: []
+        },
+        transcript: [],
+        contactCallSid: callSid,
+        aiBridgeCallSid: null,
+        callDbId: callDbR.rows[0].id,
+        araMuted: false, araActive: true,
+        greetingFired: false, greetingOverride: greeting,
+        shouldEnd: false, goalAchieved: false, finalized: false,
+        startedAt: Date.now(), callStatus: 'ringing',
+        streamSid: null, ws: null, araLock: 0,
+        grokHistory: [], listeners: [],
+        direction: 'inbound'
+      });
+
+      broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
+
+      res.type('xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${wsBase}/ws/jareih-call/${callId}">
+      <Parameter name="callId" value="${callId}"/>
+    </Stream>
+  </Connect>
+</Response>`);
+      return;
+    }
+
     const callInsert = await pool.query(
       'INSERT INTO calls (twilio_call_sid,person_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
       [callSid, person?.id||null, line?.id||null, 'inbound', 'ringing', fromNum, toNum]
@@ -1924,6 +1982,9 @@ async function initDB() {
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_start','18:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('afterhours_end','08:00') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
   await pool.query(`INSERT INTO app_settings(key,value) VALUES('emergency_iVR_enabled','true') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
+  await pool.query(`INSERT INTO app_settings(key,value) VALUES('jireh_inbound_enabled','false') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
+  await pool.query(`INSERT INTO app_settings(key,value) VALUES('jireh_inbound_greeting','Hi, thanks for calling O.K.C. Real! This is Jireh, an AI assistant. How can I help you today?') ON CONFLICT(key) DO NOTHING`).catch(()=>{});
+  await pool.query(`ALTER TABLE calls ADD COLUMN IF NOT EXISTS call_source TEXT DEFAULT 'human'`).catch(()=>{});;
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS mentions TEXT[] DEFAULT '{}'`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS email_subject TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE activities ADD COLUMN IF NOT EXISTS gmail_message_id TEXT`).catch(()=>{});
@@ -3062,7 +3123,7 @@ ${contextStr}
 
 Respond ONLY with valid JSON (no markdown). Schema:
 {
-  "action": one of: "send_sms" | "schedule_showing" | "add_note" | "create_contact" | "open_contact" | "navigate" | "add_task" | "make_call" | "unknown",
+  "action": one of: "send_sms" | "schedule_showing" | "add_note" | "create_contact" | "open_contact" | "navigate" | "add_task" | "make_call" | "analyze_crm" | "unknown",
   "summary": "One sentence human-readable description of what will happen",
   "confirmPrompt": "Exact question to ask agent before executing, including all key details",
   "params": {}
@@ -3076,6 +3137,7 @@ Action params:
 - open_contact: { personId, personName }
 - navigate: { view } (view = "dashboard"|"inbox"|"showings"|"people"|"admin")
 - make_call: { personId, personName, phone, goal } — have Ara AI call the contact and try to achieve the goal
+- analyze_crm: { query } — run an AI intelligence analysis on the CRM data. Use for questions like "who should I call", "who is most likely to rent", "who has gone cold", "predict who will rent next month"
 - add_task: { personId, personName, title, dueDate }
 - unknown: { clarification: "what you need to know" }
 
@@ -3132,6 +3194,240 @@ app.get('/api/jareih/properties', auth, async (req, res) => {
   const r = await pool.query(`SELECT DISTINCT property FROM showings ORDER BY property`).catch(() => ({ rows: [] }));
   res.json(r.rows.map(r => r.property));
 });
+
+// ─── Jireh Settings (inbound toggle, greeting) ────────────────────────────────
+app.get('/api/jareih/settings', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT key, value FROM app_settings WHERE key LIKE 'jireh_%'`);
+    const settings = {};
+    r.rows.forEach(row => { settings[row.key] = row.value; });
+    res.json(settings);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/jareih/settings', auth, async (req, res) => {
+  try {
+    const allowed = ['jireh_inbound_enabled', 'jireh_inbound_greeting'];
+    for (const [key, value] of Object.entries(req.body)) {
+      if (!allowed.includes(key)) continue;
+      await pool.query(`INSERT INTO app_settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=$2`, [key, String(value)]);
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Calls Log API ────────────────────────────────────────────────────────────
+app.get('/api/calls/log', auth, async (req, res) => {
+  try {
+    const { agentId, direction, source, dateFrom, dateTo, limit = 200 } = req.query;
+    const params = [];
+    const where = [];
+
+    if (agentId === 'jireh') {
+      where.push(`c.call_source = 'jireh'`);
+    } else if (agentId && agentId !== 'all') {
+      params.push(agentId);
+      where.push(`c.agent_id = $${params.length}`);
+    }
+    if (direction && direction !== 'all') {
+      params.push(direction);
+      where.push(`c.direction = $${params.length}`);
+    }
+    if (source && source !== 'all') {
+      params.push(source);
+      where.push(`c.call_source = $${params.length}`);
+    }
+    if (dateFrom) {
+      params.push(dateFrom);
+      where.push(`c.started_at >= $${params.length}`);
+    }
+    if (dateTo) {
+      params.push(dateTo);
+      where.push(`c.started_at <= $${params.length}`);
+    }
+
+    const whereStr = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    params.push(parseInt(limit));
+
+    const r = await pool.query(`
+      SELECT
+        c.id, c.direction, c.status, c.duration_seconds, c.from_number, c.to_number,
+        c.started_at, c.ended_at, c.recording_url, c.transcript, c.summary,
+        c.call_source, c.agent_id,
+        p.first_name, p.last_name, p.stage,
+        a.name AS agent_name, a.avatar_color
+      FROM calls c
+      LEFT JOIN people p ON p.id::text = c.person_id
+      LEFT JOIN agents a ON a.id::text = c.agent_id
+      ${whereStr}
+      ORDER BY c.started_at DESC
+      LIMIT $${params.length}
+    `, params);
+
+    // Metrics
+    const all = r.rows;
+    const metrics = {
+      total: all.length,
+      inbound: all.filter(c => c.direction === 'inbound').length,
+      outbound: all.filter(c => c.direction === 'outbound').length,
+      jireh: all.filter(c => c.call_source === 'jireh').length,
+      completed: all.filter(c => c.status === 'completed').length,
+      missed: all.filter(c => ['no-answer','busy','canceled'].includes(c.status)).length,
+      avgDuration: Math.round(all.filter(c => c.duration_seconds > 0).reduce((s, c) => s + c.duration_seconds, 0) / (all.filter(c => c.duration_seconds > 0).length || 1))
+    };
+
+    res.json({ calls: r.rows, metrics });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── CRM Intelligence: AI-Powered Predictions ────────────────────────────────
+app.post('/api/jareih/analyze', auth, async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query) return res.status(400).json({ error: 'No query' });
+
+    const grok = initGrok();
+    if (!grok) return res.status(503).json({ error: 'AI not configured' });
+
+    // Gather rich CRM data for analysis
+    const [peopleR, activityR, callsR, showingsR, stagesR] = await Promise.all([
+      pool.query(`
+        SELECT id, first_name, last_name, stage, source, tags, notes,
+               created_at, updated_at,
+               custom_fields->>'budget' AS budget,
+               custom_fields->>'move_in_date' AS move_in_date,
+               custom_fields->>'beds' AS beds,
+               custom_fields->>'property_interest' AS property_interest
+        FROM people
+        WHERE stage NOT IN ('Resident','Past Resident','Archived') OR stage IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 500
+      `).catch(() => ({ rows: [] })),
+      pool.query(`
+        SELECT person_id, type, direction, created_at,
+               EXTRACT(EPOCH FROM (NOW() - created_at))/86400 AS days_ago
+        FROM activities
+        WHERE created_at > NOW() - INTERVAL '90 days'
+        ORDER BY created_at DESC
+      `).catch(() => ({ rows: [] })),
+      pool.query(`
+        SELECT person_id, direction, status, duration_seconds, started_at, call_source
+        FROM calls
+        WHERE started_at > NOW() - INTERVAL '90 days'
+      `).catch(() => ({ rows: [] })),
+      pool.query(`
+        SELECT connect_person_id AS person_id, property, status, showing_time,
+               EXTRACT(EPOCH FROM (NOW() - showing_time))/86400 AS days_ago
+        FROM showings
+        WHERE showing_time > NOW() - INTERVAL '180 days'
+        ORDER BY showing_time DESC
+      `).catch(() => ({ rows: [] })),
+      pool.query(`SELECT stage, COUNT(*) as count FROM people GROUP BY stage ORDER BY count DESC`).catch(() => ({ rows: [] }))
+    ]);
+
+    // Build per-person signal map
+    const signals = {};
+    const ensure = (id) => {
+      if (!signals[id]) signals[id] = { calls: 0, sms: 0, emails: 0, showings: 0, lastContact: null, recentDays: 999, hasShowing: false, showingStatus: null };
+      return signals[id];
+    };
+
+    activityR.rows.forEach(a => {
+      if (!a.person_id) return;
+      const s = ensure(a.person_id);
+      if (a.type === 'call') s.calls++;
+      else if (a.type === 'sms') s.sms++;
+      else if (a.type === 'email') s.emails++;
+      if (!s.lastContact || a.created_at > s.lastContact) s.lastContact = a.created_at;
+      s.recentDays = Math.min(s.recentDays, parseFloat(a.days_ago)||999);
+    });
+    callsR.rows.forEach(c => {
+      if (!c.person_id) return;
+      const s = ensure(c.person_id);
+      if (c.status === 'completed') s.calls++;
+    });
+    showingsR.rows.forEach(sh => {
+      if (!sh.person_id) return;
+      const s = ensure(sh.person_id);
+      s.showings++;
+      s.hasShowing = true;
+      s.showingStatus = sh.status;
+      s.showingDaysAgo = Math.min(s.showingDaysAgo||999, parseFloat(sh.days_ago)||999);
+    });
+
+    // Build compact people summary for AI
+    const peopleSummary = peopleR.rows.slice(0, 300).map(p => {
+      const sig = signals[String(p.id)] || {};
+      return {
+        id: p.id,
+        name: `${p.first_name} ${p.last_name||''}`.trim(),
+        stage: p.stage || 'Lead',
+        source: p.source,
+        tags: p.tags,
+        budget: p.budget,
+        moveIn: p.move_in_date,
+        beds: p.beds,
+        propertyInterest: p.property_interest,
+        daysSinceCreated: Math.round((Date.now() - new Date(p.created_at)) / 86400000),
+        daysSinceUpdated: Math.round((Date.now() - new Date(p.updated_at)) / 86400000),
+        recentContactDays: sig.recentDays === 999 ? null : Math.round(sig.recentDays),
+        totalContacts: (sig.calls||0) + (sig.sms||0) + (sig.emails||0),
+        hasShowing: sig.hasShowing || false,
+        showingStatus: sig.showingStatus,
+        showingDaysAgo: sig.showingDaysAgo === 999 ? null : Math.round(sig.showingDaysAgo||0),
+        notes: (p.notes||'').slice(0, 200)
+      };
+    });
+
+    const stageBreakdown = stagesR.rows.map(r => `${r.stage}: ${r.count}`).join(', ');
+    const today = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+    const systemPrompt = `You are the intelligence engine for OKCREAL Connect, a property management CRM in Oklahoma City.
+You have access to real-time data on leads, prospects, and contacts. Today is ${today}.
+
+STAGE BREAKDOWN: ${stageBreakdown}
+
+Your job: analyze the data below and answer the agent's question with a sharp, actionable prediction.
+
+RESPONSE FORMAT (JSON only, no markdown):
+{
+  "headline": "One bold sentence summarizing the key insight",
+  "insight": "2-3 sentences of analysis — WHY these people rank the way they do. Reference specific patterns in the data.",
+  "topContacts": [
+    {
+      "id": "person id",
+      "name": "full name",
+      "stage": "current stage",
+      "reason": "1 sentence — the specific signal that makes this person rank here",
+      "urgency": "high|medium|low",
+      "suggestedAction": "exact action to take — e.g. 'Call and ask about move-in date'"
+    }
+  ],
+  "methodology": "1 sentence explaining your ranking criteria"
+}
+
+Include up to 10 topContacts. Prioritize people with: recent showing activity, stated move-in dates soon, high engagement but not yet converted, returning leads.`;
+
+    const completion = await grok.chat.completions.create({
+      model: 'grok-3',
+      max_tokens: 2000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `AGENT QUERY: ${query}\n\nPEOPLE DATA:\n${JSON.stringify(peopleSummary, null, 0)}` }
+      ]
+    });
+
+    const raw = completion.choices[0].message.content.trim();
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    res.json({ ok: true, result: parsed, query });
+  } catch(e) {
+    console.error('[Jireh analyze]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 
 app.post('/api/jareih/showing', auth, async (req, res) => {
   const { personId, personName, property, unit, date, time, showingType } = req.body;
@@ -4452,9 +4748,33 @@ async function araRespond(callId, contactSpeech) {
   if (!session.grokHistory) {
     const ctx = session.context;
     const actSummary = (ctx.recentActivity||[]).slice(0,8).map(a=>`[${a.type}] ${(a.body||'').slice(0,120)}`).join('\n');
-    session.grokHistory = [{
-      role: 'system',
-      content: `You are Jireh (spelled Jareih), an AI assistant calling on behalf of O.K.C. Real property management in Oklahoma City.
+    const isInbound = session.direction === 'inbound';
+    const systemContent = isInbound
+      ? `You are Jireh (spelled Jareih), an AI assistant ANSWERING the phone for O.K.C. Real property management in Oklahoma City.
+
+CALLER: ${ctx.name !== 'Unknown caller' ? ctx.name + ' (stage: ' + (ctx.stage||'Unknown') + ')' : 'Unknown caller — not in our system'}
+${ctx.notes ? 'Notes: ' + ctx.notes : ''}
+
+YOUR ROLE: Answer this inbound call, understand what the caller needs, and either help them directly or take a detailed message.
+
+YOU CAN HELP WITH: leasing questions, scheduling tours, maintenance intake, payment questions, general O.K.C. Real info.
+
+HOW TO TALK:
+- Short, natural — 1-2 sentences. Let the conversation breathe.
+- Warm and professional. React to what they say.
+- ONE question at a time. No filler.
+- Pure conversational spoken language — no markdown, no lists.
+
+NAMES:
+- You are "Jireh" — pronounced like the Hebrew word in "Jehovah Jireh"
+- Company is always "O.K.C. Real" — spell it out, never "okcreal"
+
+ENDING: When you have fully helped them or taken a complete message, close with:
+"You've been speaking with Jireh, an A.I. assistant with O.K.C. Real. A team member will follow up soon. Have a great day!" then append [END_CALL]
+If successfully helped: also append [GOAL_ACHIEVED]
+
+If asked if you're AI: "Yeah, I'm Jireh — an A.I. assistant with O.K.C. Real. A real person will follow up with you too!"`
+      : `You are Jireh (spelled Jareih), an AI assistant calling on behalf of O.K.C. Real property management in Oklahoma City.
 
 WHO YOU ARE CALLING: ${ctx.name} (stage: ${ctx.stage||'Lead'})
 YOUR GOAL FOR THIS CALL: ${session.goal}
@@ -4465,7 +4785,6 @@ YOUR PERSONALITY:
 You are warm, relaxed, and genuinely friendly — like a real person making a quick call, not a robot reading a script.
 Have a real conversation. Be curious about them. Listen. React naturally to what they say.
 Your goal is to build a connection AND achieve the mission — do both together, not one after the other.
-Sound like a person who actually cares, not an agent running through a checklist.
 
 HOW TO TALK:
 - Short, natural responses — 1-2 sentences usually. Let the conversation breathe.
@@ -4476,16 +4795,16 @@ HOW TO TALK:
 - No markdown, no lists — pure conversational spoken language
 
 NAMES & PRONUNCIATION:
-- Your name is "Jireh" (spelled Jareih) — always introduce yourself as Jireh, pronounced like the Hebrew word in "Jehovah Jireh"
-- The company is always "O.K.C. Real" — never "okcreal" or "aukreal", always spell it out as individual letters
+- Your name is "Jireh" (spelled Jareih) — pronounced like the Hebrew word in "Jehovah Jireh"
+- The company is always "O.K.C. Real" — never "okcreal" or "aukreal", always spell it out
 
 ENDING THE CALL:
 - Only end when the goal is fully achieved OR the person clearly wants to go
 - Always close with: "Again, this is Jireh with O.K.C. Real, an A.I. assistant. Please give us a call back if you have any questions. Goodbye!" then append [END_CALL]
 - If goal was achieved, also append [GOAL_ACHIEVED]
 
-If asked whether you are AI: "Yeah, I'm Jireh, an A.I. assistant with O.K.C. Real — but I promise I'm way more fun than most!"`
-    }];
+If asked whether you are AI: "Yeah, I'm Jireh, an A.I. assistant with O.K.C. Real — but I promise I'm way more fun than most!"`;
+    session.grokHistory = [{ role: 'system', content: systemContent }];
   }
 
   session.grokHistory.push({ role: 'user', content: contactSpeech || '[CALL_CONNECTED]' });
@@ -4749,8 +5068,8 @@ app.post('/api/jareih/call', auth, async (req, res) => {
 
     // Pre-insert calls row so we have a UUID to link activity to
     const callDbR = await pool.query(
-      `INSERT INTO calls (twilio_call_sid, person_id, agent_id, direction, status, from_number, to_number, started_at)
-       VALUES ($1, $2, $3, 'outbound', 'initiated', $4, $5, NOW()) RETURNING id`,
+      `INSERT INTO calls (twilio_call_sid, person_id, agent_id, direction, status, from_number, to_number, started_at, call_source)
+       VALUES ($1, $2, $3, 'outbound', 'initiated', $4, $5, NOW(), 'jireh') RETURNING id`,
       ['pending-' + callId, String(personId), String(req.agent.id), fromNum, person.phone]
     );
     jareihCalls.get(callId).callDbId = callDbR.rows[0].id;
