@@ -11880,7 +11880,7 @@ function crRenderTable(data) {
 
   tbody.innerHTML = calls.map((c, idx) => {
     const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.from_number || c.to_number || '—';
-    const contactClick = c.person_id ? ` onclick="openContact('${c.person_id}')" class="cr-contact-link"` : '';
+    const contactClick = c.person_id ? ` onclick="openContact('${c.person_id}')" class="cr-contact-link" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px"` : '';
     const agent = c.call_source === 'jireh' ? '🤖 Jireh' : (c.agent_name || '—');
     const dir = c.direction || '—';
     const status = c.status || '—';
@@ -11890,7 +11890,7 @@ function crRenderTable(data) {
     const stage = c.stage || '—';
     const summary = c.summary || '';
     const hasTranscript = c.transcript && c.transcript.length > 10;
-    const hasRecording = !!c.recording_url;
+    const hasRecording = !!c.recording_url && !!c.id;
 
     let summaryHtml = '';
     if (summary) {
@@ -11901,7 +11901,10 @@ function crRenderTable(data) {
       summaryHtml += `<div class="cr-transcript-box" id="cr-tx-${idx}">${esc(c.transcript)}</div>`;
     }
     if (hasRecording) {
-      summaryHtml += `<button class="cr-recording-btn" onclick="event.stopPropagation();new Audio('${c.recording_url}').play()">▶ play recording</button>`;
+      summaryHtml += `<div style="margin-top:4px">
+        <audio id="cr-audio-${idx}" style="display:none;width:100%;height:28px;margin-top:4px" controls preload="none"></audio>
+        <button class="cr-recording-btn" id="cr-play-btn-${idx}" onclick="event.stopPropagation();crPlayRecording('${c.id}',${idx})">▶ play recording</button>
+      </div>`;
     }
     if (!summary && !hasTranscript && !hasRecording) summaryHtml = '<span style="color:var(--text-3)">—</span>';
 
@@ -11917,6 +11920,41 @@ function crRenderTable(data) {
       <td>${summaryHtml}</td>
     </tr>`;
   }).join('');
+}
+
+// Play recording via auth proxy
+async function crPlayRecording(callId, idx) {
+  const audioEl = document.getElementById('cr-audio-' + idx);
+  const btn = document.getElementById('cr-play-btn-' + idx);
+  if (!audioEl) return;
+
+  // If already loaded, just toggle play/pause
+  if (audioEl.dataset.loaded === '1') {
+    audioEl.style.display = audioEl.style.display === 'none' ? 'block' : 'none';
+    if (audioEl.style.display === 'block') audioEl.play().catch(() => {});
+    else audioEl.pause();
+    return;
+  }
+
+  // Fetch via auth proxy
+  if (btn) btn.textContent = '⏳ loading…';
+  const tok = localStorage.getItem('connect_token') || '';
+  try {
+    const resp = await fetch(`/api/calls/${callId}/recording`, {
+      headers: { 'Authorization': `Bearer ${tok}` }
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    audioEl.src = url;
+    audioEl.dataset.loaded = '1';
+    audioEl.style.display = 'block';
+    audioEl.play().catch(() => {});
+    if (btn) btn.textContent = '⏸ hide player';
+  } catch(e) {
+    if (btn) btn.textContent = '⚠️ failed to load';
+    console.error('Recording playback error:', e);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
