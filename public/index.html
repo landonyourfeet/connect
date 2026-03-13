@@ -73,7 +73,14 @@
       --tac-lh-btn-bg:  #0c0002;
       --tac-nav-label:  #4a2030;
     }
+<script src="/jireh-toggle.js"></script>
+```
 
+That's it. The script auto-injects a slim toggle bar at the very top of the app on every page. It reads the current state on load, and saves to the database instantly when you flip it.
+
+The toggle bar looks like this when mounted:
+```
+📞  JIREH AUTO-ANSWER  [●]  ON          Answers after 4 rings when ON
     /* ── DAYLIGHT THEME ──────────────────────────────────────────── */
     [data-theme="light"] {
       --bg:          #f2f2f7;
