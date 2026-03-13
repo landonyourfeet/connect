@@ -1,6 +1,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -2566,6 +2567,7 @@ The toggle bar looks like this when mounted:
       <!-- Clickable name if matched, plain if not -->
       <div class="call-contact-name" id="call-contact-name">Unknown Caller</div>
       <div class="call-number" id="call-number"></div>
+      <span id="call-stage-badge"></span>
     </div>
     <div class="call-timer" id="call-timer" style="display:none">0:00</div>
     <div class="call-actions" id="call-actions-incoming">
@@ -2651,6 +2653,7 @@ The toggle bar looks like this when mounted:
         </div>
         <div id="smart-lists-nav"></div>
         <div class="nav-divider"></div>
+        <div class="nav-item" data-view="intelligence" onclick="navigate('intelligence')" id="nav-intelligence"><span class="nav-icon">🧠</span><span class="nav-label">Intelligence</span></div>
         <div class="nav-item" data-view="admin" onclick="navigate('admin')">
           <span class="nav-icon">⚙️</span>
           Admin
@@ -2983,6 +2986,39 @@ The toggle bar looks like this when mounted:
         </div>
       </div>
 
+      <div class="view" id="view-intelligence">
+        <div style="height:100%;overflow-y:auto;padding:24px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <span style="font-size:22px">🧠</span>
+            <span style="font-family:var(--font-disp);font-size:28px;letter-spacing:.04em">JIREH INTELLIGENCE</span>
+          </div>
+          <div style="font-family:var(--font-cond);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:20px">AI-powered CRM analysis · Live listing cross-reference · Predictive lead ranking</div>
+          <div style="margin-bottom:12px">
+            <div class="crv-intel-chips-label">Quick Analysis</div>
+            <div class="crv-intel-chips">
+              <span class="crv-intel-chip" onclick="intelAsk('Who should I call first today?')">Who to call first today?</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Top 10 hottest prospects right now')">Top 10 hottest prospects</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Who toured recently and has not been followed up with?')">Toured · no follow-up</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Who has an upcoming move-in date?')">Upcoming move-ins</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Who has gone cold in the last 30 days?')">Gone cold</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Who is most likely to rent in the next two weeks?')">Most likely to rent soon</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Which leads match our current available listings?')">Match available listings</span>
+              <span class="crv-intel-chip" onclick="intelAsk('Who came in from Zillow or apartments.com this week?')">New web leads this week</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:20px">
+            <input id="intel-input" class="crv-intel-input" type="text" placeholder="Ask Jireh to analyze your CRM…" onkeydown="if(event.key==='Enter')intelSubmit()">
+            <button id="intel-btn" class="crv-intel-btn" onclick="intelSubmit()">Analyze</button>
+          </div>
+          <div id="intel-history" class="crv-intel-history" style="padding:0">
+            <div class="crv-intel-empty" id="intel-empty">
+              <div class="crv-intel-empty-icon">🧠</div>
+              <div>Ask Jireh to analyze your CRM</div>
+              <div style="font-size:10px;margin-top:4px;opacity:.7">Cross-references live AppFolio listings &amp; application guidelines</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div><!-- /main -->
   </div><!-- /app-body -->
 </div><!-- /app -->
@@ -10924,6 +10960,164 @@ setInterval(() => {
     if (_lccDetailCallId) renderLccDetail(_lccDetailCallId);
   }
 }, 1000);
+
+// ══════════════════════════════════════════════════════════════════
+// JIREH INTELLIGENCE — AI CRM Analysis Engine
+// ══════════════════════════════════════════════════════════════════
+let _intelLastResult = null;
+
+function intelAsk(query) {
+  const inp = document.getElementById('intel-input');
+  if (inp) inp.value = query;
+  intelSubmit();
+}
+
+async function intelSubmit() {
+  const inp   = document.getElementById('intel-input');
+  const query = inp?.value?.trim();
+  if (!query) return;
+  if (inp) inp.value = '';
+  const btn  = document.getElementById('intel-btn');
+  const hist = document.getElementById('intel-history');
+  document.getElementById('intel-empty')?.remove();
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  if (hist) {
+    const d = document.createElement('div');
+    d.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:4px';
+    d.innerHTML = `<div style="max-width:90%;background:var(--bg-3);border:1px solid var(--border);border-radius:10px 10px 2px 10px;padding:8px 12px;font-size:12px;color:var(--text)">${esc(query)}</div>`;
+    hist.appendChild(d); hist.scrollTop = hist.scrollHeight;
+  }
+  const thk = document.createElement('div');
+  thk.id = 'intel-thinking';
+  thk.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 0';
+  thk.innerHTML = `<span style="font-size:16px">🧠</span><span style="font-size:11px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em">Analyzing CRM + checking live listings…</span>`;
+  if (hist) { hist.appendChild(thk); hist.scrollTop = hist.scrollHeight; }
+  try {
+    const r = await api('/api/jareih/analyze', 'POST', { query });
+    thk.remove();
+    if (r.result) { _intelLastResult = { result: r.result, query }; renderIntelResult(r.result, hist); }
+  } catch(e) {
+    thk.remove();
+    const ed = document.createElement('div');
+    ed.innerHTML = `<div style="padding:10px;background:rgba(255,70,70,0.07);border:1px solid rgba(255,70,70,0.15);border-radius:8px;font-size:11px;color:#ff6644">Analysis failed: ${esc(e.message)}</div>`;
+    if (hist) hist.appendChild(ed);
+  }
+  if (btn) { btn.textContent = 'Analyze'; btn.disabled = false; }
+  if (inp) inp.focus();
+  if (hist) hist.scrollTop = hist.scrollHeight;
+}
+
+function renderIntelResult(result, hist) {
+  if (!hist) return;
+  const contacts  = result.topContacts || [];
+  const urgColor  = { high: 'var(--red)', medium: '#cc8800', low: '#00aa60' };
+  const urgLabel  = { high: '🔴 HIGH', medium: '🟡 MED', low: '🟢 LOW' };
+  let html = '<div class="crv-card">';
+  html += '<div class="crv-card-head"><div class="crv-card-headline">' + esc(result.headline || '') + '</div></div>';
+  html += '<div class="crv-card-insight"><p>' + esc(result.insight || '') + '</p></div>';
+  if (result.listingContext) {
+    html += '<div class="crv-card-listing"><div class="crv-card-listing-lbl">📋 LIVE LISTING DATA</div><p>' + esc(result.listingContext) + '</p></div>';
+  }
+  if (contacts.length) {
+    html += '<div class="crv-contacts-section"><div class="crv-contacts-lbl">Top Contacts (' + contacts.length + ')</div>';
+    contacts.forEach((c, i) => {
+      const clickAttr = c.id ? ` onclick="openContact('${c.id}')"` : '';
+      const urgBg = c.urgency === 'high' ? '232,0,58' : c.urgency === 'medium' ? '200,136,0' : '0,170,96';
+      html += '<div class="crv-contact-row"' + clickAttr + '>'
+        + '<div class="crv-contact-rank">' + (i + 1) + '</div>'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">'
+        + '<span class="crv-contact-name">' + esc(c.name || '') + '</span>'
+        + (c.urgency ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(' + urgBg + ',0.12);color:' + (urgColor[c.urgency] || 'var(--text-3)') + ';font-family:var(--font-mono);font-weight:700">' + urgLabel[c.urgency] + '</span>' : '')
+        + (c.stage ? '<span style="font-size:10px;color:var(--text-3)">' + esc(c.stage) + '</span>' : '')
+        + '</div>'
+        + '<div class="crv-contact-reason">' + esc(c.reason || '') + '</div>'
+        + (c.suggestedAction ? '<div class="crv-contact-action">→ ' + esc(c.suggestedAction) + '</div>' : '')
+        + '</div></div>';
+    });
+    html += '</div>';
+    html += '<div class="crv-actions">'
+      + '<button class="crv-btn-dl" onclick="intelDownloadList()">⬇ Download List</button>'
+      + '<button class="crv-btn-dial" onclick="intelPowerDial()">📞 Power Dial</button>'
+      + '<button class="crv-btn-jireh" onclick="intelJireh_CallAll()">🤖 Jireh Calls All</button>'
+      + '</div>';
+  }
+  if (result.methodology) {
+    html += '<div class="crv-methodology"><p>' + esc(result.methodology) + '</p></div>';
+  }
+  html += '</div>';
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  hist.appendChild(div);
+  hist.scrollTop = hist.scrollHeight;
+}
+
+function intelDownloadList() {
+  const contacts = _intelLastResult?.result?.topContacts;
+  if (!contacts?.length) return;
+  const rows = contacts.map((c, i) =>
+    [i + 1, '"' + (c.name || '').replace(/"/g, '') + '"', c.stage || '', c.urgency || '',
+     '"' + (c.reason || '').replace(/"/g, '') + '"',
+     '"' + (c.suggestedAction || '').replace(/"/g, '') + '"'].join(',')
+  );
+  const csv  = ['Rank,Name,Stage,Urgency,Reason,Suggested Action', ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: `jireh-call-list-${new Date().toISOString().slice(0, 10)}.csv` });
+  a.click(); URL.revokeObjectURL(url);
+  toast('📥 Call list downloaded', 'success');
+}
+
+async function intelPowerDial() {
+  const contacts = _intelLastResult?.result?.topContacts?.filter(c => c.id);
+  if (!contacts?.length) { toast('No contacts with IDs to dial', 'error'); return; }
+  toast('Building power dialer queue…', 'info');
+  const people = (await Promise.all(contacts.map(c => api(`/api/people/${c.id}`).catch(() => null))))
+    .filter(p => p && (p.phone || p.phones?.length))
+    .map(p => ({ id: p.id, name: `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unknown', phone: p.phone || (p.phones?.[0]) || null }))
+    .filter(p => p.phone);
+  if (!people.length) { toast('None of the contacts have phone numbers', 'error'); return; }
+  PD.queue = people; PD.index = 0; PD.paused = false; PD.active = true; PD.waitingToCall = true;
+  pdShow(); pdUpdateUI(); openContact(PD.queue[0].id);
+  toast(`📞 Power dialer loaded — ${PD.queue.length} contacts from Jireh's list`, 'success');
+}
+
+async function intelJireh_CallAll() {
+  const contacts = _intelLastResult?.result?.topContacts?.filter(c => c.id);
+  if (!contacts?.length) { toast('No contacts with IDs', 'error'); return; }
+  const goal = _intelLastResult?.query || 'Follow up and gauge interest in renting';
+  const ok = confirm(`Have Jireh call all ${contacts.length} contacts?\n\nGoal: "${goal}"\n\nCalls launch every 45 seconds.`);
+  if (!ok) return;
+  contacts.forEach((c, i) => {
+    setTimeout(async () => {
+      try {
+        const person = await api(`/api/people/${c.id}`);
+        if (!person?.phone) return;
+        await api('/api/jareih/call', 'POST', { personId: c.id, goal: c.suggestedAction || goal });
+      } catch(e) {}
+    }, i * 45000);
+  });
+  toast(`🤖 Jireh will call ${contacts.length} contacts over ~${Math.round(contacts.length * 45 / 60)} minutes`, 'success');
+}
+
+// Stage badge — shows matched contact's pipeline stage on incoming calls
+document.addEventListener('DOMContentLoaded', () => {
+  const origShowCallBar = window.showCallBar;
+  if (typeof origShowCallBar === 'function') {
+    window.showCallBar = function(state, name, number, matchedPerson = null) {
+      origShowCallBar(state, name, number, matchedPerson);
+      const badge = document.getElementById('call-stage-badge');
+      if (!badge) return;
+      if (matchedPerson?.stage) {
+        badge.textContent = matchedPerson.stage;
+        badge.classList.add('visible');
+      } else {
+        badge.textContent = '';
+        badge.classList.remove('visible');
+      }
+    };
+  }
+});
 </script>
 
 </body>
