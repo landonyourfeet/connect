@@ -1,5 +1,6 @@
 
 
+
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -5442,6 +5443,57 @@ handleCallEnd = function() {
     setTimeout(pdAdvance, 1200);
   }
 };
+
+// ── TWILIO INIT ──────────────────────────────────────────────────────────────
+let _twilioInitPromise = null; // prevent double-init races
+
+async function initTwilio() {
+  if (userStatus === 'offline') return;
+  if (_twilioInitPromise) return _twilioInitPromise;
+  _twilioInitPromise = _doInitTwilio().finally(() => { _twilioInitPromise = null; });
+  return _twilioInitPromise;
+}
+
+async function _doInitTwilio() {
+  try {
+    if (typeof Twilio === 'undefined') {
+      console.warn('[Twilio] SDK not loaded — check network');
+      return; // non-fatal — phone won't work but app still loads
+    }
+    const data = await api('/api/twilio/token', 'GET');
+    if (!data?.token) {
+      console.warn('[Twilio] Token error:', data?.error || 'No token returned');
+      return;
+    }
+    if (twilioDevice) {
+      try { twilioDevice.destroy(); } catch(e) {}
+      twilioDevice = null;
+      twilioReady = false;
+    }
+    twilioDevice = new Twilio.Device(data.token, {
+      logLevel: 1,
+      codecPreferences: ['opus', 'pcmu'],
+      allowIncomingWhileBusy: true,
+    });
+    twilioDevice.on('registered', () => { twilioReady = true; console.log('[Twilio] Device ready ✅'); });
+    twilioDevice.on('error', err => {
+      const msg = err?.message || String(err);
+      twilioReady = false;
+      console.warn('[Twilio] Device error:', msg);
+      if (msg.includes('token') || msg.includes('expired') || msg.includes('31204') || msg.includes('31205')) {
+        setTimeout(() => { twilioDevice = null; initTwilio(); }, 2000);
+      }
+    });
+    twilioDevice.on('tokenWillExpire', () => {
+      api('/api/twilio/token', 'GET').then(d => { if (d?.token) twilioDevice.updateToken(d.token); }).catch(()=>{});
+    });
+    twilioDevice.on('incoming', handleIncomingCall);
+    twilioDevice.on('disconnect', handleCallEnd);
+    twilioDevice.register();
+  } catch(e) {
+    console.warn('[Twilio] Init failed:', e.message);
+  }
+}
 
 function toggleAddUserForm() {
   const f = document.getElementById('add-user-form');
