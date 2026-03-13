@@ -2964,6 +2964,33 @@
             </div>
           </div>
         </div>
+
+        <!-- AppFolio Tenant Directory Sync -->
+        <div class="admin-section">
+          <div class="admin-section-header">
+            <div class="admin-section-title">🏠 Sync AppFolio Tenant Directory</div>
+          </div>
+          <div style="padding:20px">
+            <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
+              Export the <strong>Tenant Directory</strong> report from AppFolio (Reports → Tenant Directory → Export to Excel),
+              then upload here to sync DOB, unit, property, rent, and lease dates to matching contacts in Connect.
+              Matching is by email first, then name. Only existing contacts are updated — no new contacts are created.
+            </p>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-2);overflow:hidden">
+                📂 <span id="tendir-filename">Choose .xlsx file…</span>
+                <input type="file" accept=".xlsx,.xls" id="tendir-file-input"
+                  onchange="document.getElementById('tendir-filename').textContent=this.files[0]?.name||'Choose .xlsx file…'; document.getElementById('tendir-sync-btn').style.opacity='1'; document.getElementById('tendir-sync-btn').disabled=false;"
+                  style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer">
+              </div>
+              <button id="tendir-sync-btn" disabled style="opacity:0.4;height:36px;padding:0 18px;background:var(--red-dim);border:1px solid rgba(232,0,58,0.35);border-radius:6px;color:var(--red);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit"
+                onclick="importTenantDirectory(document.getElementById('tendir-file-input'))">
+                🔄 Sync to Connect
+              </button>
+            </div>
+            <div style="margin-top:10px;font-size:11px;color:var(--text-3)">Fields synced: Date of Birth · Unit · Property · Base Rent · Move-in Date · Lease End Date · Phone (if missing)</div>
+          </div>
+        </div>
       </div>
 
       <!-- VIEW: Security Alerts -->
@@ -4021,6 +4048,168 @@ async function logLeaseViolation(personId) {
   } catch(e) { toast('Failed: ' + e.message, 'error'); }
 }
 
+// ── DOB / SSN / MILITARY SAVE ────────────────────────────────────────────────
+async function saveDOB(personId, val) {
+  if (!val) return;
+  try {
+    await api(`/api/people/${personId}`, 'PUT', { dob: val });
+    toast('Date of birth saved', 'success');
+  } catch(e) { toast('Failed to save DOB: ' + e.message, 'error'); }
+}
+
+async function saveSSN(personId, val) {
+  if (!val) return;
+  // Basic format check
+  const clean = val.replace(/\D/g,'');
+  if (clean.length !== 9) { toast('SSN must be 9 digits', 'error'); return; }
+  try {
+    await api(`/api/people/${personId}`, 'PUT', { ssn: val });
+    toast('SSN saved (encrypted at rest)', 'success');
+  } catch(e) { toast('Failed to save SSN: ' + e.message, 'error'); }
+}
+
+async function saveMilitary(personId, checked) {
+  try {
+    await api(`/api/people/${personId}`, 'PUT', { isMilitary: checked });
+    toast(checked ? 'Military status marked' : 'Military status cleared', 'success');
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── FED WORKSHEET GENERATOR ───────────────────────────────────────────────────
+async function generateFEDWorksheet(personId) {
+  try {
+    const noticeDate = prompt('Date notice was served (e.g. February 5, 2026):', new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}));
+    if (noticeDate === null) return;
+    const howServed = prompt('How was notice served?', 'Posted and mailed certified');
+    if (howServed === null) return;
+
+    toast('Generating FED Worksheet…', 'info');
+    const resp = await fetch(`/api/people/${personId}/fed-worksheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')||sessionStorage.getItem('token')||''}` },
+      body: JSON.stringify({ noticeDate, howServed })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      if (err.missing?.length) {
+        alert('Cannot generate FED Worksheet — the following required fields are missing:
+
+• ' + err.missing.join('
+• ') + '
+
+Please fill in these fields on the contact record first.');
+      } else {
+        toast('Error: ' + (err.error||'Unknown error'), 'error');
+      }
+      return;
+    }
+
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href:url, download:`FED_Worksheet_${Date.now()}.pdf` });
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('📋 FED Worksheet downloaded', 'success');
+    setTimeout(() => loadActivities(personId), 800);
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── 5-DAY NOTICE GENERATOR ────────────────────────────────────────────────────
+async function generateFiveDayNotice(personId) {
+  try {
+    toast('Generating 5-Day Notice…', 'info');
+    const resp = await fetch(`/api/people/${personId}/five-day-notice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')||sessionStorage.getItem('token')||''}` },
+      body: JSON.stringify({})
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      if (err.missing?.length) {
+        alert('Cannot generate 5-Day Notice — the following required fields are missing:
+
+• ' + err.missing.join('
+• ') + '
+
+Please fill in these fields on the contact record first.');
+      } else {
+        toast('Error: ' + (err.error||'Unknown error'), 'error');
+      }
+      return;
+    }
+
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href:url, download:`5Day_Notice_${Date.now()}.pdf` });
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('📄 5-Day Notice downloaded (notice + proof of service)', 'success');
+    setTimeout(() => loadActivities(personId), 800);
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── TENANT DIRECTORY IMPORT (AppFolio xlsx → Connect sync) ───────────────────
+async function importTenantDirectory(fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  toast('Parsing tenant directory…', 'info');
+
+  const buf = await file.arrayBuffer();
+  const wb  = XLSX.read(buf, { type:'array', cellDates:true });
+  const ws  = wb.Sheets[wb.SheetNames[0]];
+  const raw = XLSX.utils.sheet_to_json(ws, { header:1, raw:false });
+
+  // Find header row (contains 'Property', 'Unit', 'Tenant')
+  let headerRow = -1;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i].includes('Tenant') && raw[i].includes('Unit')) { headerRow = i; break; }
+  }
+  if (headerRow === -1) { toast('Could not find header row in file', 'error'); return; }
+
+  const cols = {};
+  raw[headerRow].forEach((h,i) => { if(h) cols[String(h).toLowerCase().trim()] = i; });
+
+  const rows = [];
+  for (let r = headerRow+1; r < raw.length; r++) {
+    const row = raw[r];
+    if (!row[cols['tenant']]) continue;
+    const rawDob = row[cols['tenant birthdate']];
+    let dob = null;
+    if (rawDob) {
+      // Could be string 'MM/DD/YYYY' or a parsed date string
+      const d = new Date(rawDob);
+      if (!isNaN(d)) dob = d.toISOString().slice(0,10);
+    }
+    const phone = row[cols['phone numbers']] ? String(row[cols['phone numbers']]).replace(/^(Phone|Mobile|Home|Work):\s*/i,'').replace(/\D/g,'') : null;
+    rows.push({
+      name:     row[cols['tenant']],
+      email:    row[cols['emails']] || null,
+      phone:    phone ? (phone.length===10 ? '+1'+phone : phone.length===11?'+'+phone:null) : null,
+      property: row[cols['property']] ? String(row[cols['property']]).split(' - ')[0].trim() : null,
+      unit:     row[cols['unit']] || null,
+      moveIn:   row[cols['move-in']] || null,
+      leaseTo:  row[cols['lease to']] || null,
+      rent:     row[cols['rent']] || null,
+      dob,
+    });
+  }
+
+  if (!rows.length) { toast('No tenant rows found', 'error'); return; }
+  toast(`Found ${rows.length} tenants — syncing to Connect…`, 'info');
+
+  try {
+    const result = await api('/api/import/tenant-directory', 'POST', { rows });
+    toast(`✅ Synced ${result.updated} contacts. ${result.notFound} not matched.`, 'success');
+    if (result.notFoundList?.length) {
+      console.log('Unmatched tenants:', result.notFoundList);
+    }
+  } catch(e) { toast('Import failed: ' + e.message, 'error'); }
+
+  fileInput.value = '';
+}
+
 // ── JIREH SECURITY PROFILE ───────────────────────────────────────────────
 let _secPersonId = null;
 
@@ -4221,6 +4410,42 @@ function renderContactRecord(person, activities, tasks) {
         </div>
         ${person.email ? `<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value" style="font-size:12px;word-break:break-all">${esc(person.email)}</span></div>` : ''}
         <div class="detail-row"><span class="detail-label">Source</span><span class="detail-value" style="font-size:12px;color:var(--text-2)">${esc(person.source||'—')}</span></div>
+
+        <!-- DOB — always visible for all stages -->
+        <div class="detail-row" style="align-items:center">
+          <span class="detail-label">Date of Birth</span>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;justify-content:flex-end">
+            <input type="date" id="dob-input-${person.id}"
+              value="${person.dob ? new Date(person.dob).toISOString().slice(0,10) : ''}"
+              onchange="saveDOB('${person.id}',this.value)"
+              style="height:26px;background:var(--bg-4);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:0 6px;font-family:inherit;width:130px">
+          </div>
+        </div>
+
+        ${(['Resident','Delinquent','Evicting'].includes(stage)) ? `
+        <!-- SSN + Military — resident/delinquent/evicting only -->
+        <div class="detail-row" style="align-items:center">
+          <span class="detail-label">SSN</span>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;justify-content:flex-end">
+            <input type="password" id="ssn-input-${person.id}"
+              value="${person.ssn||''}"
+              placeholder="XXX-XX-XXXX"
+              onchange="saveSSN('${person.id}',this.value)"
+              style="height:26px;background:var(--bg-4);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:0 6px;font-family:inherit;width:130px;letter-spacing:0.1em">
+          </div>
+        </div>
+        <div class="detail-row" style="align-items:center">
+          <span class="detail-label">Military</span>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--text-2)">
+              <input type="checkbox" id="military-input-${person.id}"
+                ${person.is_military?'checked':''}
+                onchange="saveMilitary('${person.id}',this.checked)"
+                style="width:14px;height:14px;cursor:pointer;accent-color:var(--red)">
+              Active / Veteran
+            </label>
+          </div>
+        </div>` : ''}
       </div>
 
       <!-- PHONE NUMBERS -->
@@ -4397,12 +4622,25 @@ function renderContactRecord(person, activities, tasks) {
           <div id="cw-search-results-${person.id}" style="margin-top:5px;display:flex;flex-direction:column;gap:3px;max-height:140px;overflow-y:auto"></div>
         </div>
         ${(stage==='Resident'||stage==='Delinquent'||stage==='Evicting') ? `
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
           <button onclick="logLeaseViolation(${person.id})"
             style="width:100%;padding:7px;border-radius:6px;background:rgba(255,59,59,0.1);border:1px solid rgba(255,59,59,0.3);color:#ff3b3b;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit"
             onmouseover="this.style.background='rgba(255,59,59,0.2)'" onmouseout="this.style.background='rgba(255,59,59,0.1)'">
             🚨 Log Lease Violation
           </button>
+          ${(stage==='Delinquent'||stage==='Evicting') ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <button onclick="generateFEDWorksheet('${person.id}')"
+              style="padding:7px 4px;border-radius:6px;background:rgba(232,180,0,0.1);border:1px solid rgba(232,180,0,0.35);color:#cc9900;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;text-align:center"
+              onmouseover="this.style.background='rgba(232,180,0,0.2)'" onmouseout="this.style.background='rgba(232,180,0,0.1)'">
+              📋 FED Worksheet
+            </button>
+            <button onclick="generateFiveDayNotice('${person.id}')"
+              style="padding:7px 4px;border-radius:6px;background:rgba(232,0,58,0.1);border:1px solid rgba(232,0,58,0.35);color:var(--red);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;text-align:center"
+              onmouseover="this.style.background='rgba(232,0,58,0.2)'" onmouseout="this.style.background='rgba(232,0,58,0.1)'">
+              📄 5-Day Notice
+            </button>
+          </div>` : ''}
         </div>` : ''}
       </div>
 
