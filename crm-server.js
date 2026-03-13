@@ -2833,8 +2833,6 @@ app.post('/api/me/availability', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/me', auth, async (req, res) => {
-
 // ─── Agent Call State (on-call / off-call broadcast) ─────────────────────────
 const _agentsOnCall = new Map(); // agentId -> { name, personId, direction, since }
 
@@ -5744,6 +5742,8 @@ function getActiveCallsPayload() {
     araActive: !s.araMuted,
     startedAt: s.startedAt,
     status: s.callStatus || 'initiated',
+    answeredBy: s.answeredBy || null,
+    isVoicemail: s.isVoicemail || false,
     transcript: s.transcript.slice(-20),
     listeners: s.listeners || []
   }));
@@ -5929,7 +5929,15 @@ app.post('/api/jareih/call', auth, async (req, res) => {
       statusCallbackEvent: ['initiated','ringing','answered','completed'],
       record: true,
       recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
-      recordingStatusCallbackMethod: 'POST'
+      recordingStatusCallbackMethod: 'POST',
+      // AMD — wait for voicemail beep before connecting Jireh's audio stream
+      machineDetection: 'DetectMessageEnd',
+      machineDetectionTimeout: 30,
+      machineDetectionSpeechThreshold: 2400,
+      machineDetectionSpeechEndThreshold: 1200,
+      machineDetectionSilenceTimeout: 5000,
+      asyncAmdStatusCallback: `${process.env.APP_URL}/api/jareih/amd-result/${callId}`,
+      asyncAmdStatusCallbackMethod: 'POST'
     });
     jareihCalls.get(callId).contactCallSid = contactCall.sid;
 
@@ -6022,6 +6030,36 @@ app.post('/api/jareih/call-status/:callId', async (req, res) => {
 });
 
 app.post('/api/jareih/ai-bridge-status/:callId', (req, res) => { res.sendStatus(200); });
+
+// ─── AMD (Answering Machine Detection) result ────────────────────────────────
+app.post('/api/jareih/amd-result/:callId', (req, res) => {
+  res.sendStatus(200);
+  const { callId } = req.params;
+  const { AnsweredBy, CallSid } = req.body;
+  const session = jareihCalls.get(callId);
+  if (!session) return;
+
+  session.answeredBy = AnsweredBy; // 'human', 'machine_start', 'machine_end_beep', 'machine_end_silence', 'machine_end_other', 'fax', 'unknown'
+  console.log(`[Jireh AMD] Call ${callId} answered by: ${AnsweredBy}`);
+
+  const isMachine = AnsweredBy && AnsweredBy.startsWith('machine');
+  if (isMachine) {
+    // Inject context so Jireh knows it's leaving a voicemail
+    session.isVoicemail = true;
+    if (session.grokHistory) {
+      session.grokHistory.push({
+        role: 'system',
+        content: '[VOICEMAIL DETECTED] You reached a voicemail. Leave a brief, professional voicemail message. State your name (Jireh from OKCREAL), the reason for calling, and ask them to call back. Keep it under 30 seconds. Do NOT have a conversation — just leave the message and end the call.'
+      });
+    }
+    session.transcript.push({ role: 'system', ts: Date.now(), text: `[AMD: ${AnsweredBy} — voicemail mode activated]` });
+    broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'voicemail_detected', answeredBy: AnsweredBy });
+  } else {
+    session.isVoicemail = false;
+    session.transcript.push({ role: 'system', ts: Date.now(), text: `[AMD: ${AnsweredBy} — human detected]` });
+  }
+  broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
+});
 
 // ─── Mute / unmute Ara ────────────────────────────────────────────────────────
 app.post('/api/jareih/toggle-ara', auth, async (req, res) => {
