@@ -412,6 +412,79 @@
       transform: translateX(18px);
     }
 
+    /* Jireh arm/disarm toggle */
+    .jireh-arm-wrap {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+      border-radius: 6px;
+      margin: 0 4px 2px;
+    }
+    .jireh-arm-wrap:hover { background: var(--bg-3); }
+    .jireh-arm-icon { font-size: 14px; line-height: 1; }
+    .jireh-arm-label {
+      font-size: 12px; color: var(--text-3); flex: 1;
+      font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .jireh-arm-status {
+      font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+      letter-spacing: 0.08em; color: var(--text-3); min-width: 32px; text-align: right;
+    }
+    .jireh-arm-status.armed { color: var(--green); }
+    .jireh-arm-status.disarmed { color: var(--red); }
+
+    .jireh-arm-track {
+      width: 40px; height: 22px;
+      background: var(--bg-5);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      position: relative;
+      transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+      flex-shrink: 0;
+    }
+    .jireh-arm-track.armed {
+      background: rgba(0, 232, 122, 0.25);
+      border-color: var(--green);
+      box-shadow: 0 0 8px rgba(0, 232, 122, 0.3);
+    }
+    .jireh-arm-thumb {
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 16px; height: 16px;
+      background: var(--text-3);
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), background 0.25s;
+    }
+    .jireh-arm-track.armed .jireh-arm-thumb {
+      transform: translateX(18px);
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(0, 232, 122, 0.5);
+    }
+
+    /* Stealth mode */
+    [data-theme="dark"] .jireh-arm-track.armed {
+      background: rgba(0, 232, 122, 0.12);
+      border-color: #00e87a;
+      box-shadow: 0 0 12px rgba(0, 232, 122, 0.2);
+    }
+    [data-theme="dark"] .jireh-arm-track.armed .jireh-arm-thumb {
+      background: #00e87a;
+      box-shadow: 0 0 10px rgba(0, 232, 122, 0.6);
+    }
+
+    /* Daylight mode */
+    [data-theme="light"] .jireh-arm-track.armed {
+      background: rgba(0, 180, 100, 0.2);
+      border-color: #00b864;
+      box-shadow: 0 0 8px rgba(0, 180, 100, 0.25);
+    }
+    [data-theme="light"] .jireh-arm-track.armed .jireh-arm-thumb {
+      background: #00b864;
+    }
+
     /* ── RESET ────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; }
@@ -3156,6 +3229,15 @@
           <span>BLUR SCREEN</span>
           <span style="margin-left:auto;background:var(--bg-4);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:10px">` </span>
         </div>
+        <!-- Jireh Auto-Answer toggle -->
+        <div class="jireh-arm-wrap" id="jireh-arm-wrap" onclick="toggleJirehArm()" title="When ARMED: Jireh answers inbound calls after 4 rings if no human picks up. When DISARMED: calls go to voicemail.">
+          <span class="jireh-arm-icon" id="jireh-arm-icon">🤖</span>
+          <span class="jireh-arm-label" id="jireh-arm-label">Jireh</span>
+          <div class="jireh-arm-track" id="jireh-arm-track">
+            <div class="jireh-arm-thumb"></div>
+          </div>
+          <span class="jireh-arm-status" id="jireh-arm-status">—</span>
+        </div>
         <!-- Theme toggle -->
         <div class="theme-toggle-wrap" onclick="toggleTheme()" title="Switch theme">
           <span class="theme-toggle-icon" id="theme-icon">🌙</span>
@@ -3958,6 +4040,60 @@ function toggleTheme() {
   applyTheme(current === 'light' ? 'dark' : 'light');
 }
 
+// ── JIREH AUTO-ANSWER ARM/DISARM ─────────────────────────────────────────────
+let _jirehArmed = null; // null = unknown, true = armed, false = disarmed
+
+async function loadJirehArmState() {
+  try {
+    const data = await api('/api/jareih/settings');
+    _jirehArmed = data.jireh_inbound_enabled === 'true';
+    applyJirehArmState();
+  } catch(e) { /* not logged in yet */ }
+}
+
+function applyJirehArmState() {
+  const track = document.getElementById('jireh-arm-track');
+  const status = document.getElementById('jireh-arm-status');
+  const label = document.getElementById('jireh-arm-label');
+  const icon = document.getElementById('jireh-arm-icon');
+  if (!track || !status) return;
+
+  if (_jirehArmed === null) {
+    track.className = 'jireh-arm-track';
+    status.textContent = '—';
+    status.className = 'jireh-arm-status';
+    return;
+  }
+
+  if (_jirehArmed) {
+    track.className = 'jireh-arm-track armed';
+    status.textContent = 'ARMED';
+    status.className = 'jireh-arm-status armed';
+    if (label) label.textContent = 'Jireh';
+  } else {
+    track.className = 'jireh-arm-track';
+    status.textContent = 'OFF';
+    status.className = 'jireh-arm-status disarmed';
+    if (label) label.textContent = 'Jireh';
+  }
+}
+
+async function toggleJirehArm() {
+  _jirehArmed = !_jirehArmed;
+  applyJirehArmState();
+  try {
+    await api('/api/jareih/settings', 'POST', { jireh_inbound_enabled: String(_jirehArmed) });
+    toast(_jirehArmed
+      ? '🤖 Jireh ARMED — she will answer after 4 rings if no human picks up'
+      : '📴 Jireh DISARMED — unanswered calls go to voicemail',
+      _jirehArmed ? 'success' : 'info', 4000);
+  } catch(e) {
+    _jirehArmed = !_jirehArmed; // revert
+    applyJirehArmState();
+    toast('Failed to update Jireh setting', 'error');
+  }
+}
+
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   const btn = document.getElementById('sidebar-toggle-btn');
@@ -4035,6 +4171,7 @@ async function launchApp() {
   document.getElementById('app').classList.add('visible');
   updateSidebarUser();
   await Promise.all([loadSmartLists(), loadInboxCount()]);
+  loadJirehArmState(); // load Jireh arm/disarm state
   startShowingAlertPoller();
   const _path = window.location.pathname;
   const _fileMatch = _path.match(/^\/file\/(\d+)$/);
