@@ -2463,6 +2463,227 @@
     }
     .call-contact-name.linked:hover { opacity: 0.8; }
 
+    /* ── Call Reports ─────────────────────────────────────────── */
+    #view-callreports { display: none; height: 100%; overflow: hidden; }
+    #view-callreports.active { display: block; }
+    .cr-wrap { height: 100%; overflow-y: auto; padding: 0 0 40px; }
+
+    /* Filter bar */
+    .cr-filter-bar {
+      display: flex; align-items: flex-end; gap: 12px; padding: 16px 24px;
+      border-bottom: 1px solid var(--border); background: var(--bg-2);
+      flex-wrap: wrap; position: sticky; top: 0; z-index: 10;
+    }
+    [data-theme="dark"] .cr-filter-bar { background: #010c05; border-bottom-color: #042210; }
+    .cr-filter-group { display: flex; flex-direction: column; gap: 3px; }
+    .cr-filter-label {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--text-3);
+    }
+    [data-theme="dark"] .cr-filter-label { color: rgba(0,200,80,0.4); }
+    .cr-select, .cr-date-input {
+      background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); font-family: var(--font-body); font-size: 12px;
+      padding: 6px 10px; outline: none; cursor: pointer;
+    }
+    [data-theme="dark"] .cr-select, [data-theme="dark"] .cr-date-input {
+      background: rgba(0,200,80,0.04); border-color: #042210; color: #ceeedd;
+    }
+    .cr-date-input { width: 130px; }
+    .cr-refresh-btn {
+      background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text-2); font-size: 16px; padding: 5px 10px; cursor: pointer;
+      transition: all 0.15s; margin-left: auto;
+    }
+    .cr-refresh-btn:hover { border-color: var(--red); color: var(--red); }
+    [data-theme="dark"] .cr-refresh-btn { background: rgba(0,200,80,0.04); border-color: #042210; color: rgba(0,200,80,0.5); }
+    [data-theme="dark"] .cr-refresh-btn:hover { border-color: #00e87a; color: #00e87a; }
+
+    /* Scorecard */
+    .cr-scorecard {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px; padding: 20px 24px 8px;
+    }
+    .cr-score-tile {
+      background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      padding: 16px 18px; display: flex; flex-direction: column; gap: 2px;
+      position: relative; overflow: hidden;
+    }
+    [data-theme="dark"] .cr-score-tile { background: #010c05; border-color: #042810; }
+    .cr-score-tile::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    }
+    .cr-score-tile.total::before { background: var(--red); }
+    .cr-score-tile.inbound::before { background: var(--blue); }
+    .cr-score-tile.outbound::before { background: var(--green); }
+    .cr-score-tile.jireh::before { background: var(--amber); }
+    .cr-score-tile.completed::before { background: #00e87a; }
+    .cr-score-tile.missed::before { background: #ff3b3b; }
+    .cr-score-tile.avgdur::before { background: #a855f7; }
+    .cr-score-tile.avganswer::before { background: #06b6d4; }
+
+    .cr-score-value {
+      font-family: var(--font-disp); font-size: 32px; letter-spacing: .04em;
+      color: var(--text); line-height: 1;
+    }
+    [data-theme="dark"] .cr-score-value { color: #eafff2; }
+    .cr-score-label {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--text-3); margin-top: 4px;
+    }
+    [data-theme="dark"] .cr-score-label { color: rgba(0,200,80,0.45); }
+    .cr-score-sub {
+      font-family: var(--font-mono); font-size: 10px; color: var(--text-3); margin-top: 2px;
+    }
+
+    /* Section headers */
+    .cr-section-hdr {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: .16em;
+      text-transform: uppercase; color: var(--text-3); padding: 20px 24px 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .cr-section-hdr::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    [data-theme="dark"] .cr-section-hdr { color: rgba(0,200,80,0.4); }
+    [data-theme="dark"] .cr-section-hdr::after { background: #042210; }
+
+    /* Agent performance cards */
+    .cr-agent-cards {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px; padding: 8px 24px 4px;
+    }
+    .cr-agent-card {
+      background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      padding: 16px; display: flex; flex-direction: column; gap: 10px;
+    }
+    [data-theme="dark"] .cr-agent-card { background: #010c05; border-color: #042810; }
+    .cr-agent-top { display: flex; align-items: center; gap: 10px; }
+    .cr-agent-avatar {
+      width: 36px; height: 36px; border-radius: 50%; display: flex;
+      align-items: center; justify-content: center; font-family: var(--font-cond);
+      font-weight: 700; font-size: 13px; color: #fff; flex-shrink: 0;
+    }
+    .cr-agent-avatar.jireh-avatar {
+      background: linear-gradient(135deg, #0099FF 0%, #00e87a 100%);
+      font-size: 18px;
+    }
+    .cr-agent-name {
+      font-family: var(--font-cond); font-size: 15px; font-weight: 700;
+      letter-spacing: .02em; color: var(--text);
+    }
+    [data-theme="dark"] .cr-agent-name { color: #eafff2; }
+    .cr-agent-role {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--text-3);
+    }
+
+    .cr-agent-stats {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+    }
+    .cr-agent-stat {
+      text-align: center; padding: 8px 4px; background: var(--bg-3);
+      border-radius: var(--radius); border: 1px solid var(--border);
+    }
+    [data-theme="dark"] .cr-agent-stat { background: rgba(0,200,80,0.03); border-color: #031a0c; }
+    .cr-agent-stat-val {
+      font-family: var(--font-disp); font-size: 20px; color: var(--text); line-height: 1;
+    }
+    [data-theme="dark"] .cr-agent-stat-val { color: #ceeedd; }
+    .cr-agent-stat-lbl {
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--text-3); margin-top: 3px;
+    }
+    [data-theme="dark"] .cr-agent-stat-lbl { color: rgba(0,200,80,0.35); }
+
+    .cr-agent-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--bg-4); }
+    .cr-agent-bar-in { background: var(--blue); }
+    .cr-agent-bar-out { background: var(--green); }
+    .cr-agent-bar-legend {
+      display: flex; gap: 10px; justify-content: center;
+      font-family: var(--font-mono); font-size: 9px; color: var(--text-3);
+    }
+    .cr-agent-bar-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+
+    /* Call records table */
+    .cr-table-wrap { padding: 0 24px 20px; overflow-x: auto; }
+    .cr-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+    .cr-table th {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--text-3); text-align: left;
+      padding: 10px 12px; border-bottom: 2px solid var(--border);
+      background: var(--bg-2); position: sticky; top: 0; white-space: nowrap;
+    }
+    [data-theme="dark"] .cr-table th { background: #010c05; border-bottom-color: #042210; color: rgba(0,200,80,0.45); }
+    .cr-table td {
+      padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top;
+      color: var(--text);
+    }
+    [data-theme="dark"] .cr-table td { border-bottom-color: #031a0c; color: #ceeedd; }
+    .cr-table tr:hover td { background: var(--bg-3); }
+    [data-theme="dark"] .cr-table tr:hover td { background: rgba(0,200,80,0.03); }
+    .cr-table-empty {
+      text-align: center; padding: 40px; color: var(--text-3);
+      font-family: var(--font-cond); font-size: 14px; letter-spacing: .04em;
+    }
+
+    /* Call row badges */
+    .cr-badge {
+      display: inline-block; font-family: var(--font-mono); font-size: 9px;
+      font-weight: 700; letter-spacing: .06em; padding: 2px 7px;
+      border-radius: 3px; text-transform: uppercase; white-space: nowrap;
+    }
+    .cr-badge.inbound { background: var(--blue-dim); color: var(--blue); }
+    .cr-badge.outbound { background: var(--green-dim); color: var(--green); }
+    .cr-badge.completed { background: var(--green-dim); color: var(--green); }
+    .cr-badge.missed, .cr-badge.no-answer, .cr-badge.busy, .cr-badge.canceled {
+      background: var(--red-dim); color: var(--red);
+    }
+    .cr-badge.ringing, .cr-badge.in-progress, .cr-badge.queued {
+      background: var(--amber-dim); color: var(--amber);
+    }
+    .cr-badge.human { background: var(--bg-4); color: var(--text-2); }
+    .cr-badge.jireh { background: var(--blue-dim); color: var(--blue); }
+    .cr-badge.voicemail { background: rgba(168,85,247,0.12); color: #a855f7; }
+
+    .cr-contact-link {
+      color: var(--text); cursor: pointer; text-decoration: none;
+      transition: color 0.12s;
+    }
+    .cr-contact-link:hover { color: var(--red); text-decoration: underline; }
+    [data-theme="dark"] .cr-contact-link:hover { color: #00e87a; }
+
+    .cr-summary-text {
+      font-size: 11px; color: var(--text-2); max-width: 320px;
+      line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .cr-summary-text.expandable { cursor: pointer; }
+    .cr-summary-text.expanded { -webkit-line-clamp: unset; }
+
+    .cr-transcript-toggle {
+      font-family: var(--font-mono); font-size: 9px; color: var(--text-3);
+      cursor: pointer; margin-top: 4px; display: inline-block;
+    }
+    .cr-transcript-toggle:hover { color: var(--red); }
+    [data-theme="dark"] .cr-transcript-toggle:hover { color: #00e87a; }
+
+    .cr-transcript-box {
+      display: none; margin-top: 6px; padding: 8px 10px; background: var(--bg-3);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      font-size: 11px; color: var(--text-2); max-height: 200px; overflow-y: auto;
+      line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    }
+    [data-theme="dark"] .cr-transcript-box { background: rgba(0,200,80,0.03); border-color: #031a0c; }
+
+    .cr-recording-btn {
+      display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono);
+      font-size: 9px; color: var(--text-3); cursor: pointer; margin-top: 3px;
+      background: none; border: none; padding: 0;
+    }
+    .cr-recording-btn:hover { color: var(--red); }
+    [data-theme="dark"] .cr-recording-btn:hover { color: #00e87a; }
+
     /* ── Jireh Mission Command Center ── */
     #view-intelligence { display: none; height: 100%; overflow: hidden; }
     #view-intelligence.active { display: flex; }
@@ -2903,6 +3124,7 @@
         <div id="smart-lists-nav"></div>
         <div class="nav-divider"></div>
         <div class="nav-item" data-view="intelligence" onclick="navigate('intelligence')" id="nav-intelligence"><span class="nav-icon">🧠</span><span class="nav-label">Intelligence</span></div>
+        <div class="nav-item" data-view="callreports" onclick="navigate('callreports')" id="nav-callreports"><span class="nav-icon">📊</span><span class="nav-label">Call Reports</span></div>
         <div class="nav-item" data-view="admin" onclick="navigate('admin')">
           <span class="nav-icon">⚙️</span>
           Admin
@@ -3232,6 +3454,78 @@
         </div>
         <div id="sec-history-list" style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px">
           <div style="color:var(--text-3);font-size:13px">Loading…</div>
+        </div>
+      </div>
+
+      <div class="view" id="view-callreports">
+        <div class="cr-wrap">
+          <!-- ── Filter Bar ── -->
+          <div class="cr-filter-bar">
+            <div class="cr-filter-group">
+              <label class="cr-filter-label">Date Range</label>
+              <select id="cr-date-range" class="cr-select" onchange="crDateRangeChanged()">
+                <option value="today">Today</option>
+                <option value="7d" selected>Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="90d">Last 90 Days</option>
+                <option value="custom">Custom</option>
+              </select>
+              <input type="date" id="cr-date-from" class="cr-date-input" style="display:none" onchange="loadCallReports()">
+              <input type="date" id="cr-date-to" class="cr-date-input" style="display:none" onchange="loadCallReports()">
+            </div>
+            <div class="cr-filter-group">
+              <label class="cr-filter-label">Agent</label>
+              <select id="cr-agent-filter" class="cr-select" onchange="loadCallReports()">
+                <option value="all">All Agents</option>
+              </select>
+            </div>
+            <div class="cr-filter-group">
+              <label class="cr-filter-label">Direction</label>
+              <select id="cr-direction-filter" class="cr-select" onchange="loadCallReports()">
+                <option value="all">All</option>
+                <option value="inbound">Inbound</option>
+                <option value="outbound">Outbound</option>
+              </select>
+            </div>
+            <div class="cr-filter-group">
+              <label class="cr-filter-label">Source</label>
+              <select id="cr-source-filter" class="cr-select" onchange="loadCallReports()">
+                <option value="all">All</option>
+                <option value="human">Human</option>
+                <option value="jireh">Jireh AI</option>
+              </select>
+            </div>
+            <button class="cr-refresh-btn" onclick="loadCallReports()" title="Refresh">↻</button>
+          </div>
+
+          <!-- ── Scorecard ── -->
+          <div class="cr-scorecard" id="cr-scorecard"></div>
+
+          <!-- ── Agent Performance Cards ── -->
+          <div class="cr-section-hdr" id="cr-agents-hdr">AGENT PERFORMANCE</div>
+          <div class="cr-agent-cards" id="cr-agent-cards"></div>
+
+          <!-- ── Call Records Table ── -->
+          <div class="cr-section-hdr">CALL RECORDS</div>
+          <div class="cr-table-wrap">
+            <table class="cr-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Agent</th>
+                  <th>Contact</th>
+                  <th>Direction</th>
+                  <th>Status</th>
+                  <th>Duration</th>
+                  <th>Source</th>
+                  <th>Stage</th>
+                  <th>Summary</th>
+                </tr>
+              </thead>
+              <tbody id="cr-table-body"></tbody>
+            </table>
+            <div class="cr-table-empty" id="cr-table-empty" style="display:none">No call records found for this period.</div>
+          </div>
         </div>
       </div>
 
@@ -3817,6 +4111,8 @@ function navigate(view, listId = null) {
       history.pushState({ view: 'security' }, '', '/security');
     } else if (view === 'showings') {
       history.pushState({ view: 'showings' }, '', '/showings');
+    } else if (view === 'callreports') {
+      history.pushState({ view: 'callreports' }, '', '/callreports');
     } else if (view === 'dashboard') {
       history.pushState({ view: 'dashboard' }, '', '/dashboard');
     }
@@ -3839,6 +4135,7 @@ function navigate(view, listId = null) {
   else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
   else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
   else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
+  else if (view === 'callreports') { document.getElementById('header-title').textContent = 'Call Reports'; setTimeout(loadCallReports, 0); }
   else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Mission Control'; setTimeout(renderDashboard, 0); }
   // Cancel galaxy animation when leaving dashboard
   if (view !== 'dashboard' && typeof _mcAnimFrame !== 'undefined' && _mcAnimFrame) {
@@ -11314,6 +11611,259 @@ setInterval(() => {
     if (_lccDetailCallId) renderLccDetail(_lccDetailCallId);
   }
 }, 1000);
+
+// ══════════════════════════════════════════════════════════════════
+// CALL REPORTS — Agent Performance & Call Records
+// ══════════════════════════════════════════════════════════════════
+let _crAgentsCache = null;
+let _crCallsData = null;
+
+function crDateRangeChanged() {
+  const sel = document.getElementById('cr-date-range');
+  const fromEl = document.getElementById('cr-date-from');
+  const toEl = document.getElementById('cr-date-to');
+  if (sel.value === 'custom') {
+    fromEl.style.display = ''; toEl.style.display = '';
+    if (!fromEl.value) {
+      const d = new Date(); d.setDate(d.getDate() - 7);
+      fromEl.value = d.toISOString().slice(0,10);
+      toEl.value = new Date().toISOString().slice(0,10);
+    }
+  } else {
+    fromEl.style.display = 'none'; toEl.style.display = 'none';
+  }
+  loadCallReports();
+}
+
+function crGetDateRange() {
+  const sel = document.getElementById('cr-date-range')?.value || '7d';
+  const now = new Date();
+  let from, to;
+  to = new Date(now); to.setDate(to.getDate() + 1);
+  if (sel === 'today') { from = new Date(now.getFullYear(), now.getMonth(), now.getDate()); }
+  else if (sel === '7d') { from = new Date(now); from.setDate(from.getDate() - 7); }
+  else if (sel === '30d') { from = new Date(now); from.setDate(from.getDate() - 30); }
+  else if (sel === '90d') { from = new Date(now); from.setDate(from.getDate() - 90); }
+  else if (sel === 'custom') {
+    from = document.getElementById('cr-date-from')?.value ? new Date(document.getElementById('cr-date-from').value) : new Date(now.getTime() - 7*86400000);
+    to = document.getElementById('cr-date-to')?.value ? new Date(document.getElementById('cr-date-to').value + 'T23:59:59') : new Date();
+  }
+  return { dateFrom: from.toISOString(), dateTo: to.toISOString() };
+}
+
+async function loadCallReports() {
+  // Load agents dropdown once
+  if (!_crAgentsCache) {
+    try {
+      _crAgentsCache = await api('/api/agents');
+      const sel = document.getElementById('cr-agent-filter');
+      if (sel && sel.options.length <= 1) {
+        _crAgentsCache.filter(a => a.is_active).forEach(a => {
+          sel.add(new Option(a.name, a.id));
+        });
+        sel.add(new Option('🤖 Jireh AI', 'jireh'));
+      }
+    } catch(e) { _crAgentsCache = []; }
+  }
+
+  const { dateFrom, dateTo } = crGetDateRange();
+  const agentId = document.getElementById('cr-agent-filter')?.value || 'all';
+  const direction = document.getElementById('cr-direction-filter')?.value || 'all';
+  const source = document.getElementById('cr-source-filter')?.value || 'all';
+
+  const params = new URLSearchParams({ limit: '500', dateFrom, dateTo });
+  if (agentId !== 'all') params.set('agentId', agentId);
+  if (direction !== 'all') params.set('direction', direction);
+  if (source !== 'all') params.set('source', source);
+
+  try {
+    const data = await api(`/api/calls/log?${params}`);
+    _crCallsData = data;
+    crRenderScorecard(data);
+    crRenderAgentCards(data);
+    crRenderTable(data);
+  } catch(e) {
+    console.error('Call reports load error:', e);
+  }
+}
+
+function crFmtDuration(sec) {
+  if (!sec || sec <= 0) return '—';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function crFmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  if (isToday) return time;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + time;
+}
+
+function crRenderScorecard(data) {
+  const el = document.getElementById('cr-scorecard');
+  if (!el) return;
+  const m = data.metrics || {};
+  const calls = data.calls || [];
+
+  // Calculate connect rate
+  const connectRate = m.total > 0 ? Math.round((m.completed / m.total) * 100) : 0;
+
+  // Calculate avg duration from completed calls only
+  const completedCalls = calls.filter(c => c.duration_seconds > 0);
+  const avgDur = completedCalls.length > 0
+    ? Math.round(completedCalls.reduce((s,c) => s + c.duration_seconds, 0) / completedCalls.length)
+    : 0;
+
+  // Calculate total talk time
+  const totalTalkMin = Math.round(completedCalls.reduce((s,c) => s + c.duration_seconds, 0) / 60);
+
+  el.innerHTML = `
+    <div class="cr-score-tile total"><div class="cr-score-value">${m.total || 0}</div><div class="cr-score-label">Total Calls</div></div>
+    <div class="cr-score-tile inbound"><div class="cr-score-value">${m.inbound || 0}</div><div class="cr-score-label">Inbound</div></div>
+    <div class="cr-score-tile outbound"><div class="cr-score-value">${m.outbound || 0}</div><div class="cr-score-label">Outbound</div></div>
+    <div class="cr-score-tile jireh"><div class="cr-score-value">${m.jireh || 0}</div><div class="cr-score-label">Jireh AI</div></div>
+    <div class="cr-score-tile completed"><div class="cr-score-value">${connectRate}%</div><div class="cr-score-label">Connect Rate</div><div class="cr-score-sub">${m.completed || 0} connected</div></div>
+    <div class="cr-score-tile missed"><div class="cr-score-value">${m.missed || 0}</div><div class="cr-score-label">Missed</div></div>
+    <div class="cr-score-tile avgdur"><div class="cr-score-value">${crFmtDuration(avgDur)}</div><div class="cr-score-label">Avg Duration</div></div>
+    <div class="cr-score-tile avganswer"><div class="cr-score-value">${totalTalkMin}m</div><div class="cr-score-label">Total Talk Time</div></div>
+  `;
+}
+
+function crRenderAgentCards(data) {
+  const el = document.getElementById('cr-agent-cards');
+  if (!el) return;
+  const calls = data.calls || [];
+  const agents = _crAgentsCache || [];
+
+  // Group calls by agent
+  const agentMap = {};
+  calls.forEach(c => {
+    const key = c.call_source === 'jireh' ? 'jireh' : (c.agent_id || 'unknown');
+    if (!agentMap[key]) agentMap[key] = { calls: [], name: '', color: '#666', role: '' };
+    agentMap[key].calls.push(c);
+    if (c.call_source === 'jireh') {
+      agentMap[key].name = 'Jireh AI';
+      agentMap[key].color = '#0099FF';
+      agentMap[key].role = 'AI Assistant';
+      agentMap[key].isJireh = true;
+    } else if (c.agent_name) {
+      agentMap[key].name = c.agent_name;
+      agentMap[key].color = c.avatar_color || '#6366f1';
+      const agentInfo = agents.find(a => String(a.id) === String(c.agent_id));
+      agentMap[key].role = agentInfo?.role || 'Agent';
+    }
+  });
+
+  // Sort by total calls desc
+  const sorted = Object.entries(agentMap)
+    .filter(([k,v]) => v.name)
+    .sort((a,b) => b[1].calls.length - a[1].calls.length);
+
+  if (!sorted.length) { el.innerHTML = '<div style="padding:8px 0;color:var(--text-3);font-size:12px">No agent data for this period.</div>'; return; }
+
+  el.innerHTML = sorted.map(([key, ag]) => {
+    const total = ag.calls.length;
+    const inbound = ag.calls.filter(c => c.direction === 'inbound').length;
+    const outbound = ag.calls.filter(c => c.direction === 'outbound').length;
+    const completed = ag.calls.filter(c => c.status === 'completed').length;
+    const missed = ag.calls.filter(c => ['no-answer','busy','canceled'].includes(c.status)).length;
+    const withDuration = ag.calls.filter(c => c.duration_seconds > 0);
+    const avgDur = withDuration.length > 0
+      ? Math.round(withDuration.reduce((s,c) => s + c.duration_seconds, 0) / withDuration.length)
+      : 0;
+    const totalMin = Math.round(withDuration.reduce((s,c) => s + c.duration_seconds, 0) / 60);
+    const connectRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const inPct = total > 0 ? Math.round((inbound / total) * 100) : 0;
+    const outPct = 100 - inPct;
+    const initials = ag.isJireh ? '🤖' : ag.name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
+
+    return `<div class="cr-agent-card">
+      <div class="cr-agent-top">
+        <div class="cr-agent-avatar${ag.isJireh ? ' jireh-avatar' : ''}" style="${ag.isJireh ? '' : 'background:' + ag.color}">${initials}</div>
+        <div>
+          <div class="cr-agent-name">${esc(ag.name)}</div>
+          <div class="cr-agent-role">${esc(ag.role)}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div style="font-family:var(--font-disp);font-size:22px;color:var(--text);line-height:1">${total}</div>
+          <div style="font-family:var(--font-mono);font-size:8px;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase">calls</div>
+        </div>
+      </div>
+      <div class="cr-agent-stats">
+        <div class="cr-agent-stat"><div class="cr-agent-stat-val">${connectRate}%</div><div class="cr-agent-stat-lbl">Connect</div></div>
+        <div class="cr-agent-stat"><div class="cr-agent-stat-val">${crFmtDuration(avgDur)}</div><div class="cr-agent-stat-lbl">Avg Time</div></div>
+        <div class="cr-agent-stat"><div class="cr-agent-stat-val">${totalMin}m</div><div class="cr-agent-stat-lbl">Talk Time</div></div>
+      </div>
+      <div class="cr-agent-bar">
+        <div class="cr-agent-bar-in" style="width:${inPct}%"></div>
+        <div class="cr-agent-bar-out" style="width:${outPct}%"></div>
+      </div>
+      <div class="cr-agent-bar-legend">
+        <span><span class="cr-agent-bar-dot" style="background:var(--blue)"></span>${inbound} in</span>
+        <span><span class="cr-agent-bar-dot" style="background:var(--green)"></span>${outbound} out</span>
+        <span style="color:var(--red)">${missed} missed</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function crRenderTable(data) {
+  const tbody = document.getElementById('cr-table-body');
+  const emptyEl = document.getElementById('cr-table-empty');
+  if (!tbody) return;
+  const calls = data.calls || [];
+  if (!calls.length) {
+    tbody.innerHTML = '';
+    if (emptyEl) emptyEl.style.display = '';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  tbody.innerHTML = calls.map((c, idx) => {
+    const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.from_number || c.to_number || '—';
+    const contactClick = c.person_id ? ` onclick="openContact('${c.person_id}')" class="cr-contact-link"` : '';
+    const agent = c.call_source === 'jireh' ? '🤖 Jireh' : (c.agent_name || '—');
+    const dir = c.direction || '—';
+    const status = c.status || '—';
+    const statusClass = ['no-answer','busy','canceled'].includes(status) ? 'missed' : (status === 'voicemail' ? 'voicemail' : status);
+    const dur = crFmtDuration(c.duration_seconds);
+    const source = c.call_source || 'human';
+    const stage = c.stage || '—';
+    const summary = c.summary || '';
+    const hasTranscript = c.transcript && c.transcript.length > 10;
+    const hasRecording = !!c.recording_url;
+
+    let summaryHtml = '';
+    if (summary) {
+      summaryHtml += `<div class="cr-summary-text expandable" onclick="this.classList.toggle('expanded')">${esc(summary)}</div>`;
+    }
+    if (hasTranscript) {
+      summaryHtml += `<span class="cr-transcript-toggle" onclick="document.getElementById('cr-tx-${idx}').style.display=document.getElementById('cr-tx-${idx}').style.display==='block'?'none':'block'">▸ transcript</span>`;
+      summaryHtml += `<div class="cr-transcript-box" id="cr-tx-${idx}">${esc(c.transcript)}</div>`;
+    }
+    if (hasRecording) {
+      summaryHtml += `<button class="cr-recording-btn" onclick="event.stopPropagation();new Audio('${c.recording_url}').play()">▶ play recording</button>`;
+    }
+    if (!summary && !hasTranscript && !hasRecording) summaryHtml = '<span style="color:var(--text-3)">—</span>';
+
+    return `<tr>
+      <td style="white-space:nowrap;font-family:var(--font-mono);font-size:11px;color:var(--text-2)">${crFmtTime(c.started_at)}</td>
+      <td style="white-space:nowrap">${esc(agent)}</td>
+      <td><span${contactClick}>${esc(name)}</span></td>
+      <td><span class="cr-badge ${dir}">${dir === 'inbound' ? '↙ IN' : '↗ OUT'}</span></td>
+      <td><span class="cr-badge ${statusClass}">${esc(status)}</span></td>
+      <td style="font-family:var(--font-mono);font-size:11px">${dur}</td>
+      <td><span class="cr-badge ${source}">${source === 'jireh' ? '🤖 AI' : '👤'}</span></td>
+      <td style="font-size:11px;color:var(--text-2)">${esc(stage)}</td>
+      <td>${summaryHtml}</td>
+    </tr>`;
+  }).join('');
+}
 
 // ══════════════════════════════════════════════════════════════════
 // JIREH MISSION COMMAND — AI CRM Analysis Engine
