@@ -1713,54 +1713,42 @@ app.post('/api/twilio/inbound', async (req, res) => {
     }
 
     if (jireh_inbound) {
-      // Route inbound call to Jireh AI
-      const callId = `jc-inbound-${Date.now()}-${require('crypto').randomBytes(4).toString('hex')}`;
-      const greetingR = await pool.query(`SELECT value FROM app_settings WHERE key='jireh_inbound_greeting'`);
-      const greeting = greetingR.rows[0]?.value || 'Hi, thanks for calling O.K.C. Real!';
-
-      const callDbR = await pool.query(
-        `INSERT INTO calls (twilio_call_sid, person_id, direction, status, from_number, to_number, started_at, call_source)
-         VALUES ($1, $2, 'inbound', 'ringing', $3, $4, NOW(), 'jireh') RETURNING id`,
-        [callSid, person?.id||null, fromNum, toNum]
+      // ── Jireh AUTO-ANSWER mode: ring humans for ~20s (≈4 rings) first.
+      // If a human picks up → normal call. If no answer → Jireh takes over.
+      const callInsertJ = await pool.query(
+        'INSERT INTO calls (twilio_call_sid,person_id,line_id,direction,status,from_number,to_number) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+        [callSid, person?.id||null, line?.id||null, 'inbound', 'ringing', fromNum, toNum]
       );
+      let agentsJ = [];
+      if (line) {
+        const aJR = await pool.query('SELECT a.* FROM agents a JOIN line_agents la ON la.agent_id::text=a.id::text WHERE la.line_id=$1 AND a.is_active=true', [line.id]);
+        agentsJ = aJR.rows;
+      }
+      if (agentsJ.length === 0) {
+        const aJR = await pool.query('SELECT * FROM agents WHERE is_active=true');
+        agentsJ = aJR.rows;
+      }
 
-      const agentId = null; // inbound Jireh — no specific agent
-      const wsBase = process.env.APP_URL?.replace(/^http/, 'ws') || 'wss://localhost:3000';
+      const VoiceResponseJ = require('twilio').twiml.VoiceResponse;
+      const respJ = new VoiceResponseJ();
 
-      // Store session in jareihCalls so WS handler works
-      jareihCalls.set(callId, {
-        personId: String(person?.id||''),
-        agentId: null,
-        goal: 'Answer the inbound caller, identify their need, and assist them or take a message.',
-        context: {
-          name: person ? `${person.first_name} ${person.last_name||''}`.trim() : 'Unknown caller',
-          phone: fromNum, stage: person?.stage||'Unknown',
-          notes: person?.notes||'', email: person?.email||'',
-          recentActivity: []
-        },
-        transcript: [],
-        contactCallSid: callSid,
-        aiBridgeCallSid: null,
-        callDbId: callDbR.rows[0].id,
-        araMuted: false, araActive: true,
-        greetingFired: false, greetingOverride: greeting,
-        shouldEnd: false, goalAchieved: false, finalized: false,
-        startedAt: Date.now(), callStatus: 'ringing',
-        streamSid: null, ws: null, araLock: 0,
-        grokHistory: [], listeners: [],
-        direction: 'inbound'
-      });
+      if (agentsJ.length > 0) {
+        // Ring all agents; action fires when dial ends (answered OR timed-out)
+        const dialJ = respJ.dial({
+          record: 'record-from-ringing-dual',
+          recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
+          recordingStatusCallbackMethod: 'POST',
+          timeout: 20, // ~4 rings — then Jireh fallback fires
+          action: `${process.env.APP_URL}/api/twilio/inbound-jireh-fallback?origCallSid=${encodeURIComponent(callSid)}&fromNum=${encodeURIComponent(fromNum)}&toNum=${encodeURIComponent(toNum)}&personId=${encodeURIComponent(person?.id||'')}&callDbId=${encodeURIComponent(callInsertJ.rows[0].id)}`,
+          method: 'POST'
+        });
+        agentsJ.forEach(a => dialJ.client(a.id));
+      } else {
+        // No agents online — Jireh answers immediately (redirect to fallback)
+        respJ.redirect({method:'POST'}, `${process.env.APP_URL}/api/twilio/inbound-jireh-fallback?origCallSid=${encodeURIComponent(callSid)}&fromNum=${encodeURIComponent(fromNum)}&toNum=${encodeURIComponent(toNum)}&personId=${encodeURIComponent(person?.id||'')}&callDbId=${encodeURIComponent(callInsertJ.rows[0].id)}&noAgents=1`);
+      }
 
-      broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
-
-      res.type('xml').send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="${wsBase}/ws/jareih-call/${callId}">
-      <Parameter name="callId" value="${callId}"/>
-    </Stream>
-  </Connect>
-</Response>`);
+      res.type('xml').send(respJ.toString());
       return;
     }
 
@@ -1834,6 +1822,95 @@ app.post('/api/twilio/inbound-complete', async (req, res) => {
       ).catch(() => {});
     }
   } catch (e) { console.error('inbound-complete error:', e.message); }
+});
+
+// ─── Jireh Fallback: fires after agents don't answer within ~4 rings ──────────
+// Twilio calls this as the <Dial action> when the dial ends.
+// DialCallStatus === 'answered' means a human picked up → nothing to do.
+// Any other status (no-answer, busy, failed, canceled) → hand call to Jireh.
+app.post('/api/twilio/inbound-jireh-fallback', async (req, res) => {
+  try {
+    const { DialCallStatus } = req.body;
+    const { origCallSid, fromNum, toNum, personId, callDbId, noAgents } = req.query;
+    const callSid = req.body.CallSid || origCallSid;
+
+    // Human answered — update DB record and we're done
+    if (DialCallStatus === 'answered' && !noAgents) {
+      if (callDbId) {
+        pool.query('UPDATE calls SET status=$1 WHERE id=$2', ['answered', callDbId]).catch(()=>{});
+      }
+      res.type('xml').send('<Response></Response>');
+      return;
+    }
+
+    // No human answered (or no agents at all) — spin up Jireh
+    const greetingR = await pool.query(`SELECT value FROM app_settings WHERE key='jireh_inbound_greeting'`);
+    const greeting = greetingR.rows[0]?.value || 'Hi, thanks for calling O.K.C. Real!';
+
+    let person = null;
+    if (personId) {
+      const pR = await pool.query('SELECT * FROM people WHERE id=$1', [personId]).catch(()=>({rows:[]}));
+      person = pR.rows[0] || null;
+    }
+
+    const actsR = await pool.query(
+      `SELECT type,body,direction,created_at FROM activities WHERE person_id=$1 ORDER BY created_at DESC LIMIT 15`,
+      [String(personId || '')]
+    ).catch(()=>({rows:[]}));
+
+    const callId = `jc-inbound-${Date.now()}-${require('crypto').randomBytes(4).toString('hex')}`;
+    const wsBase = process.env.APP_URL?.replace(/^http/, 'ws') || 'wss://localhost:3000';
+
+    // Upsert the calls record to mark it as Jireh-handled
+    let callDbIdFinal = callDbId;
+    if (!callDbIdFinal) {
+      const insertR = await pool.query(
+        `INSERT INTO calls (twilio_call_sid, person_id, direction, status, from_number, to_number, started_at, call_source)
+         VALUES ($1, $2, 'inbound', 'ringing', $3, $4, NOW(), 'jireh') RETURNING id`,
+        [callSid, person?.id||null, fromNum, toNum]
+      );
+      callDbIdFinal = insertR.rows[0].id;
+    } else {
+      pool.query(`UPDATE calls SET call_source='jireh', status='ringing' WHERE id=$1`, [callDbId]).catch(()=>{});
+    }
+
+    jareihCalls.set(callId, {
+      personId: String(person?.id||''),
+      agentId: null,
+      goal: 'Answer the inbound caller, identify their need, and assist them or take a message.',
+      context: {
+        name: person ? `${person.first_name} ${person.last_name||''}`.trim() : 'Unknown caller',
+        phone: fromNum, stage: person?.stage||'Unknown',
+        notes: person?.notes||'', email: person?.email||'',
+        recentActivity: actsR.rows
+      },
+      transcript: [],
+      contactCallSid: callSid,
+      aiBridgeCallSid: null,
+      callDbId: callDbIdFinal,
+      araMuted: false, araActive: true,
+      greetingFired: false, greetingOverride: greeting,
+      shouldEnd: false, goalAchieved: false, finalized: false,
+      startedAt: Date.now(), callStatus: 'ringing',
+      streamSid: null, ws: null, araLock: 0,
+      grokHistory: [], listeners: [],
+      direction: 'inbound'
+    });
+
+    broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
+
+    res.type('xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${wsBase}/ws/jareih-call/${callId}">
+      <Parameter name="callId" value="${callId}"/>
+    </Stream>
+  </Connect>
+</Response>`);
+  } catch(e) {
+    console.error('[Jireh fallback] error:', e.message);
+    res.type('xml').send('<Response><Say>Thank you for calling OKCREAL. Please try again shortly.</Say></Response>');
+  }
 });
 
 app.post('/api/twilio/recording', async (req, res) => {
@@ -5087,6 +5164,201 @@ app.get('/api/dashboard/stats', auth, async (req, res) => {
 
 // =============================================================================
 // SPA CATCH-ALL — serve index.html for /file/:id, /inbox, /admin, etc.
+// =============================================================================
+// JIREH TOGGLE WIDGET — drop-in script for public/index.html
+// Usage: <script src="/jireh-toggle.js"></script>  ← add once to <head>
+// Automatically injects a toggle bar at the top of the app (above all content).
+// Reads/writes the jireh_inbound_enabled setting via /api/jareih/settings.
+// =============================================================================
+app.get('/jireh-toggle.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(`
+(function () {
+  'use strict';
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function getToken() {
+    return localStorage.getItem('token') || localStorage.getItem('connect_token') || '';
+  }
+
+  async function fetchSetting() {
+    try {
+      const r = await fetch('/api/jareih/settings', {
+        headers: { Authorization: 'Bearer ' + getToken() }
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.jireh_inbound_enabled === 'true';
+    } catch(e) { return null; }
+  }
+
+  async function saveSetting(enabled) {
+    try {
+      await fetch('/api/jareih/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
+        body: JSON.stringify({ jireh_inbound_enabled: String(enabled) })
+      });
+    } catch(e) { console.warn('[Jireh toggle] save failed', e); }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  function injectStyles() {
+    if (document.getElementById('jireh-toggle-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'jireh-toggle-styles';
+    s.textContent = \`
+      #jireh-toggle-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 16px;
+        background: #0d0d0d;
+        border-bottom: 1px solid #1f1f1f;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        position: relative;
+        z-index: 9999;
+        user-select: none;
+        flex-shrink: 0;
+      }
+      #jireh-toggle-bar .jtb-icon {
+        width: 18px; height: 18px; flex-shrink: 0;
+        color: #e63946;
+      }
+      #jireh-toggle-bar .jtb-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: #aaa;
+        flex-shrink: 0;
+      }
+      /* Toggle switch */
+      .jtb-switch {
+        position: relative;
+        display: inline-flex;
+        width: 44px;
+        height: 24px;
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+      .jtb-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+      .jtb-slider {
+        position: absolute; inset: 0;
+        background: #2a2a2a;
+        border-radius: 24px;
+        transition: background .2s;
+        border: 1px solid #333;
+      }
+      .jtb-slider::before {
+        content: '';
+        position: absolute;
+        width: 18px; height: 18px;
+        left: 2px; top: 2px;
+        background: #555;
+        border-radius: 50%;
+        transition: transform .2s, background .2s;
+      }
+      .jtb-switch input:checked + .jtb-slider {
+        background: rgba(230, 57, 70, .18);
+        border-color: #e63946;
+      }
+      .jtb-switch input:checked + .jtb-slider::before {
+        transform: translateX(20px);
+        background: #e63946;
+      }
+      #jireh-toggle-status {
+        font-size: 12px;
+        color: #555;
+        transition: color .2s;
+      }
+      #jireh-toggle-status.on { color: #e63946; }
+      #jireh-toggle-bar .jtb-badge {
+        margin-left: auto;
+        font-size: 10px;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        color: #333;
+        font-weight: 600;
+      }
+    \`;
+    document.head.appendChild(s);
+  }
+
+  function buildBar() {
+    const bar = document.createElement('div');
+    bar.id = 'jireh-toggle-bar';
+    bar.innerHTML = \`
+      <svg class="jtb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.07 12 19.79 19.79 0 0 1 1 3.18 2 2 0 0 1 2.99 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.09 8.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21 16z"/>
+      </svg>
+      <span class="jtb-label">Jireh Auto-Answer</span>
+      <label class="jtb-switch" title="Toggle Jireh auto-answer after 4 rings">
+        <input type="checkbox" id="jireh-toggle-input">
+        <span class="jtb-slider"></span>
+      </label>
+      <span id="jireh-toggle-status">Loading…</span>
+      <span class="jtb-badge">Answers after 4 rings when ON</span>
+    \`;
+    return bar;
+  }
+
+  function applyState(enabled) {
+    const input = document.getElementById('jireh-toggle-input');
+    const status = document.getElementById('jireh-toggle-status');
+    if (!input || !status) return;
+    input.checked = !!enabled;
+    status.textContent = enabled ? 'ON' : 'OFF';
+    status.className = enabled ? 'on' : '';
+  }
+
+  // ── Mount ─────────────────────────────────────────────────────────────────
+  async function mount() {
+    injectStyles();
+
+    // Wait for the body to exist and contain a real app root
+    const target = document.body;
+    if (!target) return;
+
+    // Don't double-inject
+    if (document.getElementById('jireh-toggle-bar')) return;
+
+    const bar = buildBar();
+    target.insertBefore(bar, target.firstChild);
+
+    const input = document.getElementById('jireh-toggle-input');
+    input.addEventListener('change', async () => {
+      const enabled = input.checked;
+      applyState(enabled); // optimistic update
+      await saveSetting(enabled);
+    });
+
+    const enabled = await fetchSetting();
+    applyState(enabled);
+  }
+
+  // Mount once DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount);
+  } else {
+    // DOMContentLoaded already fired — wait a tick for SPA frameworks to boot
+    setTimeout(mount, 0);
+  }
+
+  // Re-mount on client-side navigation (SPA route changes)
+  const _pushState = history.pushState.bind(history);
+  history.pushState = function(...args) {
+    _pushState(...args);
+    setTimeout(() => { if (!document.getElementById('jireh-toggle-bar')) mount(); }, 50);
+  };
+  window.addEventListener('popstate', () => {
+    setTimeout(() => { if (!document.getElementById('jireh-toggle-bar')) mount(); }, 50);
+  });
+})();
+`);
+});
+
 // =============================================================================
 // SPA CATCH-ALL — must be AFTER all API routes
 // Serves index.html for every frontend path: /dashboard, /showings, /inbox, etc.
