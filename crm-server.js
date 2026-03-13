@@ -4362,7 +4362,8 @@ function jcConferenceName(callId) { return `jcall-${callId}`; }
 
 // ─── TTS: Deepgram Aura Ara ───────────────────────────────────────────────────
 async function araTTS(text) {
-  const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mp3';
+  // mulaw 8000Hz — exact format Twilio expects for WS media playback
+  const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000&container=none';
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
@@ -4375,36 +4376,27 @@ async function araTTS(text) {
 async function speakToCall(callId, text) {
   const session = jareihCalls.get(callId);
   if (!session || session.araMuted) return;
+  if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
+    console.warn('[Ara] WS not open for', callId);
+    return;
+  }
+  if (!session.streamSid) {
+    console.warn('[Ara] No streamSid yet for', callId);
+    return;
+  }
   try {
     const audio = await araTTS(text);
-    const token = crypto.randomBytes(12).toString('hex');
-    ttsAudioCache.set(token, audio);
-    setTimeout(() => ttsAudioCache.delete(token), 120000);
-    const audioUrl = `${process.env.APP_URL}/api/jareih/tts/${token}.mp3`;
-
-    // Wait up to 6s for conferenceSid if not yet captured
-    if (!session.conferenceSid) {
-      await new Promise(resolve => {
-        const start = Date.now();
-        const poll = setInterval(() => {
-          if (session.conferenceSid || Date.now() - start > 6000) {
-            clearInterval(poll); resolve();
-          }
-        }, 100);
-      });
-    }
-
-    if (!session.conferenceSid) {
-      console.warn('[Ara] No conferenceSid after wait — cannot play TTS for', callId);
-      return;
-    }
-
-    const tc = initTwilioFull();
-    if (!tc) return;
-
-    // announceUrl must return TwiML — serve a wrapper that <Play>s the mp3
-    const twimlUrl = `${process.env.APP_URL}/api/jareih/tts-twiml/${token}`;
-    await tc.conferences(session.conferenceSid).update({ announceUrl: twimlUrl, announceMethod: 'GET' });
+    // Send mulaw audio back to Twilio over the bidirectional stream
+    // Twilio plays whatever we send back on the <Connect><Stream> socket
+    session.ws.send(JSON.stringify({
+      event: 'media',
+      streamSid: session.streamSid,
+      media: { payload: audio.toString('base64') }
+    }));
+    const clean = text.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
+    session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
+    broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'ara_spoke', text: clean });
+    broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
   } catch(e) { console.error('[Ara TTS]', e.message); }
 }
 
@@ -4670,25 +4662,18 @@ app.post('/api/jareih/call', auth, async (req, res) => {
   }
 });
 
-// Contact TwiML — forks audio to WS for STT, then joins conference
+// Contact TwiML — bidirectional stream: contact audio in via WS, Ara audio back via WS
 app.all('/api/jareih/contact-twiml/:callId', (req, res) => {
   const { callId } = req.params;
-  const confName = jcConferenceName(callId);
   const wsBase = (process.env.APP_URL||'').replace('https://','wss://').replace('http://','ws://');
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Start>
+  <Connect>
     <Stream url="${wsBase}/ws/jareih-call/${callId}">
       <Parameter name="callId" value="${callId}"/>
     </Stream>
-  </Start>
-  <Dial>
-    <Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true"
-      waitUrl="" waitMethod="GET"
-      statusCallback="${process.env.APP_URL}/api/jareih/conf-events/${callId}"
-      statusCallbackEvent="start end join leave">${confName}</Conference>
-  </Dial>
+  </Connect>
 </Response>`);
 });
 
