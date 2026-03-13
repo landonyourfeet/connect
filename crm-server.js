@@ -1374,6 +1374,14 @@ app.post('/api/twilio/recording', async (req, res) => {
     }
     const recUrl = `${RecordingUrl}.mp3`;
     await pool.query('UPDATE calls SET recording_url=$1 WHERE id=$2', [recUrl, call.id]);
+
+    // For Jareih AI calls, we already have a real-time transcript and summary — just save the recording URL
+    if (call.transcript) {
+      await pool.query('UPDATE activities SET recording_url=$1 WHERE call_id=$2', [recUrl, call.id]).catch(()=>{});
+      console.log('Recording webhook: Jareih call — saved recording_url, skipping re-transcription');
+      return;
+    }
+
     const existingAct = await pool.query('SELECT id FROM activities WHERE call_id=$1 LIMIT 1', [call.id]);
     if (existingAct.rows.length === 0) {
       await pool.query(
@@ -4363,7 +4371,6 @@ function jcConferenceName(callId) { return `jcall-${callId}`; }
 // ─── TTS: Deepgram Aura Ara ───────────────────────────────────────────────────
 async function araTTS(text) {
   // xAI Ara voice — the real Ara from the Grok app
-  // mulaw 8000Hz = exact format Twilio expects for bidirectional WS media playback
   const resp = await fetch('https://api.x.ai/v1/tts', {
     method: 'POST',
     headers: {
@@ -4373,18 +4380,32 @@ async function araTTS(text) {
     body: JSON.stringify({
       text,
       voice_id: 'ara',
-      output_format: { codec: 'mulaw', sample_rate: 8000 }
+      output_format: { codec: 'mulaw', sample_rate: 8000, container: 'none' }
     })
   });
-  if (!resp.ok) throw new Error(`xAI TTS ${resp.status}: ${await resp.text()}`);
-  return Buffer.from(await resp.arrayBuffer());
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`xAI TTS ${resp.status}: ${errText}`);
+  }
+  let audio = Buffer.from(await resp.arrayBuffer());
+  console.log(`[Ara TTS] raw bytes=${audio.length} first4=${audio.slice(0,4).toString('hex')}`);
+
+  // Strip WAV/RIFF header if xAI returned a container instead of raw mulaw
+  if (audio.slice(0,4).toString('ascii') === 'RIFF') {
+    const dataIdx = audio.indexOf(Buffer.from('data'));
+    if (dataIdx !== -1) {
+      audio = audio.slice(dataIdx + 8); // skip 'data' + 4-byte chunk size
+      console.log(`[Ara TTS] stripped WAV header, raw mulaw bytes=${audio.length}`);
+    }
+  }
+  return audio;
 }
 
 async function speakToCall(callId, text) {
   const session = jareihCalls.get(callId);
   if (!session || session.araMuted) return;
   if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
-    console.warn('[Ara] WS not open for', callId);
+    console.warn('[Ara] WS not open for', callId, 'readyState=', session.ws?.readyState);
     return;
   }
   if (!session.streamSid) {
@@ -4393,13 +4414,21 @@ async function speakToCall(callId, text) {
   }
   try {
     const audio = await araTTS(text);
-    // Send mulaw audio back to Twilio over the bidirectional stream
-    // Twilio plays whatever we send back on the <Connect><Stream> socket
-    session.ws.send(JSON.stringify({
-      event: 'media',
-      streamSid: session.streamSid,
-      media: { payload: audio.toString('base64') }
-    }));
+    console.log(`[Ara speak] callId=${callId} streamSid=${session.streamSid} audioBytes=${audio.length}`);
+
+    // Twilio bidirectional streams require audio chunked in 20ms frames
+    // mulaw 8000Hz = 8000 samples/sec × 1 byte/sample × 0.02s = 160 bytes per chunk
+    const CHUNK_SIZE = 160;
+    for (let i = 0; i < audio.length; i += CHUNK_SIZE) {
+      const chunk = audio.slice(i, i + CHUNK_SIZE);
+      session.ws.send(JSON.stringify({
+        event: 'media',
+        streamSid: session.streamSid,
+        media: { payload: chunk.toString('base64') }
+      }));
+    }
+    console.log(`[Ara speak] sent ${Math.ceil(audio.length / CHUNK_SIZE)} chunks`);
+
     const clean = text.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
     session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
     broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'ara_spoke', text: clean });
@@ -4459,39 +4488,60 @@ async function finalizeJareihCall(callId, twilioStatus, duration) {
   if (!session || session.finalized) return;
   session.finalized = true;
 
+  const tookOver = session.transcript.some(t => t.role === 'agent');
+  const label = tookOver ? 'Jareih AI Call (Agent Joined)' : 'Jareih AI Call';
+  const goalTag = session.goalAchieved ? '✅ Goal Achieved' : twilioStatus === 'completed' ? '📋 Completed' : `⚠ ${twilioStatus}`;
+
+  // Build plain transcript text for calls table
   const transcriptText = session.transcript
-    .map(t => `${t.role === 'ara' ? 'Ara (AI)' : t.role === 'agent' ? `Agent` : session.context.name}: ${t.text}`)
+    .map(t => {
+      const who = t.role === 'ara' ? 'Jareih (AI)' : t.role === 'agent' ? 'Agent' : session.context.name;
+      return `${who}: ${t.text}`;
+    })
     .join('\n');
 
-  let summary = `Call ${twilioStatus}.`;
+  // Generate summary via Grok
+  let summary = `${label} — ${goalTag}. Goal: ${session.goal}.`;
   if (transcriptText && initGrok()) {
     try {
       const grok = initGrok();
-      const s = await grok.chat.completions.create({ model:'grok-3', max_tokens:200, messages:[{role:'user',content:
-        `Summarize this outbound call in 2-3 sentences. Goal: "${session.goal}". Achieved: ${session.goalAchieved?'Yes':'Unknown'}.\nTranscript:\n${transcriptText}`}] });
+      const s = await grok.chat.completions.create({
+        model: 'grok-3', max_tokens: 200,
+        messages: [{ role: 'user', content:
+          `Summarize this outbound AI call in 2-3 sentences. Goal: "${session.goal}". Achieved: ${session.goalAchieved ? 'Yes' : 'Unknown'}.\nTranscript:\n${transcriptText}` }]
+      });
       summary = s.choices[0].message.content.trim();
-    } catch(e) {}
+    } catch(e) { console.error('[Jareih summary]', e.message); }
   }
 
-  const tookOver = session.transcript.some(t => t.role === 'agent');
-  const body = [
-    `📞 ${session.araActive && !tookOver ? 'Jareih AI Call' : tookOver ? 'Jareih AI Call (Agent Joined)' : 'Call'} — ${session.goalAchieved ? '✅ Goal Achieved' : twilioStatus === 'completed' ? '📋 Completed' : `⚠ ${twilioStatus}`}`,
+  // Update calls row with transcript, summary, duration, status
+  if (session.callDbId) {
+    try {
+      await pool.query(
+        `UPDATE calls SET transcript=$1, summary=$2, duration_seconds=$3, status=$4, ended_at=NOW() WHERE id=$5`,
+        [transcriptText || null, summary, duration || 0, twilioStatus, session.callDbId]
+      );
+    } catch(e) { console.error('[Jareih calls update]', e.message); }
+  }
+
+  // Activity body = compact header + summary (transcript/recording come via calls join)
+  const activityBody = [
+    `📞 ${label} — ${goalTag}`,
     `Goal: ${session.goal}`,
     '',
-    `Summary: ${summary}`,
-    '',
-    transcriptText ? `Transcript:\n${transcriptText}` : '(No transcript — call did not connect)'
+    summary
   ].join('\n');
 
   try {
     await pool.query(
-      `INSERT INTO activities (person_id,agent_id,type,body,direction,duration,created_at) VALUES ($1,$2,'call',$3,'outbound',$4,NOW())`,
-      [session.personId, session.agentId, body, duration||0]
+      `INSERT INTO activities (person_id, agent_id, call_id, type, body, direction, duration, created_at)
+       VALUES ($1, $2, $3, 'call', $4, 'outbound', $5, NOW())`,
+      [session.personId, session.agentId, session.callDbId || null, activityBody, duration || 0]
     );
-  } catch(e) { console.error('[Jareih finalize]', e.message); }
+  } catch(e) { console.error('[Jareih activity insert]', e.message); }
 
-  broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'call_ended', summary, goalAchieved:session.goalAchieved, status:twilioStatus });
-  broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
+  broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'call_ended', summary, goalAchieved: session.goalAchieved, status: twilioStatus });
+  broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
   jareihCalls.delete(callId);
 }
 
@@ -4573,11 +4623,14 @@ function setupJareihCallWS(server) {
         case 'start':
           session.streamSid = msg.start?.streamSid || msg.streamSid;
           session.callStatus = 'connected';
+          console.log(`[Ara WS] start callId=${callId} streamSid=${session.streamSid}`);
           broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'status', status:'connected' });
           broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
           setTimeout(async () => {
             try {
+              console.log(`[Ara] firing greeting callId=${callId}`);
               const greeting = await araRespond(callId, null);
+              console.log(`[Ara] greeting text="${greeting?.slice(0,60)}"`);
               if (greeting) await speakToCall(callId, greeting);
             } catch(e) { console.error('[Ara greeting]', e.message); }
           }, 2000);
@@ -4644,6 +4697,7 @@ app.post('/api/jareih/call', auth, async (req, res) => {
     },
     transcript: [],
     contactCallSid: null, aiBridgeCallSid: null,
+    callDbId: null,   // UUID in calls table — linked to activity for playback
     araMuted: false, araActive: true,
     shouldEnd: false, goalAchieved: false, finalized: false,
     startedAt: Date.now(), callStatus: 'initiated',
@@ -4655,15 +4709,28 @@ app.post('/api/jareih/call', auth, async (req, res) => {
     if (!tc) throw new Error('Twilio not configured');
     const fromNum = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
 
-    // Call the contact — puts them in a Conference room
+    // Pre-insert calls row so we have a UUID to link activity to
+    const callDbR = await pool.query(
+      `INSERT INTO calls (twilio_call_sid, person_id, agent_id, direction, status, from_number, to_number, started_at)
+       VALUES ($1, $2, $3, 'outbound', 'initiated', $4, $5, NOW()) RETURNING id`,
+      ['pending-' + callId, String(personId), String(req.agent.id), fromNum, person.phone]
+    );
+    jareihCalls.get(callId).callDbId = callDbR.rows[0].id;
+
     const contactCall = await tc.calls.create({
       to: person.phone, from: fromNum,
       url: `${process.env.APP_URL}/api/jareih/contact-twiml/${callId}`,
       statusCallback: `${process.env.APP_URL}/api/jareih/call-status/${callId}`,
       statusCallbackMethod: 'POST',
-      statusCallbackEvent: ['initiated','ringing','answered','completed']
+      statusCallbackEvent: ['initiated','ringing','answered','completed'],
+      record: true,
+      recordingStatusCallback: `${process.env.APP_URL}/api/twilio/recording`,
+      recordingStatusCallbackMethod: 'POST'
     });
     jareihCalls.get(callId).contactCallSid = contactCall.sid;
+
+    // Update calls row with real Twilio SID
+    await pool.query('UPDATE calls SET twilio_call_sid=$1 WHERE id=$2', [contactCall.sid, callDbR.rows[0].id]);
 
     broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
     res.json({ ok:true, callId, contactCallSid:contactCall.sid, contactName:person.first_name });
