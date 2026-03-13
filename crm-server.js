@@ -4454,7 +4454,7 @@ async function araRespond(callId, contactSpeech) {
     const actSummary = (ctx.recentActivity||[]).slice(0,8).map(a=>`[${a.type}] ${(a.body||'').slice(0,120)}`).join('\n');
     session.grokHistory = [{
       role: 'system',
-      content: `You are Jie-rah (spelled Jareih), an AI assistant calling on behalf of O.K.C. Real property management in Oklahoma City.
+      content: `You are Jireh (spelled Jareih), an AI assistant calling on behalf of O.K.C. Real property management in Oklahoma City.
 
 WHO YOU ARE CALLING: ${ctx.name} (stage: ${ctx.stage||'Lead'})
 YOUR GOAL FOR THIS CALL: ${session.goal}
@@ -4476,15 +4476,15 @@ HOW TO TALK:
 - No markdown, no lists — pure conversational spoken language
 
 NAMES & PRONUNCIATION:
-- You are "Jie-rah" (Jareih) — introduce yourself as Jie-rah
-- The company is always "O.K.C. Real" — never "okcreal" or "aukreal", always spell it out
+- Your name is "Jireh" (spelled Jareih) — always introduce yourself as Jireh, pronounced like the Hebrew word in "Jehovah Jireh"
+- The company is always "O.K.C. Real" — never "okcreal" or "aukreal", always spell it out as individual letters
 
 ENDING THE CALL:
 - Only end when the goal is fully achieved OR the person clearly wants to go
-- Always close with: "Again, this is Jie-rah with O.K.C. Real, an A.I. assistant. Please give us a call back if you have any questions. Goodbye!" then append [END_CALL]
+- Always close with: "Again, this is Jireh with O.K.C. Real, an A.I. assistant. Please give us a call back if you have any questions. Goodbye!" then append [END_CALL]
 - If goal was achieved, also append [GOAL_ACHIEVED]
 
-If asked whether you are AI: "Yeah, I'm Jie-rah, an A.I. assistant with O.K.C. Real — but I promise I'm way more fun than most!"`
+If asked whether you are AI: "Yeah, I'm Jireh, an A.I. assistant with O.K.C. Real — but I promise I'm way more fun than most!"`
     }];
   }
 
@@ -4498,7 +4498,6 @@ If asked whether you are AI: "Yeah, I'm Jie-rah, an A.I. assistant with O.K.C. R
 
   const clean = raw.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
   session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
-
   broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'ara_spoke', text: clean });
   return clean;
 }
@@ -4675,7 +4674,16 @@ function setupJareihCallWS(server) {
           break;
       }
     });
-    ws.on('close', () => { dgWs.close(); console.log(`[Ara] WS closed ${callId}`); });
+    ws.on('close', () => {
+      dgWs.close();
+      console.log(`[Ara] WS closed ${callId}`);
+      // If call-status webhook didn't fire (caller hung up abruptly), finalize now
+      const sess = jareihCalls.get(callId);
+      if (sess && !sess.finalized) {
+        const dur = sess.startedAt ? Math.round((Date.now() - sess.startedAt) / 1000) : 0;
+        finalizeJareihCall(callId, 'completed', dur).catch(e => console.error('[Ara] WS close finalize error', e.message));
+      }
+    });
     ws.on('error', e => console.error('[Ara WS]', e.message));
   });
 }
@@ -4898,16 +4906,36 @@ app.post('/api/jareih/call-join', auth, async (req, res) => {
   if (!session) return res.status(404).json({ error: 'Call not found' });
   if (!process.env.TWILIO_API_KEY_SID) return res.status(503).json({ error:'Twilio API Key not configured' });
   try {
-    const token = buildConferenceToken(req.agent.id, jcConferenceName(callId));
     const confName = jcConferenceName(callId);
     const muted = mode !== 'speak';
-    if (!muted) {
-      // Agent taking over — silence Ara
-      session.araMuted = true;
-      session.araActive = false;
-      if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(JSON.stringify({ event:'clear', streamSid:session.streamSid }));
+    const tc = initTwilioFull();
+
+    // Move the contact's call into a conference so agent can hear/join
+    // This ends the WebSocket stream (Ara goes silent) and bridges contact audio to a real conference
+    if (tc && session.contactCallSid) {
+      const confTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial>
+    <Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true"
+      statusCallback="${process.env.APP_URL}/api/jareih/conf-events/${callId}"
+      statusCallbackEvent="start end join leave">${confName}</Conference>
+  </Dial>
+</Response>`;
+      try {
+        await tc.calls(session.contactCallSid).update({ twiml: confTwiml });
+        // Ara is now silent (stream ended) — mark session accordingly
+        session.araMuted = true;
+        session.araActive = false;
+        console.log(`[Join] Redirected contact ${session.contactCallSid} to conference ${confName}`);
+      } catch(e) {
+        console.error('[Join] Failed to redirect contact to conference:', e.message);
+        // Fall through — still give agent the token so they can try
       }
+    }
+
+    const token = buildConferenceToken(req.agent.id, confName);
+
+    if (!muted) {
       session.transcript.push({ role:'agent', ts:Date.now(), text:'[Agent joined and took over]' });
       broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'agent_joined', agentId:req.agent.id, agentName:req.agent.name, muted });
     } else {
