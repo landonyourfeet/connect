@@ -3483,6 +3483,7 @@
           <div style="display:flex;gap:6px;margin-left:12px">
             <button class="filter-pill active" id="inbox-filter-all" onclick="setInboxFilter('all')">All</button>
             <button class="filter-pill" id="inbox-filter-missed" onclick="setInboxFilter('missed')">📞 Missed Calls</button>
+            <button class="filter-pill" id="inbox-filter-voicemails" onclick="setInboxFilter('voicemails')">📩 Voicemails</button>
             <button class="filter-pill" id="inbox-filter-texts" onclick="setInboxFilter('texts')">💬 Unread Texts</button>
           </div>
           <button onclick="clearInbox()" style="margin-left:auto;height:28px;padding:0 12px;background:var(--bg-4);color:var(--text-3);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-3)'">✓ Clear All</button>
@@ -5837,14 +5838,39 @@ async function loadInbox() {
     const data = await api('/api/inbox');
     let items = [];
     if (inboxFilter === 'all' || inboxFilter === 'missed') items = items.concat((data.missed_calls||[]).map(c=>({...c,_type:'missed'})));
+    if (inboxFilter === 'all' || inboxFilter === 'voicemails') items = items.concat((data.voicemails||[]).map(v=>({...v,_type:'voicemail'})));
     if (inboxFilter === 'all' || inboxFilter === 'texts') items = items.concat((data.unread_texts||[]).map(t=>({...t,_type:'text'})));
     items.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
     if (!items.length) { listEl.innerHTML = '<div style="text-align:center;padding:80px;color:var(--text-3)"><div style="font-size:40px;margin-bottom:16px">✨</div><p>All caught up!</p></div>'; return; }
-    listEl.innerHTML = items.map(item => {
+    listEl.innerHTML = items.map((item, idx) => {
       const name = item.contact_name||item.from_number||item.phone||'Unknown';
+      const clickAttr = item.person_id ? `onclick="openContact('${item.person_id}')"` : '';
+
+      if (item._type === 'voicemail') {
+        const dur = item.duration_seconds ? `${Math.floor(item.duration_seconds/60)}:${String(item.duration_seconds%60).padStart(2,'0')}` : '';
+        const transcript = item.transcript || item.summary || '';
+        const preview = transcript ? transcript.slice(0, 120) + (transcript.length > 120 ? '…' : '') : 'Voicemail received';
+        return `<div class="inbox-item unread" style="cursor:pointer">
+          <div class="inbox-type-icon inbox-voicemail" style="background:rgba(168,85,247,0.12);color:#a855f7">📩</div>
+          <div class="inbox-info" style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+              <span class="inbox-contact-name" ${clickAttr} style="${item.person_id ? 'cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px' : ''}">${esc(name)}</span>
+              ${dur ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);background:var(--bg-4);padding:1px 6px;border-radius:3px">${dur}</span>` : ''}
+              <span style="font-family:var(--font-mono);font-size:9px;padding:1px 6px;border-radius:3px;background:rgba(168,85,247,0.12);color:#a855f7;font-weight:700">VOICEMAIL</span>
+            </div>
+            <div class="inbox-preview" style="font-size:12px;color:var(--text-2);line-height:1.4">${esc(preview)}</div>
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
+              <audio id="inbox-vm-audio-${idx}" style="display:none;height:28px;width:100%;max-width:300px" controls preload="none"></audio>
+              <button class="cr-recording-btn" id="inbox-vm-btn-${idx}" onclick="event.stopPropagation();inboxPlayVoicemail('${item.id}',${idx})" style="font-size:10px">▶ Play Voicemail</button>
+            </div>
+          </div>
+          <div class="inbox-time">${item.created_at?timeAgo(item.created_at):''}</div>
+        </div>`;
+      }
+
       const icon = item._type === 'missed' ? '📞' : '💬';
       const preview = item._type === 'missed' ? 'Missed call' : (item.body||item.content||'');
-      return `<div class="inbox-item unread" onclick="${item.person_id?`openContact('${item.person_id}')`:''}"}>
+      return `<div class="inbox-item unread" ${clickAttr}>
         <div class="inbox-type-icon ${item._type==='missed'?'inbox-missed':'inbox-text-in'}">${icon}</div>
         <div class="inbox-info"><div class="inbox-contact-name">${esc(name)}</div><div class="inbox-preview">${esc(preview)}</div></div>
         <div class="inbox-time">${item.created_at?timeAgo(item.created_at):''}</div>
@@ -5853,9 +5879,35 @@ async function loadInbox() {
   } catch(e) { listEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-2)">${e.message}</div>`; }
 }
 
+async function inboxPlayVoicemail(callId, idx) {
+  const audioEl = document.getElementById('inbox-vm-audio-' + idx);
+  const btn = document.getElementById('inbox-vm-btn-' + idx);
+  if (!audioEl) return;
+  if (audioEl.dataset.loaded === '1') {
+    audioEl.style.display = audioEl.style.display === 'none' ? 'inline-block' : 'none';
+    if (audioEl.style.display !== 'none') audioEl.play().catch(() => {});
+    else audioEl.pause();
+    return;
+  }
+  if (btn) btn.textContent = '⏳ loading…';
+  const tok = localStorage.getItem('connect_token') || '';
+  try {
+    const resp = await fetch(`/api/calls/${callId}/recording`, { headers: { 'Authorization': `Bearer ${tok}` } });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    audioEl.src = URL.createObjectURL(blob);
+    audioEl.dataset.loaded = '1';
+    audioEl.style.display = 'inline-block';
+    audioEl.play().catch(() => {});
+    if (btn) btn.textContent = '⏸ hide player';
+  } catch(e) {
+    if (btn) btn.textContent = '⚠️ failed';
+  }
+}
+
 function setInboxFilter(f) {
   inboxFilter = f;
-  ['all','missed','texts'].forEach(x => document.getElementById('inbox-filter-'+x)?.classList.toggle('active', x === f));
+  ['all','missed','voicemails','texts'].forEach(x => document.getElementById('inbox-filter-'+x)?.classList.toggle('active', x === f));
   loadInbox();
 }
 
@@ -5926,6 +5978,40 @@ async function loadAdmin() {
         </table>
       </div>
 
+      <div class="admin-section" id="admin-vm-greeting">
+        <div class="admin-section-header">
+          <div class="admin-section-title">📩 Voicemail Greeting</div>
+        </div>
+        <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+          <div style="font-size:12px;color:var(--text-3);line-height:1.6">
+            Upload a custom voicemail greeting that plays when no one answers and Jireh is disarmed.
+            If no greeting is uploaded, a default text-to-speech message will be used.
+          </div>
+
+          <!-- Current status -->
+          <div id="vm-greeting-status" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-4);border:1px solid var(--border);border-radius:8px">
+            <span id="vm-greeting-indicator" style="font-size:16px">⏳</span>
+            <span id="vm-greeting-label" style="font-size:12px;color:var(--text-2)">Checking…</span>
+          </div>
+
+          <!-- Audio preview -->
+          <div id="vm-greeting-preview-wrap" style="display:none">
+            <audio id="vm-greeting-audio" controls style="width:100%;height:36px;border-radius:6px"></audio>
+          </div>
+
+          <!-- Upload / Delete buttons -->
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-2);transition:all 0.15s" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+              📁 Upload Audio File
+              <input type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/webm,audio/mp4,.mp3,.wav,.m4a,.ogg" style="display:none" onchange="uploadVmGreeting(this)">
+            </label>
+            <button id="vm-greeting-delete-btn" onclick="deleteVmGreeting()" style="display:none;padding:8px 14px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-3);transition:all 0.15s" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-3)'">🗑 Remove Greeting</button>
+            <span id="vm-greeting-upload-status" style="font-size:11px;color:var(--text-3)"></span>
+          </div>
+          <div style="font-size:10px;color:var(--text-3)">Accepted formats: MP3, WAV, M4A, OGG · Max 5MB</div>
+        </div>
+      </div>
+
       <div class="admin-section">
         <div class="admin-section-header">
           <div class="admin-section-title">🏠 AppFolio Guest Cards</div>
@@ -5979,6 +6065,82 @@ async function loadAdmin() {
 
   } catch(e) { viewEl.innerHTML = `<div style="padding:40px;color:var(--text-2)">${e.message}</div>`; }
   loadAppfolioStatus();
+  loadVmGreetingStatus();
+}
+
+// ── VOICEMAIL GREETING MANAGEMENT ───────────────────────────────────────────
+async function loadVmGreetingStatus() {
+  const indicator = document.getElementById('vm-greeting-indicator');
+  const label = document.getElementById('vm-greeting-label');
+  const previewWrap = document.getElementById('vm-greeting-preview-wrap');
+  const deleteBtn = document.getElementById('vm-greeting-delete-btn');
+  if (!indicator) return;
+  try {
+    const data = await api('/api/admin/voicemail-greeting/status');
+    if (data.hasGreeting) {
+      indicator.textContent = '✅';
+      label.textContent = 'Custom greeting uploaded (' + (data.mime || 'audio') + ')';
+      label.style.color = 'var(--green)';
+      if (deleteBtn) deleteBtn.style.display = '';
+      // Load preview
+      if (previewWrap) {
+        const audio = document.getElementById('vm-greeting-audio');
+        const tok = localStorage.getItem('connect_token') || '';
+        try {
+          const resp = await fetch('/api/admin/voicemail-greeting/preview', { headers: { Authorization: 'Bearer ' + tok } });
+          if (resp.ok) {
+            const blob = await resp.blob();
+            audio.src = URL.createObjectURL(blob);
+            previewWrap.style.display = '';
+          }
+        } catch(e) {}
+      }
+    } else {
+      indicator.textContent = '🔇';
+      label.textContent = 'No custom greeting — using default text-to-speech';
+      label.style.color = 'var(--text-3)';
+      if (deleteBtn) deleteBtn.style.display = 'none';
+      if (previewWrap) previewWrap.style.display = 'none';
+    }
+  } catch(e) {
+    indicator.textContent = '⚠️';
+    label.textContent = 'Could not check greeting status';
+  }
+}
+
+async function uploadVmGreeting(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById('vm-greeting-upload-status');
+  if (statusEl) statusEl.textContent = '⏳ Uploading…';
+  const formData = new FormData();
+  formData.append('audio', file);
+  try {
+    const tok = localStorage.getItem('connect_token') || '';
+    const resp = await fetch('/api/admin/voicemail-greeting', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + tok },
+      body: formData
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Upload failed');
+    toast('✅ Voicemail greeting uploaded', 'success');
+    if (statusEl) statusEl.textContent = '';
+    loadVmGreetingStatus();
+  } catch(e) {
+    toast('Upload failed: ' + e.message, 'error');
+    if (statusEl) statusEl.textContent = '⚠️ ' + e.message;
+  }
+  input.value = '';
+}
+
+async function deleteVmGreeting() {
+  if (!confirm('Remove the custom voicemail greeting? Calls will use the default text-to-speech.')) return;
+  try {
+    await api('/api/admin/voicemail-greeting', 'DELETE');
+    toast('Greeting removed — using default TTS', 'info');
+    loadVmGreetingStatus();
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
 }
 
 // ── APPFOLIO GUEST CARD INTEGRATION ──────────────────────────────────────────
@@ -10663,6 +10825,21 @@ function connectAgentSse() {
           }
         }
         if (currentView === 'dashboard' && typeof refreshDashboard === 'function') refreshDashboard();
+      } else if (payload.type === 'new_voicemail') {
+        // New voicemail — show toast and refresh inbox
+        const caller = payload.callerName || payload.phone || 'Unknown';
+        const dur = payload.duration ? ` (${payload.duration}s)` : '';
+        const snippet = payload.transcript ? ': "' + payload.transcript.slice(0, 60) + '…"' : '';
+        toast(`📩 Voicemail from ${caller}${dur}${snippet}`, 'info', 6000);
+        loadInboxCount();
+        if (currentView === 'inbox') loadInbox();
+        // Refresh timeline if this contact is open
+        if (payload.personId && String(payload.personId) === String(currentPersonId)) {
+          api(`/api/activities?personId=${currentPersonId}`).then(acts => {
+            const el = document.getElementById('timeline-scroll');
+            if (el) el.innerHTML = renderTimelineHTML(acts || []);
+          }).catch(() => {});
+        }
       } else if (payload.type === 'debt_update') {
         // GrokFUB pushed updated balance/days — refresh banner if this contact is open
         if (String(payload.personId) === String(currentPersonId) && window._currentPerson) {
