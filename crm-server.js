@@ -4342,7 +4342,8 @@ async function checkDB() {
 //   • Active agent → Conference jcall-{callId} muted=false (take over)
 // =============================================================================
 
-const jareihCalls = new Map(); // callId → session
+const jareihCalls = new Map();    // callId → session
+const ttsAudioCache = new Map(); // token → Buffer (short-lived TTS audio)
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function jcConferenceName(callId) { return `jcall-${callId}`; }
@@ -4361,20 +4362,20 @@ async function araTTS(text) {
 
 async function speakToCall(callId, text) {
   const session = jareihCalls.get(callId);
-  if (!session || session.araMuted || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+  if (!session || session.araMuted) return;
   try {
-    session.ws.send(JSON.stringify({ event: 'clear', streamSid: session.streamSid }));
     const audio = await araTTS(text);
-    const CHUNK = 160;
-    for (let i = 0; i < audio.length; i += CHUNK) {
-      if (!session.ws || session.ws.readyState !== WebSocket.OPEN || session.araMuted) break;
-      session.ws.send(JSON.stringify({
-        event: 'media', streamSid: session.streamSid,
-        media: { payload: audio.slice(i, i + CHUNK).toString('base64') }
-      }));
-      await new Promise(r => setTimeout(r, 20));
+    const token = crypto.randomBytes(12).toString('hex');
+    ttsAudioCache.set(token, audio);
+    // Clean up cache after 60s
+    setTimeout(() => ttsAudioCache.delete(token), 60000);
+    const audioUrl = `${process.env.APP_URL}/api/jareih/tts/${token}.ulaw`;
+    const tc = initTwilioFull();
+    if (!tc) return;
+    if (session.conferenceSid) {
+      // Play Ara's voice to everyone in the conference room
+      await tc.conferences(session.conferenceSid).update({ announceUrl: audioUrl, announceMethod: 'GET' });
     }
-    session.ws.send(JSON.stringify({ event: 'mark', streamSid: session.streamSid, mark: { name: 'ara_done' } }));
   } catch(e) { console.error('[Ara TTS]', e.message); }
 }
 
@@ -4649,13 +4650,19 @@ app.post('/api/jareih/call', auth, async (req, res) => {
   }
 });
 
-// Contact TwiML — joins the conference
+// Contact TwiML — forks audio to WS for STT, then joins conference
 app.all('/api/jareih/contact-twiml/:callId', (req, res) => {
   const { callId } = req.params;
   const confName = jcConferenceName(callId);
+  const wsBase = (process.env.APP_URL||'').replace('https://','wss://').replace('http://','ws://');
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <Start>
+    <Stream url="${wsBase}/ws/jareih-call/${callId}">
+      <Parameter name="callId" value="${callId}"/>
+    </Stream>
+  </Start>
   <Dial>
     <Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true"
       statusCallback="${process.env.APP_URL}/api/jareih/conf-events/${callId}"
@@ -4664,18 +4671,16 @@ app.all('/api/jareih/contact-twiml/:callId', (req, res) => {
 </Response>`);
 });
 
-// AI bridge TwiML — connects to media stream (Ara reads/writes audio)
+// AI bridge TwiML — joins the same conference so the contact can hear Ara
 app.all('/api/jareih/ai-bridge-twiml/:callId', (req, res) => {
   const { callId } = req.params;
-  const wsBase = (process.env.APP_URL||'').replace('https://','wss://').replace('http://','ws://');
+  const confName = jcConferenceName(callId);
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Connect>
-    <Stream url="${wsBase}/ws/jareih-call/${callId}">
-      <Parameter name="callId" value="${callId}"/>
-    </Stream>
-  </Connect>
+  <Dial>
+    <Conference beep="false" startConferenceOnEnter="false" endConferenceOnExit="false">${confName}</Conference>
+  </Dial>
 </Response>`);
 });
 
@@ -4683,10 +4688,24 @@ app.all('/api/jareih/ai-bridge-twiml/:callId', (req, res) => {
 app.post('/api/jareih/conf-events/:callId', (req, res) => {
   res.sendStatus(200);
   const { callId } = req.params;
-  const { StatusCallbackEvent, CallSid, Muted } = req.body;
+  const { StatusCallbackEvent, CallSid, ConferenceSid } = req.body;
   const session = jareihCalls.get(callId);
   if (!session) return;
+  // Capture the real ConferenceSid the first time we see it — needed for announceUrl
+  if (ConferenceSid && !session.conferenceSid) {
+    session.conferenceSid = ConferenceSid;
+    console.log(`[Ara conf] Got conferenceSid=${ConferenceSid} callId=${callId}`);
+  }
   console.log(`[Ara conf] ${StatusCallbackEvent} callId=${callId}`);
+});
+
+// Serve TTS audio buffers — short-lived URLs used by conference announceUrl
+app.get('/api/jareih/tts/:token.ulaw', (req, res) => {
+  const buf = ttsAudioCache.get(req.params.token);
+  if (!buf) return res.status(404).end();
+  res.setHeader('Content-Type', 'audio/basic');
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(buf);
 });
 
 // Contact/status callback
