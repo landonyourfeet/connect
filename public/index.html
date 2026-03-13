@@ -6031,6 +6031,33 @@ async function runLeadScraper() {
 function handleJareihCallUpdate(payload) {
   const { callId, event, text, status, summary, goalAchieved } = payload;
   const active = window._jareihActiveCall;
+
+  // call_ended must always be handled regardless of _jareihActiveCall state
+  if (event === 'call_ended') {
+    window._jareihActiveCall = null;
+    const btn = document.getElementById('jareih-hangup-btn');
+    if (btn) btn.style.display = 'none';
+    // Remove from local active calls immediately so timer stops
+    _lccActiveCalls = _lccActiveCalls.filter(c => c.callId !== callId);
+    updateLccBadge(_lccActiveCalls.length);
+    // Close panel
+    closeLccDetail();
+    _lccOpen = false;
+    const lccPanel = document.getElementById('live-calls-panel');
+    if (lccPanel) lccPanel.style.display = 'none';
+    // Refresh timeline if on this contact
+    if (String(payload.personId) === String(currentPersonId)) {
+      setTimeout(() => {
+        api(`/api/activities?personId=${currentPersonId}`).then(acts => {
+          const el = document.getElementById('timeline-scroll');
+          if (el && acts) el.innerHTML = renderTimelineHTML(acts);
+        }).catch(()=>{});
+      }, 2000);
+    }
+    return;
+  }
+
+  // All other events require an active call match
   if (!active || active.callId !== callId) return;
 
   // Open Jareih chat window if not visible
@@ -6039,7 +6066,6 @@ function handleJareihCallUpdate(payload) {
   if (event === 'status') {
     const statusLabels = { initiated:'📞 Dialing…', ringing:'📳 Ringing…', answered:'✅ Connected', connected:'✅ Connected' };
     Jareih.appendCallStatus(statusLabels[status] || status);
-    // Update panel header status
     const sd = document.getElementById(`lcc-status-${callId}`);
     if (sd) sd.textContent = statusLabels[status] || status;
   } else if (event === 'ara_spoke') {
@@ -6048,26 +6074,6 @@ function handleJareihCallUpdate(payload) {
   } else if (event === 'contact_spoke') {
     Jareih.appendCallLine('contact', active.personName, text);
     _lccAppendTranscript(callId, 'contact', text, active);
-  } else if (event === 'call_ended') {
-    window._jareihActiveCall = null;
-    const btn = document.getElementById('jareih-hangup-btn');
-    if (btn) btn.style.display = 'none';
-    // Close the live call panel after brief delay so user sees it ended
-    setTimeout(() => {
-      closeLccDetail();
-      _lccOpen = false;
-      const lccPanel = document.getElementById('live-calls-panel');
-      if (lccPanel) lccPanel.style.display = 'none';
-    }, 2000);
-    // Refresh timeline if on this contact
-    if (String(payload.personId) === String(currentPersonId)) {
-      setTimeout(() => {
-        api(`/api/activities?personId=${currentPersonId}`).then(acts => {
-          const el = document.getElementById('timeline-scroll');
-          if (el && acts) el.innerHTML = renderTimelineHTML(acts);
-        }).catch(()=>{});
-      }, 2500);
-    }
   }
 }
 
@@ -10461,6 +10467,7 @@ ${propSections}
 // LIVE CALL CONTROL CENTER
 // ════════════════════════════════════════════════════════════════════════════
 let _lccOpen = false;
+let _lccMinimized = false;
 let _lccActiveCalls = [];
 let _lccDetailCallId = null;
 let _lccVoiceDevice = null;  // Twilio Voice SDK device for monitoring
@@ -10582,18 +10589,26 @@ function renderLccDetail(callId) {
     <div style="padding:14px 16px;background:#0a0a0a;border-bottom:2px solid rgba(232,0,58,0.3);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
       <div style="display:flex;align-items:center;gap:10px">
         <button onclick="closeLccDetail()" style="background:none;border:none;color:#666;cursor:pointer;font-size:20px;line-height:1;padding:0;transition:color .15s"
-          onmouseover="this.style.color='#e8e8e8'" onmouseout="this.style.color='#666'">‹</button>
+          onmouseover="this.style.color='#e8e8e8'" onmouseout="this.style.color='#666'" title="Back">‹</button>
         <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,rgba(232,0,58,0.3),rgba(232,0,58,0.1));border:2px solid rgba(232,0,58,0.4);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">🤖</div>
         <div>
           <div style="font-size:15px;font-weight:700;color:#e8e8e8;line-height:1.2">${esc(call?.contactName||'Unknown')}</div>
           <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
             <span style="width:7px;height:7px;border-radius:50%;background:${statusDot};display:inline-block;${isConnected?'box-shadow:0 0 6px '+statusDot:''}"></span>
-            <span style="font-size:11px;color:#666;font-family:monospace">${(call?.status||'INITIATED').toUpperCase()} · ${mm}:${ss}</span>
+            <span id="lcc-status-${callId}" style="font-size:11px;color:#666;font-family:monospace">${(call?.status||'INITIATED').toUpperCase()} · ${mm}:${ss}</span>
           </div>
         </div>
       </div>
-      ${person ? `<button onclick="openContact('${call?.personId}');closeLccDetail();"
-        style="font-size:11px;padding:6px 12px;border-radius:8px;border:1px solid #1e1e1e;background:#141414;color:#aaa;cursor:pointer;font-weight:600">📋 File</button>` : ''}
+      <div style="display:flex;align-items:center;gap:4px">
+        ${person ? `<button onclick="openContact('${call?.personId}');lccMinimize();" title="Open file"
+          style="font-size:11px;padding:6px 10px;border-radius:8px;border:1px solid #1e1e1e;background:#141414;color:#aaa;cursor:pointer;font-weight:600;margin-right:4px">📋 File</button>` : ''}
+        <button onclick="lccMinimize()" title="Minimize"
+          style="background:#141414;border:1px solid #1e1e1e;border-radius:6px;color:#888;cursor:pointer;font-size:18px;font-weight:300;width:28px;height:28px;display:flex;align-items:center;justify-content:center;transition:all .15s"
+          onmouseover="this.style.background='#222';this.style.color='#ccc'" onmouseout="this.style.background='#141414';this.style.color='#888'">−</button>
+        <button onclick="lccClose()" title="Close panel (call continues in background)"
+          style="background:#141414;border:1px solid #1e1e1e;border-radius:6px;color:#888;cursor:pointer;font-size:12px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;transition:all .15s"
+          onmouseover="this.style.background='rgba(232,0,58,0.15)';this.style.color='#ff4466';this.style.borderColor='rgba(232,0,58,0.4)'" onmouseout="this.style.background='#141414';this.style.color='#888';this.style.borderColor='#1e1e1e'">✕</button>
+      </div>
     </div>
 
     <!-- CONTROLS -->
@@ -10668,12 +10683,59 @@ function renderLccDetail(callId) {
   if (tx) tx.scrollTop = tx.scrollHeight;
 }
 
+function lccMinimize() {
+  _lccMinimized = true;
+  const detail = document.getElementById('lcp-detail');
+  const panel  = document.getElementById('live-calls-panel');
+  if (detail) detail.style.display = 'none';
+  if (panel)  panel.style.display  = 'none';
+  _updateLccPill();
+}
+
+function lccClose() {
+  // Close panel UI but keep call alive in background
+  closeLccDetail();
+  _lccOpen = false;
+  _lccMinimized = false;
+  const panel = document.getElementById('live-calls-panel');
+  if (panel) panel.style.display = 'none';
+  _updateLccPill();
+}
+
+function _updateLccPill() {
+  let pill = document.getElementById('lcc-mini-pill');
+  const active = _lccActiveCalls[0];
+  if (!active || !_lccMinimized) {
+    if (pill) pill.remove();
+    return;
+  }
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'lcc-mini-pill';
+    document.body.appendChild(pill);
+  }
+  const elapsed = active.startedAt ? Math.floor((Date.now() - active.startedAt)/1000) : 0;
+  const mm = String(Math.floor(elapsed/60)).padStart(2,'0');
+  const ss = String(elapsed%60).padStart(2,'0');
+  pill.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9950;background:#0a0a0a;border:1px solid rgba(232,0,58,0.5);border-radius:40px;padding:8px 16px 8px 10px;display:flex;align-items:center;gap:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.6);transition:border-color .15s';
+  pill.onclick = () => { _lccMinimized = false; openLccDetail(active.callId); };
+  pill.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:#e8003a;box-shadow:0 0 8px #e8003a;display:inline-block;animation:pulse 1.5s infinite"></span>
+    <span style="font-size:12px;font-weight:700;color:#e8e8e8;font-family:monospace">🤖 ${esc(active.contactName||'AI Call')}</span>
+    <span style="font-size:11px;color:#666;font-family:monospace">${mm}:${ss}</span>`;
+}
+
+// Update pill timer every second
+setInterval(_updateLccPill, 1000);
+
 function closeLccDetail() {
   const panel = document.getElementById('lcp-detail');
   if (panel) panel.style.display = 'none';
   _lccDetailCallId = null;
   _lccDetailPerson = null;
   _lccDetailActivities = [];
+  _lccMinimized = false;
+  const pill = document.getElementById('lcc-mini-pill');
+  if (pill) pill.remove();
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
@@ -10780,7 +10842,7 @@ api('/api/jareih/active-calls').then(r => { if (r.calls) handleJareihActiveCalls
 
 // Timer refresh for call durations
 setInterval(() => {
-  if (_lccActiveCalls.length) {
+  if (_lccActiveCalls.length && !_lccMinimized) {
     if (_lccOpen) renderLccCallsList();
     if (_lccDetailCallId) renderLccDetail(_lccDetailCallId);
   }
