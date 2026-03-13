@@ -10712,8 +10712,20 @@ function lccLeaveCall() {
 
 // ── Handle SSE updates ────────────────────────────────────────────────────────
 function handleJareihActiveCalls(calls) {
+  const prev = _lccActiveCalls;
   _lccActiveCalls = calls;
   updateLccBadge(calls.length);
+
+  // Auto-open panel and jump to detail when a new call appears
+  const newCall = calls.find(c => !prev.some(p => p.callId === c.callId));
+  if (newCall) {
+    _lccOpen = true;
+    const panel = document.getElementById('live-calls-panel');
+    if (panel) panel.style.display = 'flex';
+    openLccDetail(newCall.callId);
+    return; // openLccDetail will render
+  }
+
   if (_lccOpen) renderLccCallsList();
   if (_lccDetailCallId) {
     const still = calls.find(c => c.callId === _lccDetailCallId);
