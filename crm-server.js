@@ -1231,9 +1231,21 @@ app.post('/api/twilio/voice', async (req, res) => {
   try {
     const VoiceResponse = require('twilio').twiml.VoiceResponse;
     const response = new VoiceResponse();
-    const { To, CallerId, personId, lineId, agentId } = req.body;
+    const { To, CallerId, personId, lineId, agentId, confName, confMuted } = req.body;
     const callSid = req.body.CallSid;
     if (!To) { response.say('No destination number provided.'); return res.type('xml').send(response.toString()); }
+
+    // Agent monitoring a Jareih conference — join as listener or speaker
+    if (confName) {
+      const dial = response.dial();
+      dial.conference(confName, {
+        beep: false,
+        startConferenceOnEnter: false,
+        endConferenceOnExit: false,
+        muted: confMuted === 'true'
+      });
+      return res.type('xml').send(response.toString());
+    }
     const dial = response.dial({
       callerId: CallerId || process.env.TWILIO_RESIDENT_NUMBER,
       record: 'record-from-ringing-dual',
@@ -4650,15 +4662,6 @@ app.post('/api/jareih/call', auth, async (req, res) => {
     });
     jareihCalls.get(callId).contactCallSid = contactCall.sid;
 
-    // AI bridge call — joins same conference + streams audio to Ara
-    const aiCall = await tc.calls.create({
-      to: fromNum, from: fromNum,
-      url: `${process.env.APP_URL}/api/jareih/ai-bridge-twiml/${callId}`,
-      statusCallback: `${process.env.APP_URL}/api/jareih/ai-bridge-status/${callId}`,
-      statusCallbackMethod: 'POST'
-    });
-    jareihCalls.get(callId).aiBridgeCallSid = aiCall.sid;
-
     broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
     res.json({ ok:true, callId, contactCallSid:contactCall.sid, contactName:person.first_name });
   } catch(e) {
@@ -4766,6 +4769,32 @@ app.post('/api/jareih/toggle-ara', auth, async (req, res) => {
   broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'ara_toggle', araMuted:session.araMuted });
   broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
   res.json({ ok:true, araMuted:session.araMuted });
+});
+
+// ─── Coach Ara mid-call ───────────────────────────────────────────────────────
+app.post('/api/jareih/coach', auth, async (req, res) => {
+  const { callId, message } = req.body;
+  const session = jareihCalls.get(callId);
+  if (!session) return res.status(404).json({ error: 'Call not found' });
+  if (!message?.trim()) return res.status(400).json({ error: 'message required' });
+  // Inject as a system nudge into Ara's conversation history
+  if (!session.grokHistory) return res.status(400).json({ error: 'Call not yet active' });
+  session.grokHistory.push({
+    role: 'system',
+    content: `[AGENT COACHING — respond to this immediately]: ${message.trim()}`
+  });
+  session.transcript.push({ role: 'agent', ts: Date.now(), text: `[Coach → Ara]: ${message.trim()}` });
+  broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'coach', text: message.trim(), agentName: req.agent.name });
+  // Trigger Ara to respond now based on coaching
+  try {
+    if (!session.araLock && !session.araMuted) {
+      session.araLock = true;
+      const response = await araRespond(callId, `[AGENT SAYS]: ${message.trim()}`);
+      if (response) await speakToCall(callId, response);
+    }
+  } catch(e) { console.error('[Coach]', e.message); }
+  finally { if (session) session.araLock = false; }
+  res.json({ ok: true });
 });
 
 // ─── Agent join the conference (listen or speak) ──────────────────────────────
