@@ -5863,6 +5863,13 @@ const Jareih = (() => {
             resultMsg = `📞 Calling ${params.personName}…
 Ara is connecting. The call transcript will appear here live and save to the timeline when complete.`;
             window._jareihActiveCall = { callId: callR.callId, personId: params.personId, personName: params.personName };
+            // Immediately show call controller
+            const fakeCall = { callId: callR.callId, contactName: params.personName, personId: String(params.personId), status: 'initiated', araActive: true, transcript: [], goal: params.goal, startedAt: Date.now() };
+            if (!_lccActiveCalls.find(c => c.callId === callR.callId)) _lccActiveCalls.push(fakeCall);
+            _lccOpen = true;
+            const lccPanel = document.getElementById('live-calls-panel');
+            if (lccPanel) lccPanel.style.display = 'flex';
+            openLccDetail(callR.callId);
             if (params.personId) openContact(params.personId);
           }
           break;
