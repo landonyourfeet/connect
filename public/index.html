@@ -6037,23 +6037,28 @@ function handleJareihCallUpdate(payload) {
   Jareih.openWindow();
 
   if (event === 'status') {
-    const statusLabels = { initiated:'📞 Dialing…', ringing:'📳 Ringing…', answered:'✅ Connected' };
+    const statusLabels = { initiated:'📞 Dialing…', ringing:'📳 Ringing…', answered:'✅ Connected', connected:'✅ Connected' };
     Jareih.appendCallStatus(statusLabels[status] || status);
+    // Update panel header status
+    const sd = document.getElementById(`lcc-status-${callId}`);
+    if (sd) sd.textContent = statusLabels[status] || status;
   } else if (event === 'ara_spoke') {
     Jareih.appendCallLine('ara', text);
+    _lccAppendTranscript(callId, 'ara', text, active);
   } else if (event === 'contact_spoke') {
     Jareih.appendCallLine('contact', active.personName, text);
+    _lccAppendTranscript(callId, 'contact', text, active);
   } else if (event === 'call_ended') {
-    const emoji = goalAchieved ? '✅' : '📋';
-    Jareih.appendCallLine('result', null, );
     window._jareihActiveCall = null;
     const btn = document.getElementById('jareih-hangup-btn');
     if (btn) btn.style.display = 'none';
-    // Close the live call panel
-    closeLccDetail();
-    _lccOpen = false;
-    const lccPanel = document.getElementById('live-calls-panel');
-    if (lccPanel) lccPanel.style.display = 'none';
+    // Close the live call panel after brief delay so user sees it ended
+    setTimeout(() => {
+      closeLccDetail();
+      _lccOpen = false;
+      const lccPanel = document.getElementById('live-calls-panel');
+      if (lccPanel) lccPanel.style.display = 'none';
+    }, 2000);
     // Refresh timeline if on this contact
     if (String(payload.personId) === String(currentPersonId)) {
       setTimeout(() => {
@@ -6061,9 +6066,32 @@ function handleJareihCallUpdate(payload) {
           const el = document.getElementById('timeline-scroll');
           if (el && acts) el.innerHTML = renderTimelineHTML(acts);
         }).catch(()=>{});
-      }, 1500);
+      }, 2500);
     }
   }
+}
+
+function _lccAppendTranscript(callId, role, text, active) {
+  const tx = document.getElementById(`lcc-transcript-${callId}`);
+  if (!tx) return;
+  // Remove "waiting" placeholder if present
+  const placeholder = tx.querySelector('[data-placeholder]');
+  if (placeholder) placeholder.remove();
+
+  const isAra = role === 'ara';
+  const isAgent = role === 'agent';
+  const name = isAra ? '🤖 Jireh' : isAgent ? '🎤 You' : `👤 ${esc(active?.personName||'Contact')}`;
+  const bg = isAra ? 'rgba(0,200,120,0.07)' : isAgent ? 'rgba(80,130,255,0.07)' : '#141414';
+  const border = isAra ? '1px solid rgba(0,200,120,0.15)' : isAgent ? '1px solid rgba(80,130,255,0.15)' : '1px solid #1e1e1e';
+  const nameColor = isAra ? '#00cc78' : isAgent ? '#6699ff' : '#666';
+  const align = (!isAra && !isAgent) ? 'align-items:flex-end' : '';
+
+  const div = document.createElement('div');
+  div.style.cssText = `display:flex;flex-direction:column;${align}`;
+  div.innerHTML = `<div style="font-size:10px;font-weight:700;color:${nameColor};margin-bottom:3px;padding:0 2px">${name}</div>
+    <div style="max-width:90%;padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.5;background:${bg};border:${border};color:#e8e8e8">${esc(text)}</div>`;
+  tx.appendChild(div);
+  tx.scrollTop = tx.scrollHeight;
 }
 
 // ── Inject Ara into an existing active call ──────────────────────────────────
@@ -10616,7 +10644,7 @@ function renderLccDetail(callId) {
       <div id="lcc-transcript-${callId}"
         style="flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth">
         ${(call?.transcript||[]).length === 0
-          ? `<div style="color:#555;font-size:12px;text-align:center;margin-top:24px;opacity:0.5">Transcript will appear here once connected</div>`
+          ? `<div data-placeholder style="color:#555;font-size:12px;text-align:center;margin-top:24px;opacity:0.5">Transcript will appear here once connected</div>`
           : (call?.transcript||[]).map(t => {
               const isAra = t.role === 'ara';
               const isAgent = t.role === 'agent';
