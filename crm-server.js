@@ -4685,6 +4685,7 @@ app.all('/api/jareih/contact-twiml/:callId', (req, res) => {
   </Start>
   <Dial>
     <Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true"
+      waitUrl="" waitMethod="GET"
       statusCallback="${process.env.APP_URL}/api/jareih/conf-events/${callId}"
       statusCallbackEvent="start end join leave">${confName}</Conference>
   </Dial>
