@@ -111,33 +111,6 @@ function getGmailOAuth(agent) {
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-// ── LIVE JS PATCH — fixes startup crashes without touching public/index.html ──
-app.get(['/', '/index.html'], (req, res, next) => {
-  const fs = require('fs');
-  const path = require('path');
-  const filePath = path.join(__dirname, 'public', 'index.html');
-  fs.readFile(filePath, 'utf8', (err, html) => {
-    if (err) return next();
-    const patched = html
-      // Fix 1: handleCallEnd crash — guard before hooking
-      .replace(
-        '// Hook into the existing handleCallEnd so dialer auto-advances\nconst _origHandleCallEnd = handleCallEnd;',
-        "// Hook into handleCallEnd so dialer auto-advances\nif (typeof handleCallEnd === 'undefined') { window.handleCallEnd = function() {}; }\nconst _origHandleCallEnd = handleCallEnd;"
-      )
-      // Fix 2: JirehOrganic TDZ — const → var
-      .replace('const JirehOrganic = (() => {', 'var JirehOrganic = (() => {')
-      // Fix 3: JirehSecurity TDZ — const → var
-      .replace('const JirehSecurity = (() => {', 'var JirehSecurity = (() => {')
-      // Fix 4: startShowingAlertPoller missing — add stub if absent
-      .replace(
-        'async function loadMyProfile() {',
-        "function startShowingAlertPoller() { if (window._showingPoll) return; window._showingPoll = setInterval(function(){ fetch('/api/showings?status=scheduled&limit=1',{headers:{Authorization:'Bearer '+(localStorage.getItem('connect_token')||'')}}).catch(function(){}); }, 300000); }\nasync function loadMyProfile() {"
-      );
-    res.setHeader('Content-Type', 'text/html');
-    res.send(patched);
-  });
-});
-
 app.use(express.static('public'));
 // Serve Twilio Voice SDK from node_modules
 app.get('/twilio-voice.js', (req, res) => {
