@@ -1083,6 +1083,79 @@
     .view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
     .view.active { display: flex; }
 
+    /* ── CALL RECORDS VIEW — fully theme-reactive ──────────────── */
+    #view-calls                    { background: var(--bg); }
+    .crv-layout                    { display:flex; height:100%; overflow:hidden; }
+    .crv-left                      { flex:1; display:flex; flex-direction:column; overflow:hidden; border-right:1px solid var(--border); background:var(--bg); }
+    .crv-metrics-bar               { display:flex; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--bg-2); }
+    .crv-metric-cell               { flex:1; padding:10px 10px; border-right:1px solid var(--border); text-align:center; }
+    .crv-metric-val                { font-size:16px; font-weight:800; font-family:var(--font-mono); }
+    .crv-metric-lbl                { font-size:9px; color:var(--text-3); font-family:var(--font-mono); letter-spacing:0.07em; margin-top:2px; }
+    .crv-filterbar                 { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-shrink:0; flex-wrap:wrap; background:var(--bg-2); }
+    .crv-filterbar select,
+    .crv-filterbar input[type=date]{ height:32px; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; color:var(--text-2); font-size:12px; padding:0 8px; cursor:pointer; font-family:inherit; }
+    .crv-filterbar button          { height:32px; padding:0 14px; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; color:var(--text-2); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+    .crv-count-lbl                 { margin-left:auto; font-size:11px; color:var(--text-3); font-family:var(--font-mono); }
+    .crv-table-wrap                { flex:1; overflow-y:auto; background:var(--bg); }
+    .crv-table                     { width:100%; border-collapse:collapse; font-size:12px; }
+    .crv-table thead tr            { position:sticky; top:0; background:var(--bg-2); z-index:2; }
+    .crv-table th                  { padding:9px 10px; text-align:left; font-size:10px; font-weight:700; color:var(--text-3); font-family:var(--font-mono); letter-spacing:0.08em; border-bottom:1px solid var(--border); }
+    .crv-table th:first-child      { padding-left:14px; }
+    .crv-table th.right            { text-align:right; }
+    .crv-table th.center           { text-align:center; }
+    .crv-table td                  { border-bottom:1px solid var(--border); }
+    .crv-table tr                  { cursor:pointer; transition:background .1s; }
+    .crv-table tr:hover            { background:var(--bg-3); }
+    .crv-right                     { width:390px; display:flex; flex-direction:column; overflow:hidden; flex-shrink:0; background:var(--bg-2); }
+    .crv-intel-head                { padding:11px 16px; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--bg-2); }
+    .crv-intel-title               { font-size:11px; font-weight:800; color:var(--red); font-family:var(--font-mono); letter-spacing:0.1em; }
+    .crv-intel-sub                 { font-size:10px; color:var(--text-3); margin-top:2px; }
+    .crv-intel-history             { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; background:var(--bg); }
+    .crv-intel-inputbar            { padding:10px 12px; border-top:1px solid var(--border); flex-shrink:0; display:flex; gap:8px; background:var(--bg-2); }
+    .crv-intel-input               { flex:1; height:34px; background:var(--bg-3); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:12px; padding:0 12px; outline:none; transition:border-color .15s; font-family:inherit; }
+    .crv-intel-input:focus         { border-color:var(--red); }
+    .crv-intel-btn                 { height:34px; padding:0 14px; background:var(--red-dim); border:1px solid rgba(232,0,58,0.35); border-radius:8px; color:var(--red); font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap; font-family:inherit; transition:background .15s; }
+    .crv-intel-btn:hover           { background:rgba(232,0,58,0.22); }
+    .crv-settings                  { flex-shrink:0; padding:13px 16px; background:var(--bg-2); border-top:1px solid var(--border); }
+    .crv-settings-label            { font-size:10px; font-weight:800; color:var(--text-3); font-family:var(--font-mono); letter-spacing:0.1em; margin-bottom:10px; }
+    .crv-settings-row              { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .crv-settings-name             { font-size:12px; font-weight:600; color:var(--text); }
+    .crv-settings-desc             { font-size:10px; color:var(--text-3); margin-top:1px; }
+    .crv-greeting-lbl              { font-size:10px; color:var(--text-3); font-family:var(--font-mono); margin-bottom:4px; }
+    .crv-greeting-input            { width:100%; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; color:var(--text-2); font-size:11px; padding:7px 10px; resize:none; outline:none; box-sizing:border-box; transition:border-color .15s; line-height:1.4; font-family:inherit; }
+    .crv-greeting-input:focus      { border-color:var(--red); }
+    /* Intel result card */
+    .crv-card                      { background:var(--bg-2); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+    .crv-card-head                 { padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg-3); }
+    .crv-card-headline             { font-size:13px; font-weight:700; color:var(--text); line-height:1.4; }
+    .crv-card-insight              { padding:10px 14px; border-bottom:1px solid var(--border); }
+    .crv-card-insight p            { font-size:11px; color:var(--text-2); line-height:1.6; margin:0; }
+    .crv-card-listing              { padding:8px 14px; border-bottom:1px solid var(--border); background:rgba(102,153,255,0.06); }
+    .crv-card-listing-lbl          { font-size:9px; font-weight:700; color:#6699ff; font-family:var(--font-mono); letter-spacing:0.1em; margin-bottom:4px; }
+    .crv-card-listing p            { font-size:10px; color:var(--text-2); line-height:1.5; margin:0; }
+    .crv-contacts-section          { padding:8px 14px; border-bottom:1px solid var(--border); }
+    .crv-contacts-lbl              { font-size:9px; font-weight:700; color:var(--text-3); font-family:var(--font-mono); letter-spacing:0.1em; margin-bottom:6px; }
+    .crv-contact-row               { display:flex; gap:10px; padding:7px 0; border-bottom:1px solid var(--border); cursor:pointer; transition:background .1s; }
+    .crv-contact-row:hover         { background:var(--bg-3); }
+    .crv-contact-rank              { font-size:12px; font-weight:800; color:var(--text-3); font-family:var(--font-mono); width:20px; flex-shrink:0; padding-top:1px; }
+    .crv-contact-name              { font-size:12px; font-weight:700; color:var(--text); }
+    .crv-contact-reason            { font-size:10px; color:var(--text-2); line-height:1.4; }
+    .crv-contact-action            { font-size:10px; color:#ffb400; margin-top:3px; font-style:italic; }
+    .crv-actions                   { padding:10px 14px; display:flex; gap:7px; flex-wrap:wrap; background:var(--bg-3); border-top:1px solid var(--border); }
+    .crv-btn-dl                    { display:flex; align-items:center; gap:5px; height:30px; padding:0 12px; background:var(--bg-4); border:1px solid var(--border); border-radius:6px; color:var(--text-2); font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; transition:all .15s; }
+    .crv-btn-dl:hover              { border-color:var(--text-2); color:var(--text); }
+    .crv-btn-dial                  { display:flex; align-items:center; gap:5px; height:30px; padding:0 12px; background:rgba(80,130,255,0.1); border:1px solid rgba(80,130,255,0.3); border-radius:6px; color:#6699ff; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; transition:all .15s; }
+    .crv-btn-dial:hover            { background:rgba(80,130,255,0.2); }
+    .crv-btn-jireh                 { display:flex; align-items:center; gap:5px; height:30px; padding:0 12px; background:var(--red-dim); border:1px solid rgba(232,0,58,0.35); border-radius:6px; color:var(--red); font-size:11px; font-weight:700; cursor:pointer; font-family:inherit; transition:all .15s; }
+    .crv-btn-jireh:hover           { background:rgba(232,0,58,0.22); }
+    .crv-methodology               { padding:8px 14px; border-top:1px solid var(--border); }
+    .crv-methodology p             { font-size:10px; color:var(--text-3); font-style:italic; margin:0; }
+    .crv-user-bubble               { display:flex; justify-content:flex-end; }
+    .crv-user-bubble > div         { max-width:90%; background:var(--bg-3); border:1px solid var(--border); border-radius:10px 10px 2px 10px; padding:8px 12px; font-size:12px; color:var(--text); }
+    .crv-intel-empty               { text-align:center; padding:12px 0; color:var(--text-3); font-size:11px; font-family:var(--font-mono); }
+    .crv-intel-chip                { display:block; margin:5px 0; color:var(--text-2); cursor:pointer; padding:7px 10px; border:1px solid var(--border); border-radius:6px; text-align:left; font-family:var(--font-body); font-size:11px; transition:all .15s; }
+    .crv-intel-chip:hover          { border-color:var(--red); color:var(--text); }
+
     /* ── PEOPLE LIST ──────────────────────────────────────────── */
     #view-people { overflow: hidden; }
     #view-people.active { flex-direction: row; }
@@ -10459,128 +10532,80 @@ async function renderCallsView() {
   const el = document.getElementById('view-calls');
   if (!el) return;
   el.innerHTML = `
-    <div style="display:flex;height:100%;overflow:hidden">
+    <div class="crv-layout">
 
-      <!-- ── LEFT: call log ─────────────────────────────────────────── -->
-      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border)">
+      <!-- LEFT: call log -->
+      <div class="crv-left">
+        <div id="calls-metrics-bar" class="crv-metrics-bar"></div>
 
-        <div id="calls-metrics-bar"
-          style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-2)"></div>
-
-        <!-- filter bar -->
-        <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;
-                    align-items:center;flex-shrink:0;flex-wrap:wrap;background:var(--bg)">
-          <select id="calls-filter-agent" onchange="callsApplyFilter()"
-            style="height:32px;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;
-                   color:var(--text-2);font-size:12px;padding:0 8px;cursor:pointer">
+        <div class="crv-filterbar">
+          <select id="calls-filter-agent" onchange="callsApplyFilter()">
             <option value="all">All Agents</option>
             <option value="jireh">🤖 Jireh AI</option>
           </select>
-          <select id="calls-filter-direction" onchange="callsApplyFilter()"
-            style="height:32px;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;
-                   color:var(--text-2);font-size:12px;padding:0 8px;cursor:pointer">
+          <select id="calls-filter-direction" onchange="callsApplyFilter()">
             <option value="all">All Directions</option>
             <option value="inbound">↙ Inbound</option>
             <option value="outbound">↗ Outbound</option>
           </select>
-          <input id="calls-filter-from" type="date" onchange="callsApplyFilter()"
-            style="height:32px;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;
-                   color:var(--text-2);font-size:12px;padding:0 8px">
-          <input id="calls-filter-to" type="date" onchange="callsApplyFilter()"
-            style="height:32px;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;
-                   color:var(--text-2);font-size:12px;padding:0 8px">
-          <button onclick="callsApplyFilter()"
-            style="height:32px;padding:0 14px;background:var(--bg-3);border:1px solid var(--border);
-                   border-radius:6px;color:var(--text-2);font-size:12px;font-weight:600;cursor:pointer">
-            ↺ Refresh</button>
-          <span id="calls-count-label"
-            style="margin-left:auto;font-size:11px;color:var(--text-3);font-family:var(--font-mono)"></span>
+          <input id="calls-filter-from" type="date" onchange="callsApplyFilter()">
+          <input id="calls-filter-to"   type="date" onchange="callsApplyFilter()">
+          <button onclick="callsApplyFilter()">↺ Refresh</button>
+          <span id="calls-count-label" class="crv-count-lbl"></span>
         </div>
 
-        <!-- table -->
-        <div style="flex:1;overflow-y:auto;background:var(--bg)">
-          <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <div class="crv-table-wrap">
+          <table class="crv-table">
             <thead>
-              <tr style="position:sticky;top:0;background:var(--bg-2);z-index:2">
-                ${['CONTACT','DIR','AGENT','STATUS','DUR','DATE','▶'].map(h =>
-                  `<th style="padding:9px ${h==='CONTACT'?'14':'10'}px;text-align:${h==='DUR'?'right':h==='▶'?'center':'left'};
-                    font-size:10px;font-weight:700;color:var(--text-3);font-family:var(--font-mono);
-                    letter-spacing:0.08em;border-bottom:1px solid var(--border)">${h}</th>`
-                ).join('')}
+              <tr>
+                <th>CONTACT</th>
+                <th>DIR</th>
+                <th>AGENT</th>
+                <th>STATUS</th>
+                <th class="right">DUR</th>
+                <th>DATE</th>
+                <th class="center">▶</th>
               </tr>
             </thead>
             <tbody id="calls-tbody">
-              <tr><td colspan="7" style="padding:40px;text-align:center;color:var(--text-3);
-                font-family:var(--font-mono);font-size:11px">LOADING…</td></tr>
+              <tr><td colspan="7" style="padding:40px;text-align:center;color:var(--text-3);font-family:var(--font-mono);font-size:11px">LOADING…</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- ── RIGHT: Intelligence + Settings ─────────────────────────── -->
-      <div style="width:390px;display:flex;flex-direction:column;overflow:hidden;
-                  flex-shrink:0;background:var(--bg-2)">
+      <!-- RIGHT: Intelligence + Settings -->
+      <div class="crv-right">
 
-        <!-- intelligence header -->
-        <div style="padding:11px 16px;border-bottom:1px solid var(--border);
-                    flex-shrink:0;background:var(--bg-2)">
-          <div style="font-size:11px;font-weight:800;color:var(--red);
-                      font-family:var(--font-mono);letter-spacing:0.1em">🧠 JIREH INTELLIGENCE</div>
-          <div style="font-size:10px;color:var(--text-3);margin-top:2px">
-            Ask Jireh to predict, rank, or analyze your CRM</div>
+        <div class="crv-intel-head">
+          <div class="crv-intel-title">🧠 JIREH INTELLIGENCE</div>
+          <div class="crv-intel-sub">Ask Jireh to predict, rank, or analyze your CRM</div>
         </div>
 
-        <!-- chat history -->
-        <div id="intel-history"
-          style="flex:1;overflow-y:auto;padding:12px;display:flex;
-                 flex-direction:column;gap:10px;background:var(--bg)">
-          <div id="intel-empty"
-            style="text-align:center;padding:12px 0;color:var(--text-3);font-size:11px;
-                   font-family:var(--font-mono)">
+        <div id="intel-history" class="crv-intel-history">
+          <div id="intel-empty" class="crv-intel-empty">
             <div style="opacity:0.5;margin-bottom:10px;letter-spacing:0.1em">TRY ASKING</div>
-            ${[
-              'Who is most likely to rent this month?',
-              'Who should I call today?',
-              'Which leads have gone cold?',
-              'Who will rent at The Marlin next?',
-              'Top 10 hottest prospects right now'
-            ].map(q => `<span onclick="intelAsk('${q}')"
-              style="display:block;margin:5px 0;color:var(--text-2);cursor:pointer;padding:7px 10px;
-                     border:1px solid var(--border);border-radius:6px;text-align:left;
-                     font-family:var(--font-body);font-size:11px;transition:all .15s"
-              onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--text)'"
-              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">${q}</span>`).join('')}
+            <span class="crv-intel-chip" onclick="intelAsk('Who is most likely to rent this month?')">Who is most likely to rent this month?</span>
+            <span class="crv-intel-chip" onclick="intelAsk('Who should I call today?')">Who should I call today?</span>
+            <span class="crv-intel-chip" onclick="intelAsk('Which leads have gone cold?')">Which leads have gone cold?</span>
+            <span class="crv-intel-chip" onclick="intelAsk('Who will rent at The Marlin next?')">Who will rent at The Marlin next?</span>
+            <span class="crv-intel-chip" onclick="intelAsk('Top 10 hottest prospects right now')">Top 10 hottest prospects right now</span>
           </div>
         </div>
 
-        <!-- input bar -->
-        <div style="padding:10px 12px;border-top:1px solid var(--border);flex-shrink:0;
-                    display:flex;gap:8px;background:var(--bg-2)">
-          <input id="intel-input" type="text" placeholder="Ask Jireh to analyze your CRM…"
-            onkeydown="if(event.key==='Enter')intelSubmit()"
-            style="flex:1;height:34px;background:var(--bg-3);border:1px solid var(--border);
-                   border-radius:8px;color:var(--text);font-size:12px;padding:0 12px;
-                   outline:none;transition:border-color .15s"
-            onfocus="this.style.borderColor='var(--red)'"
-            onblur="this.style.borderColor='var(--border)'">
-          <button onclick="intelSubmit()" id="intel-btn"
-            style="height:34px;padding:0 14px;background:var(--red-dim);
-                   border:1px solid rgba(232,0,58,0.35);border-radius:8px;color:var(--red);
-                   font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s"
-            onmouseover="this.style.background='rgba(232,0,58,0.25)'"
-            onmouseout="this.style.background='var(--red-dim)'">Analyze</button>
+        <div class="crv-intel-inputbar">
+          <input id="intel-input" class="crv-intel-input" type="text"
+            placeholder="Ask Jireh to analyze your CRM…"
+            onkeydown="if(event.key==='Enter')intelSubmit()">
+          <button id="intel-btn" class="crv-intel-btn" onclick="intelSubmit()">Analyze</button>
         </div>
 
-        <!-- jireh inbound settings -->
-        <div style="flex-shrink:0;padding:13px 16px;background:var(--bg-2);
-                    border-top:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:800;color:var(--text-3);font-family:var(--font-mono);
-                      letter-spacing:0.1em;margin-bottom:10px">⚙️ JIREH INBOUND</div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="crv-settings">
+          <div class="crv-settings-label">⚙️ JIREH INBOUND</div>
+          <div class="crv-settings-row">
             <div>
-              <div style="font-size:12px;font-weight:600;color:var(--text)">Answer Inbound Calls</div>
-              <div style="font-size:10px;color:var(--text-3);margin-top:1px">
-                Jireh answers instead of ringing agents</div>
+              <div class="crv-settings-name">Answer Inbound Calls</div>
+              <div class="crv-settings-desc">Jireh answers instead of ringing agents</div>
             </div>
             <div id="jireh-inbound-toggle" onclick="toggleJireh_Inbound()"
               style="width:44px;height:24px;border-radius:12px;background:var(--bg-4);
@@ -10591,14 +10616,9 @@ async function renderCallsView() {
                        border-radius:50%;background:var(--text-3);transition:all .2s"></div>
             </div>
           </div>
-          <div style="font-size:10px;color:var(--text-3);font-family:var(--font-mono);
-                      margin-bottom:4px">OPENING GREETING</div>
-          <textarea id="jireh-greeting-input" rows="2"
-            style="width:100%;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;
-                   color:var(--text-2);font-size:11px;padding:7px 10px;resize:none;outline:none;
-                   box-sizing:border-box;transition:border-color .15s;line-height:1.4"
-            onfocus="this.style.borderColor='var(--red)'"
-            onblur="this.style.borderColor='var(--border)';saveJireh_Settings()"></textarea>
+          <div class="crv-greeting-lbl">OPENING GREETING</div>
+          <textarea id="jireh-greeting-input" class="crv-greeting-input" rows="2"
+            onblur="saveJireh_Settings()"></textarea>
         </div>
       </div>
     </div>`;
@@ -10648,72 +10668,69 @@ function renderCallsMetrics() {
   const bar = document.getElementById('calls-metrics-bar');
   if (!bar) return;
   const m   = _callsMetrics;
-  const fmt = s => s >= 60 ? Math.floor(s/60)+'m '+String(s%60).padStart(2,'0')+'s' : s+'s';
+  const fmt = t => t >= 60 ? Math.floor(t/60)+'m '+String(t%60).padStart(2,'0')+'s' : t+'s';
   const cards = [
-    { label:'TOTAL',    value: m.total    ?? 0,                          color:'var(--text)'  },
-    { label:'INBOUND',  value: m.inbound  ?? 0,                          color:'#6699ff'      },
-    { label:'OUTBOUND', value: m.outbound ?? 0,                          color:'#00cc78'      },
-    { label:'🤖 JIREH', value: m.jireh    ?? 0,                          color:'var(--red)'   },
-    { label:'MISSED',   value: m.missed   ?? 0,                          color:'#ff6644'      },
-    { label:'AVG DUR',  value: m.avgDuration ? fmt(m.avgDuration) : '—', color:'#ffb400'      },
+    { label:'TOTAL',    value: m.total    ?? 0,                          color:'var(--text)' },
+    { label:'INBOUND',  value: m.inbound  ?? 0,                          color:'#4d8fff'     },
+    { label:'OUTBOUND', value: m.outbound ?? 0,                          color:'#00aa60'     },
+    { label:'\u{1F916} JIREH', value: m.jireh ?? 0,                    color:'var(--red)'  },
+    { label:'MISSED',   value: m.missed   ?? 0,                          color:'#e05533'     },
+    { label:'AVG DUR',  value: m.avgDuration ? fmt(m.avgDuration) : '\u2014', color:'#cc8800' },
   ];
-  bar.innerHTML = cards.map(c => `
-    <div style="flex:1;padding:10px 10px;border-right:1px solid var(--border);text-align:center">
-      <div style="font-size:16px;font-weight:800;color:${c.color};
-                  font-family:var(--font-mono)">${c.value}</div>
-      <div style="font-size:9px;color:var(--text-3);font-family:var(--font-mono);
-                  letter-spacing:0.07em;margin-top:2px">${c.label}</div>
-    </div>`).join('');
+  bar.innerHTML = cards.map(c =>
+    '<div class="crv-metric-cell">' +
+    '<div class="crv-metric-val" style="color:'+c.color+'">'+c.value+'</div>' +
+    '<div class="crv-metric-lbl">'+c.label+'</div>' +
+    '</div>'
+  ).join('');
   const lbl = document.getElementById('calls-count-label');
-  if (lbl) lbl.textContent = `${_callsData.length} records`;
+  if (lbl) lbl.textContent = _callsData.length + ' records';
 }
 
 function renderCallsTable() {
   const tb = document.getElementById('calls-tbody');
   if (!tb) return;
   if (!_callsData.length) {
-    tb.innerHTML = `<tr><td colspan="7" style="padding:40px;text-align:center;
-      color:var(--text-3);font-family:var(--font-mono);font-size:11px">NO CALLS FOUND</td></tr>`;
+    tb.innerHTML = '<tr><td colspan="7" style="padding:40px;text-align:center;color:var(--text-3);font-family:var(--font-mono);font-size:11px">NO CALLS FOUND</td></tr>';
     return;
   }
-  const fmtDur  = s => !s ? '—' : s>=60 ? Math.floor(s/60)+':'+String(s%60).padStart(2,'0') : '0:'+String(s).padStart(2,'0');
-  const fmtDate = d => { if(!d) return '—'; const dt=new Date(d);
+  const fmtDur = s => !s ? '\u2014' : s>=60 ? Math.floor(s/60)+':'+String(s%60).padStart(2,'0') : '0:'+String(s).padStart(2,'0');
+  const fmtDate = d => {
+    if (!d) return '\u2014';
+    const dt = new Date(d);
     return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+
-           dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}); };
-
+           dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+  };
   tb.innerHTML = _callsData.map(c => {
-    const name    = c.first_name ? `${c.first_name} ${c.last_name||''}`.trim()
-                                 : (c.direction==='inbound'?c.from_number:c.to_number)||'—';
-    const isJ     = c.call_source==='jireh';
-    const agentLbl= isJ ? '<span style="color:var(--red);font-weight:700">🤖 Jireh</span>'
-                        : (c.agent_name
-                           ? `<span style="color:var(--text-2)">${esc(c.agent_name)}</span>`
-                           : '<span style="color:var(--text-3)">—</span>');
+    const name    = c.first_name ? (c.first_name+' '+(c.last_name||'')).trim()
+                                 : (c.direction==='inbound'?c.from_number:c.to_number)||'\u2014';
+    const isJ     = c.call_source === 'jireh';
+    const agentLbl= isJ
+      ? '<span style="color:var(--red);font-weight:700">\uD83E\uDD16 Jireh</span>'
+      : (c.agent_name ? '<span style="color:var(--text-2)">'+esc(c.agent_name)+'</span>'
+                      : '<span style="color:var(--text-3)">\u2014</span>');
     const dirIcon = c.direction==='inbound'
-                  ? '<span style="color:#6699ff;font-weight:700">↙ In</span>'
-                  : '<span style="color:#00cc78;font-weight:700">↗ Out</span>';
-    const stColor = c.status==='completed' ? '#00cc78'
-                  : ['no-answer','busy','missed','canceled'].includes(c.status) ? '#ff6644'
+      ? '<span style="color:#4d8fff;font-weight:700">\u2199 In</span>'
+      : '<span style="color:#00aa60;font-weight:700">\u2197 Out</span>';
+    const stColor = c.status==='completed' ? '#00aa60'
+                  : ['no-answer','busy','missed','canceled'].includes(c.status) ? '#e05533'
                   : 'var(--text-3)';
-    const stLabel = (c.status==='no-answer'?'missed':c.status)||'—';
-    return `<tr style="border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s"
-        onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='transparent'"
-        onclick="${c.person_id ? `openContact('${c.person_id}')` : ''}">
-      <td style="padding:9px 14px;color:var(--text);font-weight:600">${esc(name)}
-        <br><span style="font-size:10px;color:var(--text-3);font-weight:400">${esc(c.stage||'')}</span></td>
-      <td style="padding:9px 10px">${dirIcon}</td>
-      <td style="padding:9px 10px;font-size:11px">${agentLbl}</td>
-      <td style="padding:9px 10px">
-        <span style="color:${stColor};font-size:11px;font-weight:600">${stLabel}</span></td>
-      <td style="padding:9px 10px;text-align:right;color:var(--text-3);
-                 font-family:var(--font-mono);font-size:11px">${fmtDur(c.duration_seconds)}</td>
-      <td style="padding:9px 10px;color:var(--text-3);font-size:11px;white-space:nowrap">${fmtDate(c.started_at)}</td>
-      <td style="padding:9px 10px;text-align:center">${c.recording_url
-        ? `<button onclick="event.stopPropagation();playCallAudio('${c.id}',this)"
-            style="background:rgba(0,200,120,0.1);border:1px solid rgba(0,200,120,0.2);
-                   border-radius:4px;color:#00cc78;font-size:11px;padding:3px 8px;cursor:pointer">▶</button>`
-        : `<span style="color:var(--text-3)">—</span>`}</td>
-    </tr>`;
+    const stLabel = (c.status==='no-answer'?'missed':c.status)||'\u2014';
+    return '<tr onclick="'+(c.person_id ? 'openContact(\''+c.person_id+'\')' : '')+'">'
+      +'<td style="padding:9px 14px;color:var(--text);font-weight:600">'+esc(name)
+        +(c.stage ? '<br><span style="font-size:10px;color:var(--text-3);font-weight:400">'+esc(c.stage)+'</span>' : '')
+        +'</td>'
+      +'<td style="padding:9px 10px">'+dirIcon+'</td>'
+      +'<td style="padding:9px 10px;font-size:11px">'+agentLbl+'</td>'
+      +'<td style="padding:9px 10px"><span style="color:'+stColor+';font-size:11px;font-weight:600">'+stLabel+'</span></td>'
+      +'<td style="padding:9px 10px;text-align:right;color:var(--text-3);font-family:var(--font-mono);font-size:11px">'+fmtDur(c.duration_seconds)+'</td>'
+      +'<td style="padding:9px 10px;color:var(--text-3);font-size:11px;white-space:nowrap">'+fmtDate(c.started_at)+'</td>'
+      +'<td style="padding:9px 10px;text-align:center">'
+        +(c.recording_url
+          ? '<button onclick="event.stopPropagation();playCallAudio(\''+c.id+'\',this)" style="background:rgba(0,160,90,0.15);border:1px solid rgba(0,160,90,0.3);border-radius:4px;color:#00aa60;font-size:11px;padding:3px 8px;cursor:pointer">\u25B6</button>'
+          : '<span style="color:var(--text-3)">\u2014</span>')
+        +'</td>'
+      +'</tr>';
   }).join('');
 }
 
@@ -10809,119 +10826,67 @@ async function intelSubmit() {
 
 function renderIntelResult(result, hist) {
   if (!hist) return;
-  const urgColor = { high:'var(--red)', medium:'#ffb400', low:'#00cc78' };
-  const urgLabel = { high:'🔴 HIGH',    medium:'🟡 MED',   low:'🟢 LOW'  };
-  const contacts  = result.topContacts || [];
+  const contacts = result.topContacts || [];
+  // urgency accent colors — mid-saturation so they read in both light+dark
+  const urgColor = { high:'var(--red)', medium:'#cc8800', low:'#00aa60' };
+  const urgLabel = { high:'\uD83D\uDD34 HIGH', medium:'\uD83D\uDFE1 MED', low:'\uD83D\uDFE2 LOW' };
+
+  let html = '<div class="crv-card">';
+
+  // headline
+  html += '<div class="crv-card-head"><div class="crv-card-headline">'+esc(result.headline||'')+'</div></div>';
+
+  // insight
+  html += '<div class="crv-card-insight"><p>'+esc(result.insight||'')+'</p></div>';
+
+  // live listing context
+  if (result.listingContext) {
+    html += '<div class="crv-card-listing">'
+          + '<div class="crv-card-listing-lbl">\uD83D\uDCCB LIVE LISTING DATA</div>'
+          + '<p>'+esc(result.listingContext)+'</p>'
+          + '</div>';
+  }
+
+  // contacts
+  if (contacts.length) {
+    html += '<div class="crv-contacts-section">'
+          + '<div class="crv-contacts-lbl">TOP CONTACTS ('+contacts.length+')</div>';
+    contacts.forEach((c, i) => {
+      const clickAttr = c.id ? ' onclick="openContact(\''+c.id+'\')"' : '';
+      html += '<div class="crv-contact-row"'+clickAttr+'>'
+            + '<div class="crv-contact-rank">'+(i+1)+'</div>'
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">'
+            + '<span class="crv-contact-name">'+esc(c.name||'')+'</span>'
+            + (c.urgency ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba('+(c.urgency==='high'?'232,0,58':c.urgency==='medium'?'200,136,0':'0,170,96')+',0.12);color:'+(urgColor[c.urgency]||'var(--text-3)')+';font-family:var(--font-mono);font-weight:700">'+urgLabel[c.urgency]+'</span>' : '')
+            + (c.stage ? '<span style="font-size:10px;color:var(--text-3)">'+esc(c.stage)+'</span>' : '')
+            + '</div>'
+            + '<div class="crv-contact-reason">'+esc(c.reason||'')+'</div>'
+            + (c.suggestedAction ? '<div class="crv-contact-action">\u2192 '+esc(c.suggestedAction)+'</div>' : '')
+            + '</div></div>';
+    });
+    html += '</div>';
+
+    // action buttons
+    html += '<div class="crv-actions">'
+          + '<button class="crv-btn-dl"   onclick="intelDownloadList()">\u2B07 Download List</button>'
+          + '<button class="crv-btn-dial" onclick="intelPowerDial()">\uD83D\uDCDE Power Dial</button>'
+          + '<button class="crv-btn-jireh" onclick="intelJireh_CallAll()">\uD83E\uDD16 Jireh Calls All</button>'
+          + '</div>';
+  }
+
+  // methodology
+  if (result.methodology) {
+    html += '<div class="crv-methodology"><p>'+esc(result.methodology)+'</p></div>';
+  }
+
+  html += '</div>';
 
   const div = document.createElement('div');
-  div.innerHTML = `
-    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-
-      <!-- headline -->
-      <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg-3)">
-        <div style="font-size:13px;font-weight:700;color:var(--text);line-height:1.4">
-          ${esc(result.headline||'')}</div>
-      </div>
-
-      <!-- insight -->
-      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
-        <div style="font-size:11px;color:var(--text-2);line-height:1.6">
-          ${esc(result.insight||'')}</div>
-      </div>
-
-      <!-- listing info (if any) -->
-      ${result.listingContext ? `
-      <div style="padding:8px 14px;border-bottom:1px solid var(--border);
-                  background:rgba(102,153,255,0.04)">
-        <div style="font-size:9px;font-weight:700;color:#6699ff;font-family:var(--font-mono);
-                    letter-spacing:0.1em;margin-bottom:4px">📋 LIVE LISTING DATA</div>
-        <div style="font-size:10px;color:var(--text-2);line-height:1.5">
-          ${esc(result.listingContext)}</div>
-      </div>` : ''}
-
-      <!-- top contacts -->
-      ${contacts.length ? `
-      <div style="padding:8px 14px;border-bottom:1px solid var(--border)">
-        <div style="font-size:9px;font-weight:700;color:var(--text-3);font-family:var(--font-mono);
-                    letter-spacing:0.1em;margin-bottom:6px">TOP CONTACTS (${contacts.length})</div>
-        ${contacts.map((c,i) => `
-        <div onclick="${c.id?`openContact('${c.id}')`:'void 0'}"
-          style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);
-                 cursor:${c.id?'pointer':'default'};transition:background .1s"
-          onmouseover="this.style.background='var(--bg-3)'"
-          onmouseout="this.style.background='transparent'">
-          <div style="font-size:12px;font-weight:800;color:var(--text-3);font-family:var(--font-mono);
-                      width:20px;flex-shrink:0;padding-top:1px">${i+1}</div>
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
-              <span style="font-size:12px;font-weight:700;color:var(--text)">${esc(c.name||'')}</span>
-              <span style="font-size:9px;padding:1px 5px;border-radius:3px;
-                background:rgba(${c.urgency==='high'?'232,0,58':c.urgency==='medium'?'255,180,0':'0,200,120'},0.12);
-                color:${urgColor[c.urgency]||'var(--text-3)'};font-family:var(--font-mono);font-weight:700">
-                ${urgLabel[c.urgency]||''}</span>
-              <span style="font-size:10px;color:var(--text-3)">${esc(c.stage||'')}</span>
-            </div>
-            <div style="font-size:10px;color:var(--text-2);line-height:1.4">${esc(c.reason||'')}</div>
-            ${c.suggestedAction
-              ? `<div style="font-size:10px;color:#ffb400;margin-top:3px;font-style:italic">
-                   → ${esc(c.suggestedAction)}</div>` : ''}
-          </div>
-        </div>`).join('')}
-      </div>
-
-      <!-- ACTION BUTTONS -->
-      <div style="padding:10px 14px;display:flex;gap:7px;flex-wrap:wrap;
-                  background:var(--bg-3);border-top:1px solid var(--border)">
-
-        <!-- 1. Download CSV -->
-        <button onclick="intelDownloadList()"
-          title="Download as CSV"
-          style="display:flex;align-items:center;gap:5px;height:30px;padding:0 12px;
-                 background:var(--bg-4);border:1px solid var(--border);border-radius:6px;
-                 color:var(--text-2);font-size:11px;font-weight:600;cursor:pointer;
-                 transition:all .15s"
-          onmouseover="this.style.borderColor='var(--text-2)';this.style.color='var(--text)'"
-          onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
-          ⬇ Download List
-        </button>
-
-        <!-- 2. Power Dialer -->
-        <button onclick="intelPowerDial()"
-          title="Load into power dialer for manual calls"
-          style="display:flex;align-items:center;gap:5px;height:30px;padding:0 12px;
-                 background:rgba(80,130,255,0.1);border:1px solid rgba(80,130,255,0.3);
-                 border-radius:6px;color:#6699ff;font-size:11px;font-weight:600;cursor:pointer;
-                 transition:all .15s"
-          onmouseover="this.style.background='rgba(80,130,255,0.2)'"
-          onmouseout="this.style.background='rgba(80,130,255,0.1)'">
-          📞 Power Dial
-        </button>
-
-        <!-- 3. Jireh Calls All -->
-        <button onclick="intelJireh_CallAll()"
-          title="Have Jireh call each contact to achieve the goal"
-          style="display:flex;align-items:center;gap:5px;height:30px;padding:0 12px;
-                 background:var(--red-dim);border:1px solid rgba(232,0,58,0.35);
-                 border-radius:6px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer;
-                 transition:all .15s"
-          onmouseover="this.style.background='rgba(232,0,58,0.22)'"
-          onmouseout="this.style.background='var(--red-dim)'">
-          🤖 Jireh Calls All
-        </button>
-      </div>` : ''}
-
-      <!-- methodology -->
-      ${result.methodology ? `
-      <div style="padding:8px 14px;border-top:1px solid var(--border)">
-        <div style="font-size:10px;color:var(--text-3);font-style:italic">
-          ${esc(result.methodology)}</div>
-      </div>` : ''}
-    </div>`;
+  div.innerHTML = html;
   hist.appendChild(div);
   hist.scrollTop = hist.scrollHeight;
 }
-
-// ── Intelligence action buttons ───────────────────────────────────────────────
 
 function intelDownloadList() {
   const contacts = _intelLastResult?.result?.topContacts;
