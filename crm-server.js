@@ -4561,8 +4561,8 @@ async function finalizeJareihCall(callId, twilioStatus, duration) {
   } catch(e) { console.error('[Jareih activity insert]', e.message); }
 
   broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'call_ended', summary, goalAchieved: session.goalAchieved, status: twilioStatus });
+  jareihCalls.delete(callId);  // delete FIRST so getActiveCallsPayload returns accurate list
   broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
-  jareihCalls.delete(callId);
 }
 
 // ─── Active calls list for the UI panel ──────────────────────────────────────
