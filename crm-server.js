@@ -3382,42 +3382,84 @@ app.post('/api/jareih/analyze', auth, async (req, res) => {
     const stageBreakdown = stagesR.rows.map(r => `${r.stage}: ${r.count}`).join(', ');
     const today = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 
+    // ── Fetch live listing + guidelines data ──────────────────────────────────
+    const fetchText = async (url, label) => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const resp = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'OKCREAL-Connect-Intelligence/1.0' }
+        });
+        clearTimeout(timer);
+        const html = await resp.text();
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 4000);
+        console.log(`[Jireh analyze] Fetched ${label}: ${text.length} chars`);
+        return text;
+      } catch(e) {
+        console.warn(`[Jireh analyze] Could not fetch ${label}:`, e.message);
+        return null;
+      }
+    };
+
+    const [listingsText, guidelinesText] = await Promise.all([
+      fetchText('https://www.teamokcreal.appfolio.com/listings', 'listings'),
+      fetchText('https://www.okcreal.com/guidelines', 'guidelines'),
+    ]);
+
+    const listingsSection = listingsText
+      ? `\n\n=== LIVE AVAILABLE LISTINGS (AppFolio, fetched right now) ===\n${listingsText}\n=== END LISTINGS ===`
+      : '';
+    const guidelinesSection = guidelinesText
+      ? `\n\n=== OKCREAL APPLICATION GUIDELINES ===\n${guidelinesText}\n=== END GUIDELINES ===`
+      : '';
+
     const systemPrompt = `You are the intelligence engine for OKCREAL Connect, a property management CRM in Oklahoma City.
-You have access to real-time data on leads, prospects, and contacts. Today is ${today}.
+You have access to real-time CRM data AND live listing availability from AppFolio. Today is ${today}.
 
-STAGE BREAKDOWN: ${stageBreakdown}
+STAGE BREAKDOWN: ${stageBreakdown}${listingsSection}${guidelinesSection}
 
-Your job: analyze the data below and answer the agent's question with a sharp, actionable prediction.
+Your job: analyze the CRM data and answer the agent's question with sharp, actionable predictions.
+When listing data is available, cross-reference prospects' stated beds/budget/property interest against
+what is actually available RIGHT NOW. Mention specific listings in your suggested actions when relevant.
+When guidelines data is available, use it to flag prospects who clearly meet or don't meet criteria.
 
-RESPONSE FORMAT (JSON only, no markdown):
+RESPONSE FORMAT — strict JSON only, no markdown, no code fences:
 {
   "headline": "One bold sentence summarizing the key insight",
-  "insight": "2-3 sentences of analysis — WHY these people rank the way they do. Reference specific patterns in the data.",
+  "insight": "2-3 sentences — WHY these people rank the way they do, referencing specific data patterns and any live listing matches.",
+  "listingContext": "1 sentence about current listing availability relevant to this query — omit key if no listing data",
   "topContacts": [
     {
-      "id": "person id",
+      "id": "person uuid",
       "name": "full name",
       "stage": "current stage",
       "reason": "1 sentence — the specific signal that makes this person rank here",
       "urgency": "high|medium|low",
-      "suggestedAction": "exact action to take — e.g. 'Call and ask about move-in date'"
+      "suggestedAction": "Exact call-to-action — e.g. 'Call and mention the 2BR on NW 10th just came available at $1,050/mo'"
     }
   ],
   "methodology": "1 sentence explaining your ranking criteria"
 }
 
-Include up to 10 topContacts. Prioritize people with: recent showing activity, stated move-in dates soon, high engagement but not yet converted, returning leads.`;
+Include up to 10 topContacts. Prioritize: upcoming move-in dates, recent showing activity, high engagement not yet converted, listing matches.`;
 
     const completion = await grok.chat.completions.create({
       model: 'grok-3',
-      max_tokens: 2000,
+      max_tokens: 2500,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: `AGENT QUERY: ${query}\n\nPEOPLE DATA:\n${JSON.stringify(peopleSummary, null, 0)}` }
+        { role: 'user', content: `AGENT QUERY: ${query}\n\nCRM PEOPLE DATA:\n${JSON.stringify(peopleSummary, null, 0)}` }
       ]
     });
 
-    const raw = completion.choices[0].message.content.trim();
+    const raw   = completion.choices[0].message.content.trim();
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
     res.json({ ok: true, result: parsed, query });
