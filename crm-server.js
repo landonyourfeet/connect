@@ -4416,7 +4416,7 @@ async function speakToCall(callId, text) {
   try {
     const audio = await araTTS(text);
     console.log(`[Ara speak] callId=${callId} streamSid=${session.streamSid} audioBytes=${audio.length}`);
-    session.araLock = true; // hold until mark event fires after playback
+    session.araLock++; // semaphore: increment when speaking starts
 
     // Twilio bidirectional streams require audio chunked in 20ms frames
     // mulaw 8000Hz = 8000 samples/sec × 1 byte/sample × 0.02s = 160 bytes per chunk
@@ -4601,7 +4601,7 @@ function setupJareihCallWS(server) {
 
     session.ws = ws;
     session.streamSid = null;
-    session.araLock = false;
+    session.araLock = 0;   // semaphore: >0 means Ara is busy (speaking or responding)
 
     // Deepgram STT
     const dgWs = new WebSocket(
@@ -4617,10 +4617,10 @@ function setupJareihCallWS(server) {
       let msg; try { msg = JSON.parse(raw.toString()); } catch(e) { return; }
       if (msg.type === 'Results' && msg.is_final) {
         const text = msg.channel?.alternatives?.[0]?.transcript?.trim();
-        if (!text || session.araLock || session.araMuted) return;
+        if (!text || session.araLock > 0 || session.araMuted) return;
         session.transcript.push({ role:'contact', ts:Date.now(), text });
         broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'contact_spoke', text });
-        session.araLock = true;
+        session.araLock++;
         try {
           const response = await araRespond(callId, text);
           if (response) await speakToCall(callId, response);
@@ -4633,7 +4633,7 @@ function setupJareihCallWS(server) {
             }, 1400);
           }
         } catch(e) { console.error('[Ara respond]', e.message); }
-        finally { session.araLock = false; }
+        finally { if (session.araLock > 0) session.araLock--; }
       }
     });
     dgWs.on('error', e => console.error('[Ara DG]', e.message));
@@ -4662,7 +4662,7 @@ function setupJareihCallWS(server) {
         case 'mark':
           // Ara finished speaking — unlock so contact speech can trigger responses
           if (msg.mark?.name?.startsWith('ara-done-')) {
-            session.araLock = false;
+            if (session.araLock > 0) session.araLock--;
           }
           break;
         case 'media':
@@ -4881,13 +4881,13 @@ app.post('/api/jareih/coach', auth, async (req, res) => {
   broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'coach', text: message.trim(), agentName: req.agent.name });
   // Trigger Ara to respond now based on coaching
   try {
-    if (!session.araLock && !session.araMuted) {
-      session.araLock = true;
+    if (session.araLock === 0 && !session.araMuted) {
+      session.araLock++;
       const response = await araRespond(callId, `[AGENT SAYS]: ${message.trim()}`);
       if (response) await speakToCall(callId, response);
     }
   } catch(e) { console.error('[Coach]', e.message); }
-  finally { if (session) session.araLock = false; }
+  finally { if (session && session.araLock > 0) session.araLock--; }
   res.json({ ok: true });
 });
 
