@@ -4362,14 +4362,21 @@ function jcConferenceName(callId) { return `jcall-${callId}`; }
 
 // ─── TTS: Deepgram Aura Ara ───────────────────────────────────────────────────
 async function araTTS(text) {
-  // mulaw 8000Hz — exact format Twilio expects for WS media playback
-  const url = 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000&container=none';
-  const resp = await fetch(url, {
+  // xAI Ara voice — the real Ara from the Grok app
+  // mulaw 8000Hz = exact format Twilio expects for bidirectional WS media playback
+  const resp = await fetch('https://api.x.ai/v1/tts', {
     method: 'POST',
-    headers: { 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
+    headers: {
+      'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      text,
+      voice_id: 'ara',
+      output_format: { codec: 'mulaw', sample_rate: 8000 }
+    })
   });
-  if (!resp.ok) throw new Error(`Deepgram TTS ${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`xAI TTS ${resp.status}: ${await resp.text()}`);
   return Buffer.from(await resp.arrayBuffer());
 }
 
@@ -4412,16 +4419,20 @@ async function araRespond(callId, contactSpeech) {
     const actSummary = (ctx.recentActivity||[]).slice(0,8).map(a=>`[${a.type}] ${(a.body||'').slice(0,120)}`).join('\n');
     session.grokHistory = [{
       role: 'system',
-      content: `You are Ara, a professional AI leasing agent calling on behalf of OKCREAL property management.
+      content: `You are Jareih, a professional AI leasing agent calling on behalf of O.K.C. Real property management.
 Calling: ${ctx.name} (stage: ${ctx.stage||'Lead'})
 GOAL: ${session.goal}
 Notes: ${ctx.notes||'none'}
 Recent activity:\n${actSummary||'none'}
 
+PRONUNCIATION: The company name is ALWAYS spoken as "O.K.C. Real" — never "okcreal", never "aukreal". Spell it out every time: O.K.C. Real.
+
 RULES:
 - Keep every response SHORT — 1-3 sentences, natural phone speech only
-- Never reveal you are AI unless directly asked; if asked say "I'm Ara with OKCREAL"
-- When goal achieved OR contact clearly wants to end the call, close warmly and append [END_CALL]
+- You are Jareih, an AI assistant from O.K.C. Real
+- If asked whether you are AI, say "I'm Jareih, an A.I. assistant with O.K.C. Real"
+- When the goal is achieved OR the contact wants to end the call, ALWAYS close with this exact line:
+  "Again, this is Jareih with O.K.C. Real, an A.I. assistant. Please give us a call back if you have any questions. Goodbye!" then append [END_CALL]
 - If goal achieved also append [GOAL_ACHIEVED]
 - No markdown, no lists — pure spoken language`
     }];
