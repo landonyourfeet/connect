@@ -2289,6 +2289,14 @@
     .mc-led.on  { background:#00e87a; box-shadow:0 0 6px #00e87a; animation:mc-led-pulse 2.5s ease-in-out infinite; }
     .mc-led.off { background:#1e1e1e; box-shadow:none; }
     @keyframes mc-led-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    .mc-led-phone { width:8px; height:8px; border-radius:50%; flex-shrink:0; background:#1e1e1e; transition: background 0.3s, box-shadow 0.3s; }
+    .mc-led-phone.on-call { background:#00e87a; box-shadow:0 0 8px #00e87a, 0 0 16px rgba(0,232,122,0.3); animation:mc-phone-flash 0.8s ease-in-out infinite; }
+    [data-theme="light"] .mc-led-phone { background:#e0e0e0; }
+    [data-theme="light"] .mc-led-phone.on-call { background:#00b864; box-shadow:0 0 8px rgba(0,184,100,0.5); animation:mc-phone-flash-light 0.8s ease-in-out infinite; }
+    @keyframes mc-phone-flash { 0%,100%{ opacity:1; box-shadow:0 0 8px #00e87a, 0 0 16px rgba(0,232,122,0.3); } 50%{ opacity:0.4; box-shadow:0 0 4px #00e87a; } }
+    @keyframes mc-phone-flash-light { 0%,100%{ opacity:1; box-shadow:0 0 8px rgba(0,184,100,0.5); } 50%{ opacity:0.35; box-shadow:0 0 3px rgba(0,184,100,0.3); } }
+    .mc-oncall-label { font-family:var(--font-mono); font-size:7px; letter-spacing:0.08em; color:#00e87a; white-space:nowrap; animation:mc-phone-flash 0.8s ease-in-out infinite; }
+    [data-theme="light"] .mc-oncall-label { color:#00804a; animation:mc-phone-flash-light 0.8s ease-in-out infinite; }
     .mc-agent-photo { width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
     .mc-agent-photo:hover { border-color:#00e87a; }
     .mc-agent-initials { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#fff; flex-shrink:0; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
@@ -3854,6 +3862,22 @@ let callTimerInterval = null;
 let callSeconds = 0;
 let isMuted = false;
 let isOnHold = false;
+
+// ── Agent on-call tracking (crew status phone LED) ──
+const _agentsOnCallMap = new Map(); // agentId -> { name, personName, direction, since }
+
+function broadcastMyCallState(state, personId, personName, direction) {
+  api('/api/me/call-state', 'POST', { state, personId, personName, direction }).catch(() => {});
+}
+
+// Fetch initial on-call state
+async function fetchAgentsOnCall() {
+  try {
+    const data = await api('/api/agents/on-call');
+    _agentsOnCallMap.clear();
+    for (const [id, info] of Object.entries(data)) _agentsOnCallMap.set(id, info);
+  } catch(e) {}
+}
 let inboxFilter = 'all';
 let currentTaskPersonId = null;
 // ── TAB ALERT — phone icon + title flash when call comes in ─────────────
@@ -7410,6 +7434,7 @@ function acceptCall() {
   startCallTimer();
   VoiceViz.start(activeCall);
   TabAlert.active(name);
+  broadcastMyCallState('on-call', _incomingMatchedPerson?.id || null, name, 'inbound');
 
   // Auto-navigate to contact file when answering a known caller
   if (_incomingMatchedPerson) {
@@ -7503,6 +7528,7 @@ function handleCallEnd() {
   TabAlert.clear();
   if (window.neonGlow) window.neonGlow.callEnd();
   stopCallTimer();
+  broadcastMyCallState('off-call');
   const duration = document.getElementById('call-timer').textContent;
   hideCallBar();
   toast('Call ended · ' + duration, 'info');
@@ -7566,6 +7592,7 @@ async function quickCall(personId, phone, name) {
     activeCall.on('disconnect', handleCallEnd);
     setTimeout(() => VoiceViz.start(activeCall), 600);
     TabAlert.active(name);
+    broadcastMyCallState('on-call', personId, name, 'outbound');
   } catch(e) {
     toast('Call failed: ' + e.message, 'error');
   }
@@ -9047,6 +9074,7 @@ let _mcTooltip = { visible:false, x:0, y:0, prop:null };
 async function renderDashboard() {
   const el = document.getElementById('view-dashboard');
   if (!el) return;
+  fetchAgentsOnCall(); // get current on-call states
 
   el.innerHTML = `
   <div class="mc-wrap">
@@ -9371,12 +9399,21 @@ function renderMcPanels(d, galaxy) {
       ? `${cs.total_calls} call${cs.total_calls!==1?'s':''} · ${Math.floor((cs.avg_duration||0)/60)}m avg`
       : 'No calls this week';
 
+    // On-call state — check if this agent is currently on a phone call
+    const onCallInfo = _agentsOnCallMap.get(String(a.id));
+    const isOnCall = !!onCallInfo;
+    const phoneLedHtml = `<div title="${isOnCall ? '📞 On call' + (onCallInfo?.personName ? ' with ' + onCallInfo.personName : '') : 'Not on a call'}" class="mc-led-phone ${isOnCall ? 'on-call' : ''}"></div>`;
+    const onCallLabel = isOnCall
+      ? `<span class="mc-oncall-label">📞 ${onCallInfo?.direction === 'inbound' ? 'IN' : 'OUT'}${onCallInfo?.personName ? ' · ' + onCallInfo.personName.split(' ')[0] : ''}</span>`
+      : '';
+
     return `<div class="mc-agent-row" style="position:relative">
       ${avatarEl}
       <div style="flex:1;min-width:0">
         <div class="mc-agent-name">${esc(a.name||'Agent')}</div>
-        <div style="font-size:8px;color:#444;margin-top:1px">${callLine}</div>
+        <div style="font-size:8px;color:#444;margin-top:1px">${isOnCall ? onCallLabel : callLine}</div>
       </div>
+      ${phoneLedHtml}
       <!-- LED: green glow = browser tab open -->
       <div title="${isSSEOnline?'Browser open':'Not connected'}" class="mc-led ${isSSEOnline?'on':'off'}"></div>
       <span class="mc-agent-status ${statusClass}">${statusLabel}</span>
@@ -10450,6 +10487,23 @@ function connectAgentSse() {
           if (ag) { ag.availability = payload.availability; }
           refreshDashboard();
         }
+      } else if (payload.type === 'agent_call_state') {
+        // Agent started or ended a call — update on-call map and refresh crew panel
+        if (payload.state === 'on-call') {
+          _agentsOnCallMap.set(String(payload.agentId), {
+            name: payload.agentName, personName: payload.personName,
+            direction: payload.direction, since: Date.now()
+          });
+        } else {
+          _agentsOnCallMap.delete(String(payload.agentId));
+        }
+        // Sync full list from server payload
+        if (payload.onCallAgentIds) {
+          for (const [id] of _agentsOnCallMap) {
+            if (!payload.onCallAgentIds.includes(id)) _agentsOnCallMap.delete(id);
+          }
+        }
+        if (currentView === 'dashboard' && typeof refreshDashboard === 'function') refreshDashboard();
       } else if (payload.type === 'debt_update') {
         // GrokFUB pushed updated balance/days — refresh banner if this contact is open
         if (String(payload.personId) === String(currentPersonId) && window._currentPerson) {
