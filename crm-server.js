@@ -1137,7 +1137,22 @@ app.get('/api/inbox', auth, async (req, res) => {
       ORDER BY a.created_at DESC
       LIMIT 50
     `);
-    res.json({ missed_calls: missedR.rows, unread_texts: textsR.rows });
+    const vmR = await pool.query(`
+      SELECT
+        c.id, c.from_number AS phone, c.created_at, c.recording_url,
+        c.duration_seconds, c.transcript, c.summary,
+        c.status, c.direction,
+        p.id AS person_id,
+        COALESCE(p.first_name || ' ' || COALESCE(p.last_name,''), c.from_number) AS contact_name
+      FROM calls c
+      LEFT JOIN people p ON p.id::text = c.person_id
+      WHERE c.status = 'voicemail'
+        AND c.created_at > NOW() - INTERVAL '30 days'
+        AND (c.inbox_cleared IS NULL OR c.inbox_cleared = false)
+      ORDER BY c.created_at DESC
+      LIMIT 50
+    `);
+    res.json({ missed_calls: missedR.rows, unread_texts: textsR.rows, voicemails: vmR.rows });
   } catch(e) { console.error('Inbox error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
@@ -1146,6 +1161,9 @@ app.post('/api/inbox/clear', auth, async (req, res) => {
     const { type } = req.body;
     if (type === 'missed' || type === 'all') {
       await pool.query(`UPDATE calls SET inbox_cleared=true WHERE direction='inbound' AND status IN ('no-answer','busy','failed','canceled') AND created_at > NOW() - INTERVAL '7 days'`);
+    }
+    if (type === 'voicemails' || type === 'all') {
+      await pool.query(`UPDATE calls SET inbox_cleared=true WHERE status='voicemail' AND created_at > NOW() - INTERVAL '30 days'`);
     }
     if (type === 'texts' || type === 'all') {
       await pool.query(`UPDATE activities SET inbox_cleared=true WHERE type='sms' AND direction='inbound' AND created_at > NOW() - INTERVAL '7 days'`);
@@ -1766,8 +1784,20 @@ app.post('/api/twilio/inbound', async (req, res) => {
       agents = aR.rows;
     }
     if (agents.length === 0) {
-      response.say('You have reached OKCREAL. Please leave a message after the beep.');
-      response.record({ maxLength: 120, recordingStatusCallback: `${process.env.APP_URL}/api/twilio/voicemail?callId=${callInsert.rows[0].id}` });
+      // Check for custom voicemail greeting
+      const greetAudioR = await pool.query(`SELECT value FROM app_settings WHERE key='voicemail_greeting_b64'`);
+      if (greetAudioR.rows[0]?.value) {
+        response.play(`${process.env.APP_URL}/voicemail-greeting.mp3`);
+      } else {
+        response.say('You have reached OKCREAL. Please leave a message after the beep.');
+      }
+      response.record({
+        maxLength: 120,
+        playBeep: true,
+        recordingStatusCallback: `${process.env.APP_URL}/api/twilio/voicemail?callId=${callInsert.rows[0].id}`,
+        recordingStatusCallbackMethod: 'POST',
+        transcribe: false
+      });
     } else {
       const dial = response.dial({
         record: 'record-from-ringing-dual',
@@ -1804,24 +1834,51 @@ app.post('/api/twilio/status', async (req, res) => {
 });
 
 app.post('/api/twilio/inbound-complete', async (req, res) => {
-  res.type('xml').send('<Response></Response>');
   try {
     const { callSid } = req.query;
     const { DialCallDuration, DialCallStatus } = req.body;
     const duration = parseInt(DialCallDuration) || 0;
     const status = DialCallStatus || 'completed';
-    const r = await pool.query(
-      'UPDATE calls SET status=$1,duration_seconds=$2,ended_at=NOW() WHERE twilio_call_sid=$3 RETURNING *',
-      [status, duration, callSid]
-    );
-    const call = r.rows[0];
-    if (call && call.person_id) {
-      await pool.query(
-        'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
-        [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', duration, 'inbound']
-      ).catch(() => {});
+
+    // If a human answered, just update the DB
+    if (DialCallStatus === 'answered') {
+      const r = await pool.query(
+        'UPDATE calls SET status=$1,duration_seconds=$2,ended_at=NOW() WHERE twilio_call_sid=$3 RETURNING *',
+        [status, duration, callSid]
+      );
+      const call = r.rows[0];
+      if (call && call.person_id) {
+        await pool.query(
+          'INSERT INTO activities (person_id,agent_id,call_id,type,body,duration,direction) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+          [call.person_id, call.agent_id, call.id, 'call', 'Transcript processing...', duration, 'inbound']
+        ).catch(() => {});
+      }
+      res.type('xml').send('<Response></Response>');
+      return;
     }
-  } catch (e) { console.error('inbound-complete error:', e.message); }
+
+    // No human answered → send to voicemail
+    const callR = await pool.query('SELECT id FROM calls WHERE twilio_call_sid=$1', [callSid]);
+    const callDbId = callR.rows[0]?.id;
+    await pool.query('UPDATE calls SET status=$1,ended_at=NOW() WHERE twilio_call_sid=$2', ['no-answer', callSid]).catch(()=>{});
+
+    const VoiceResponse = require('twilio').twiml.VoiceResponse;
+    const vmResp = new VoiceResponse();
+    const greetAudioR = await pool.query(`SELECT value FROM app_settings WHERE key='voicemail_greeting_b64'`);
+    if (greetAudioR.rows[0]?.value) {
+      vmResp.play(`${process.env.APP_URL}/voicemail-greeting.mp3`);
+    } else {
+      vmResp.say('You have reached OKCREAL. No one is available right now. Please leave a message after the beep.');
+    }
+    vmResp.record({
+      maxLength: 120,
+      playBeep: true,
+      recordingStatusCallback: `${process.env.APP_URL}/api/twilio/voicemail?callId=${callDbId || ''}`,
+      recordingStatusCallbackMethod: 'POST',
+      transcribe: false
+    });
+    res.type('xml').send(vmResp.toString());
+  } catch (e) { console.error('inbound-complete error:', e.message); res.type('xml').send('<Response></Response>'); }
 });
 
 // ─── Jireh Fallback: fires after agents don't answer within ~4 rings ──────────
@@ -2139,18 +2196,155 @@ app.post('/api/twilio/voicemail', async (req, res) => {
   res.sendStatus(200);
   try {
     const { callId } = req.query;
-    const { RecordingUrl } = req.body;
+    const { RecordingUrl, RecordingDuration } = req.body;
     if (!callId) return;
-    await pool.query('UPDATE calls SET status=$1,recording_url=$2 WHERE id=$3', ['voicemail', `${RecordingUrl}.mp3`, callId]);
+    const recUrl = `${RecordingUrl}.mp3`;
+    const duration = parseInt(RecordingDuration) || 0;
+
+    await pool.query('UPDATE calls SET status=$1,recording_url=$2,duration_seconds=$3 WHERE id=$4', ['voicemail', recUrl, duration, callId]);
     const callR = await pool.query('SELECT * FROM calls WHERE id=$1', [callId]);
     const call = callR.rows[0];
-    if (call) {
-      pool.query(
-        'INSERT INTO activities (person_id,call_id,type,body,recording_url) VALUES($1,$2,$3,$4,$5)',
-        [call.person_id, call.id, 'voicemail', 'Voicemail received', `${RecordingUrl}.mp3`]
-      ).catch(() => {});
+    if (!call) return;
+
+    // Identify caller
+    let callerName = call.from_number || 'Unknown';
+    if (call.person_id) {
+      const pR = await pool.query('SELECT first_name, last_name FROM people WHERE id=$1', [call.person_id]);
+      if (pR.rows[0]) callerName = `${pR.rows[0].first_name} ${pR.rows[0].last_name||''}`.trim();
     }
+
+    // Transcribe via Deepgram if available
+    let transcript = '';
+    let summary = `Voicemail from ${callerName} (${duration}s)`;
+    const dg = initDeepgram();
+    if (dg) {
+      try {
+        const auth = twilioBasicAuth();
+        if (auth) {
+          const https = require('https');
+          const url = new URL(recUrl);
+          const audioBuffer = await new Promise((resolve, reject) => {
+            const r = https.request({ hostname: url.hostname, path: url.pathname + url.search, method: 'GET', headers: { Authorization: 'Basic ' + auth } }, (res) => {
+              if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Twilio fetch ${res.statusCode}`)); }
+              const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => resolve(Buffer.concat(chunks))); res.on('error', reject);
+            }); r.on('error', reject); r.end();
+          });
+          const { result } = await dg.listen.prerecorded.transcribeFile(audioBuffer, { model: 'nova-2', smart_format: true, punctuate: true, utterances: true, mimetype: 'audio/mpeg' });
+          const utts = result?.results?.utterances;
+          if (utts?.length) {
+            transcript = utts.map(u => u.transcript).join(' ');
+            summary = `Voicemail from ${callerName}: "${transcript.slice(0, 200)}${transcript.length > 200 ? '…' : ''}"`;
+          }
+        }
+      } catch(e) { console.warn('[Voicemail transcribe]', e.message); }
+    }
+
+    // Update calls with transcript
+    if (transcript) {
+      await pool.query('UPDATE calls SET transcript=$1, summary=$2 WHERE id=$3', [transcript, summary, call.id]).catch(()=>{});
+    }
+
+    // Insert activity
+    await pool.query(
+      'INSERT INTO activities (person_id,call_id,type,body,recording_url,direction,duration) VALUES($1,$2,$3,$4,$5,$6,$7)',
+      [call.person_id, call.id, 'voicemail', summary, recUrl, 'inbound', duration]
+    ).catch(() => {});
+
+    // Broadcast to all agents
+    broadcastToAll({
+      type: 'new_voicemail',
+      callId: call.id,
+      personId: call.person_id,
+      callerName,
+      phone: call.from_number,
+      duration,
+      transcript: transcript || null,
+      summary,
+      createdAt: new Date().toISOString()
+    });
+
+    // Create notification for all active agents
+    const agentsR = await pool.query('SELECT id FROM agents WHERE is_active=true');
+    for (const ag of agentsR.rows) {
+      await createNotification({
+        recipientId: ag.id,
+        type: 'voicemail',
+        personId: call.person_id || null,
+        body: `📩 Voicemail from ${callerName} (${duration}s)${transcript ? ': "' + transcript.slice(0, 80) + '…"' : ''}`
+      }).catch(()=>{});
+    }
+
+    console.log(`[Voicemail] ${callerName} left ${duration}s voicemail${transcript ? ' (transcribed)' : ''}`);
   } catch (e) { console.error('Voicemail error:', e.message); }
+});
+
+// ─── VOICEMAIL GREETING ──────────────────────────────────────────────────────
+// Upload: saves audio as base64 in app_settings so Twilio can play it
+const uploadGreeting = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  const ok = ['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/ogg','audio/webm','audio/mp4','audio/x-m4a'].includes(file.mimetype);
+  cb(null, ok);
+}});
+
+app.post('/api/admin/voicemail-greeting', auth, adminOnly, uploadGreeting.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No audio file uploaded' });
+    const b64 = req.file.buffer.toString('base64');
+    const mime = req.file.mimetype || 'audio/mpeg';
+    await pool.query(
+      `INSERT INTO app_settings(key,value) VALUES('voicemail_greeting_b64',$1) ON CONFLICT(key) DO UPDATE SET value=$1`,
+      [b64]
+    );
+    await pool.query(
+      `INSERT INTO app_settings(key,value) VALUES('voicemail_greeting_mime',$1) ON CONFLICT(key) DO UPDATE SET value=$1`,
+      [mime]
+    );
+    console.log(`[Voicemail] Greeting uploaded: ${req.file.originalname} (${Math.round(b64.length/1024)}KB, ${mime})`);
+    res.json({ ok: true, size: req.file.size, mime });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/voicemail-greeting', auth, adminOnly, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM app_settings WHERE key IN ('voicemail_greeting_b64','voicemail_greeting_mime')`);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/voicemail-greeting/status', auth, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT key,value FROM app_settings WHERE key='voicemail_greeting_mime'`);
+    res.json({ hasGreeting: r.rows.length > 0, mime: r.rows[0]?.value || null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Public endpoint — Twilio fetches this (no auth) to play the greeting
+app.get('/voicemail-greeting.mp3', async (req, res) => {
+  try {
+    const [b64R, mimeR] = await Promise.all([
+      pool.query(`SELECT value FROM app_settings WHERE key='voicemail_greeting_b64'`),
+      pool.query(`SELECT value FROM app_settings WHERE key='voicemail_greeting_mime'`)
+    ]);
+    if (!b64R.rows[0]?.value) return res.status(404).send('No greeting');
+    const buf = Buffer.from(b64R.rows[0].value, 'base64');
+    res.set('Content-Type', mimeR.rows[0]?.value || 'audio/mpeg');
+    res.set('Content-Length', buf.length);
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(buf);
+  } catch(e) { res.status(500).send('Error'); }
+});
+
+// Preview endpoint (authenticated, for admin to listen in-app)
+app.get('/api/admin/voicemail-greeting/preview', auth, async (req, res) => {
+  try {
+    const [b64R, mimeR] = await Promise.all([
+      pool.query(`SELECT value FROM app_settings WHERE key='voicemail_greeting_b64'`),
+      pool.query(`SELECT value FROM app_settings WHERE key='voicemail_greeting_mime'`)
+    ]);
+    if (!b64R.rows[0]?.value) return res.status(404).json({ error: 'No greeting uploaded' });
+    const buf = Buffer.from(b64R.rows[0].value, 'base64');
+    res.set('Content-Type', mimeR.rows[0]?.value || 'audio/mpeg');
+    res.send(buf);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
