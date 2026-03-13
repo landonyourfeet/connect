@@ -2463,25 +2463,281 @@
     }
     .call-contact-name.linked:hover { opacity: 0.8; }
 
-    /* ── Jireh Intelligence panel ── */
+    /* ── Jireh Mission Command Center ── */
     #view-intelligence { display: none; height: 100%; overflow: hidden; }
     #view-intelligence.active { display: flex; }
-    .intel-layout { display: flex; width: 100%; height: 100%; overflow: hidden; }
-    .intel-main { flex: 1; overflow-y: auto; padding: 0; }
-    .crv-intel-history { flex: 1; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
-    .crv-intel-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 0; gap: 8px; color: var(--text-3); font-family: var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; opacity: 0.6; text-align: center; }
-    .crv-intel-empty-icon { font-size: 32px; margin-bottom: 4px; }
-    .crv-intel-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-    .crv-intel-chips-label { font-family: var(--font-cond); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); margin-bottom: 8px; }
-    .crv-intel-chip { font-family: var(--font-cond); font-size: 11px; letter-spacing: 0.05em; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text-2); cursor: pointer; transition: border-color 0.15s, color 0.15s; white-space: nowrap; }
-    .crv-intel-chip:hover { border-color: var(--accent); color: var(--accent); }
-    .crv-intel-inputbar { display: flex; gap: 8px; padding: 12px 24px 14px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--bg-2); }
-    .crv-intel-input { flex: 1; background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--font-body); font-size: 13px; padding: 8px 12px; outline: none; transition: border-color 0.15s; }
-    .crv-intel-input:focus { border-color: var(--accent); }
-    .crv-intel-input::placeholder { color: var(--text-3); }
-    .crv-intel-btn { background: var(--red); color: #fff; border: none; border-radius: var(--radius); font-family: var(--font-cond); font-size: 13px; font-weight: 700; letter-spacing: 0.08em; padding: 8px 18px; cursor: pointer; transition: opacity 0.15s; flex-shrink: 0; }
-    .crv-intel-btn:hover { opacity: 0.85; }
-    .crv-intel-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .jmc-layout { display: flex; width: 100%; height: 100%; overflow: hidden; }
+
+    /* ── Mission Sidebar ── */
+    .jmc-sidebar {
+      width: 280px; flex-shrink: 0; display: flex; flex-direction: column;
+      background: var(--bg-2); border-right: 1px solid var(--border);
+      overflow-y: auto; overflow-x: hidden;
+    }
+    .jmc-sidebar-hdr {
+      padding: 20px 18px 14px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .jmc-sidebar-hdr-icon { font-size: 22px; }
+    .jmc-sidebar-hdr-text { font-family: var(--font-disp); font-size: 22px; letter-spacing: .06em; color: var(--text); line-height: 1; }
+    .jmc-sidebar-hdr-sub { font-family: var(--font-mono); font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--text-3); margin-top: 2px; }
+
+    .jmc-cat { padding: 14px 0 4px; }
+    .jmc-cat-label {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase;
+      color: var(--text-3); padding: 0 18px 6px; display: flex; align-items: center; gap: 6px;
+    }
+    .jmc-cat-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+    .jmc-mission {
+      display: flex; align-items: flex-start; gap: 10px; padding: 9px 18px;
+      cursor: pointer; transition: background 0.12s, border-color 0.15s;
+      border-left: 3px solid transparent; position: relative;
+    }
+    .jmc-mission:hover { background: var(--bg-3); }
+    .jmc-mission.active { background: var(--bg-3); border-left-color: var(--red); }
+    .jmc-mission-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+    .jmc-mission-name { font-family: var(--font-cond); font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--text); line-height: 1.3; }
+    .jmc-mission-desc { font-size: 10px; color: var(--text-3); line-height: 1.35; margin-top: 2px; }
+
+    /* Stealth mode mission sidebar */
+    [data-theme="dark"] .jmc-sidebar { background: #010c05; border-right-color: #042210; }
+    [data-theme="dark"] .jmc-sidebar-hdr { border-bottom-color: #042210; }
+    [data-theme="dark"] .jmc-sidebar-hdr-text { color: #00ff88; text-shadow: 0 0 20px rgba(0,255,136,0.3); }
+    [data-theme="dark"] .jmc-sidebar-hdr-sub { color: rgba(0,200,80,0.4); }
+    [data-theme="dark"] .jmc-cat-label { color: rgba(0,200,80,0.35); }
+    [data-theme="dark"] .jmc-cat-label::after { background: #042210; }
+    [data-theme="dark"] .jmc-mission:hover { background: rgba(0,200,80,0.05); }
+    [data-theme="dark"] .jmc-mission.active { background: rgba(0,200,80,0.08); border-left-color: #00e87a; }
+    [data-theme="dark"] .jmc-mission-name { color: #ceeedd; }
+    [data-theme="dark"] .jmc-mission-desc { color: rgba(0,180,70,0.45); }
+
+    .jmc-custom-sep { margin: 6px 18px 0; padding-top: 10px; border-top: 1px solid var(--border); }
+    [data-theme="dark"] .jmc-custom-sep { border-top-color: #042210; }
+
+    /* ── Mission Main Area ── */
+    .jmc-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .jmc-briefing-bar {
+      display: flex; align-items: center; gap: 12px; padding: 14px 24px;
+      border-bottom: 1px solid var(--border); background: var(--bg-2); flex-shrink: 0;
+    }
+    .jmc-briefing-label {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--text-3); white-space: nowrap;
+    }
+    .jmc-briefing-title {
+      font-family: var(--font-cond); font-size: 16px; font-weight: 700;
+      letter-spacing: .02em; color: var(--text); flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .jmc-briefing-status {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em;
+      padding: 3px 10px; border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+    }
+    .jmc-briefing-status.loading { background: var(--amber-dim); color: var(--amber); }
+    .jmc-briefing-status.ready { background: var(--green-dim); color: var(--green); }
+    .jmc-briefing-status.idle { background: var(--bg-4); color: var(--text-3); }
+
+    [data-theme="dark"] .jmc-briefing-bar { background: #010c05; border-bottom-color: #042210; }
+    [data-theme="dark"] .jmc-briefing-title { color: #ceeedd; }
+    [data-theme="dark"] .jmc-briefing-label { color: rgba(0,200,80,0.4); }
+    [data-theme="dark"] .jmc-briefing-status.idle { background: rgba(0,200,80,0.06); color: rgba(0,200,80,0.4); }
+    [data-theme="dark"] .jmc-briefing-status.loading { background: rgba(0,255,136,0.08); color: #00e87a; }
+
+    /* ── Results area ── */
+    .jmc-results { flex: 1; overflow-y: auto; padding: 0; scroll-behavior: smooth; }
+
+    .jmc-empty {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 10px; opacity: 0.5; padding: 40px;
+    }
+    .jmc-empty-icon { font-size: 48px; margin-bottom: 4px; }
+    .jmc-empty-title { font-family: var(--font-disp); font-size: 20px; letter-spacing: .06em; color: var(--text-3); }
+    .jmc-empty-sub { font-family: var(--font-cond); font-size: 12px; color: var(--text-3); text-align: center; letter-spacing: .04em; text-transform: uppercase; }
+    [data-theme="dark"] .jmc-empty-title { color: rgba(0,200,80,0.3); }
+    [data-theme="dark"] .jmc-empty-sub { color: rgba(0,200,80,0.22); }
+
+    /* Thinking / loading */
+    .jmc-thinking {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 14px;
+    }
+    .jmc-thinking-spinner {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 3px solid var(--border); border-top-color: var(--red);
+      animation: spin 0.8s linear infinite;
+    }
+    [data-theme="dark"] .jmc-thinking-spinner { border-color: #042210; border-top-color: #00e87a; }
+    .jmc-thinking-text {
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em;
+      color: var(--text-3); animation: pulse 1.2s ease-in-out infinite;
+    }
+    [data-theme="dark"] .jmc-thinking-text { color: rgba(0,200,80,0.5); }
+    @keyframes pulse { 0%,100%{ opacity:0.5 } 50%{ opacity:1 } }
+
+    /* ── Result card ── */
+    .jmc-result-card {
+      margin: 16px 24px; background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); overflow: hidden;
+    }
+    [data-theme="dark"] .jmc-result-card { background: #010c05; border-color: #042810; }
+
+    .jmc-result-headline-wrap {
+      padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(135deg, var(--bg-3) 0%, var(--bg-2) 100%);
+    }
+    [data-theme="dark"] .jmc-result-headline-wrap {
+      background: linear-gradient(135deg, #021a08 0%, #010c05 100%);
+      border-bottom-color: #042210;
+    }
+    .jmc-result-headline {
+      font-family: var(--font-cond); font-size: 17px; font-weight: 700;
+      letter-spacing: .02em; color: var(--text); line-height: 1.3;
+    }
+    [data-theme="dark"] .jmc-result-headline { color: #eafff2; text-shadow: 0 0 15px rgba(0,255,120,0.15); }
+    .jmc-result-insight {
+      padding: 10px 20px 12px; border-bottom: 1px solid var(--border);
+      font-size: 12px; color: var(--text-2); line-height: 1.6;
+    }
+    [data-theme="dark"] .jmc-result-insight { color: rgba(200,238,221,0.7); border-bottom-color: #042210; }
+
+    .jmc-result-listing {
+      padding: 10px 20px 12px; border-bottom: 1px solid var(--border);
+      background: rgba(0,232,122,0.04);
+    }
+    .jmc-result-listing-lbl {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em;
+      color: var(--green); margin-bottom: 4px; text-transform: uppercase;
+    }
+    .jmc-result-listing p { font-size: 12px; color: var(--text-2); margin: 0; line-height: 1.5; }
+    [data-theme="dark"] .jmc-result-listing { background: rgba(0,232,122,0.03); border-bottom-color: #042210; }
+
+    /* ── Contact rows in result ── */
+    .jmc-contacts-hdr {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: .14em;
+      color: var(--text-3); text-transform: uppercase; padding: 10px 20px 6px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    [data-theme="dark"] .jmc-contacts-hdr { color: rgba(0,200,80,0.4); }
+
+    .jmc-contact {
+      display: flex; align-items: flex-start; gap: 12px; padding: 10px 20px;
+      border-top: 1px solid var(--border); cursor: pointer; transition: background 0.12s;
+    }
+    .jmc-contact:hover { background: var(--bg-3); }
+    [data-theme="dark"] .jmc-contact { border-top-color: #031a0c; }
+    [data-theme="dark"] .jmc-contact:hover { background: rgba(0,200,80,0.04); }
+
+    .jmc-contact-rank {
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+      width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; background: var(--bg-4); flex-shrink: 0; font-weight: 600;
+    }
+    [data-theme="dark"] .jmc-contact-rank { background: rgba(0,200,80,0.08); color: rgba(0,200,80,0.6); }
+
+    .jmc-contact-info { flex: 1; min-width: 0; }
+    .jmc-contact-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
+    .jmc-contact-name {
+      font-family: var(--font-cond); font-size: 14px; font-weight: 700;
+      letter-spacing: .02em; color: var(--text);
+    }
+    [data-theme="dark"] .jmc-contact-name { color: #eafff2; }
+
+    .jmc-urgency-badge {
+      font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+      padding: 1px 6px; border-radius: 3px; letter-spacing: .04em;
+    }
+    .jmc-urgency-badge.high { background: var(--red-dim); color: var(--red); }
+    .jmc-urgency-badge.medium { background: var(--amber-dim); color: var(--amber); }
+    .jmc-urgency-badge.low { background: var(--green-dim); color: var(--green); }
+
+    .jmc-contact-stage { font-size: 10px; color: var(--text-3); }
+    .jmc-contact-reason { font-size: 11px; color: var(--text-2); line-height: 1.45; margin-top: 2px; }
+    [data-theme="dark"] .jmc-contact-reason { color: rgba(200,238,221,0.55); }
+    .jmc-contact-action {
+      font-size: 11px; color: var(--red); font-family: var(--font-mono);
+      margin-top: 4px; line-height: 1.4;
+    }
+    [data-theme="dark"] .jmc-contact-action { color: #00e87a; }
+
+    /* ── Action bar ── */
+    .jmc-action-bar {
+      display: flex; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border);
+      background: var(--bg-3); flex-wrap: wrap;
+    }
+    [data-theme="dark"] .jmc-action-bar { background: #010905; border-top-color: #042210; }
+
+    .jmc-action-btn {
+      flex: 1; min-width: 130px; display: flex; align-items: center; justify-content: center;
+      gap: 6px; padding: 10px 14px; border-radius: var(--radius);
+      border: 1px solid var(--border); background: var(--bg-2);
+      font-family: var(--font-cond); font-size: 12px; font-weight: 700;
+      letter-spacing: .06em; cursor: pointer; transition: all 0.15s;
+      color: var(--text-2); text-transform: uppercase;
+    }
+    .jmc-action-btn:hover { border-color: var(--text-3); color: var(--text); background: var(--bg-4); }
+    .jmc-action-btn.download:hover { border-color: var(--text-3); color: var(--text); }
+    .jmc-action-btn.powerdial:hover { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+    .jmc-action-btn.jireh-auto:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); }
+
+    [data-theme="dark"] .jmc-action-btn { background: #010c05; border-color: #042210; color: rgba(0,200,80,0.45); }
+    [data-theme="dark"] .jmc-action-btn:hover { border-color: rgba(0,200,80,0.3); color: #ceeedd; background: rgba(0,200,80,0.06); }
+    [data-theme="dark"] .jmc-action-btn.powerdial:hover { border-color: #00e87a; color: #00e87a; background: rgba(0,232,122,0.08); }
+    [data-theme="dark"] .jmc-action-btn.jireh-auto:hover { border-color: #00c8ff; color: #00c8ff; background: rgba(0,200,255,0.06); }
+
+    .jmc-action-icon { font-size: 15px; }
+
+    /* ── Methodology footer ── */
+    .jmc-methodology {
+      padding: 10px 20px; border-top: 1px solid var(--border);
+      font-family: var(--font-mono); font-size: 10px; color: var(--text-3);
+      letter-spacing: .03em; line-height: 1.5;
+    }
+    [data-theme="dark"] .jmc-methodology { border-top-color: #031a0c; color: rgba(0,180,70,0.35); }
+
+    /* ── Custom query input bar ── */
+    .jmc-input-bar {
+      display: flex; gap: 8px; padding: 12px 24px 14px;
+      border-top: 1px solid var(--border); background: var(--bg-2); flex-shrink: 0;
+    }
+    [data-theme="dark"] .jmc-input-bar { background: #010c05; border-top-color: #042210; }
+    .jmc-input {
+      flex: 1; background: var(--bg-3); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-family: var(--font-body);
+      font-size: 13px; padding: 9px 14px; outline: none; transition: border-color 0.15s;
+    }
+    .jmc-input:focus { border-color: var(--red); }
+    .jmc-input::placeholder { color: var(--text-3); }
+    [data-theme="dark"] .jmc-input { background: rgba(0,200,80,0.04); border-color: #042210; color: #ceeedd; }
+    [data-theme="dark"] .jmc-input:focus { border-color: rgba(0,200,80,0.4); }
+    [data-theme="dark"] .jmc-input::placeholder { color: rgba(0,200,80,0.3); }
+
+    .jmc-submit-btn {
+      background: var(--red); color: #fff; border: none; border-radius: var(--radius);
+      font-family: var(--font-cond); font-size: 13px; font-weight: 700;
+      letter-spacing: .08em; padding: 9px 20px; cursor: pointer;
+      transition: opacity 0.15s; flex-shrink: 0; text-transform: uppercase;
+    }
+    .jmc-submit-btn:hover { opacity: 0.85; }
+    .jmc-submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    [data-theme="dark"] .jmc-submit-btn {
+      background: linear-gradient(135deg, #005a28 0%, #009848 60%, #005a28 100%);
+    }
+    [data-theme="dark"] .jmc-submit-btn:hover { box-shadow: 0 0 18px rgba(0,200,80,0.35); opacity: 1; }
+
+    /* ── Responsive: collapse sidebar on narrow screens ── */
+    @media (max-width: 768px) {
+      .jmc-sidebar { width: 52px; overflow: visible; }
+      .jmc-sidebar-hdr-text, .jmc-sidebar-hdr-sub,
+      .jmc-mission-name, .jmc-mission-desc,
+      .jmc-cat-label span, .jmc-cat-label::after { display: none; }
+      .jmc-cat-label { justify-content: center; padding: 0; }
+      .jmc-mission { justify-content: center; padding: 10px 0; border-left: none; border-bottom: 2px solid transparent; }
+      .jmc-mission.active { border-bottom-color: var(--red); border-left-color: transparent; }
+      .jmc-custom-sep { margin: 0; padding: 0; border: none; }
+    }
     .crv-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; margin-bottom: 4px; }
     .crv-card-head { padding: 12px 16px 0; }
     .crv-card-headline { font-family: var(--font-cond); font-size: 15px; font-weight: 700; letter-spacing: 0.03em; color: var(--text); line-height: 1.3; }
@@ -2504,7 +2760,7 @@
     .crv-btn-dial:hover { background: var(--green-dim); border-color: var(--green); color: var(--green); }
     .crv-btn-jireh:hover { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
     .crv-methodology { padding: 8px 16px 10px; border-top: 1px solid var(--border); }
-    .crv-methodology p { font-size: 10px; color: var(--text-3); font-family: var(--font-mono); margin: 0; letter-spacing: 0.03em; }}
+    .crv-methodology p { font-size: 10px; color: var(--text-3); font-family: var(--font-mono); margin: 0; letter-spacing: 0.03em; }
   </style>
   <!-- Google Maps Places Autocomplete — key loaded from server -->
   <script>
@@ -2980,34 +3236,139 @@
       </div>
 
       <div class="view" id="view-intelligence">
-        <div style="height:100%;overflow-y:auto;padding:24px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-            <span style="font-size:22px">🧠</span>
-            <span style="font-family:var(--font-disp);font-size:28px;letter-spacing:.04em">JIREH INTELLIGENCE</span>
-          </div>
-          <div style="font-family:var(--font-cond);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);margin-bottom:20px">AI-powered CRM analysis · Live listing cross-reference · Predictive lead ranking</div>
-          <div style="margin-bottom:12px">
-            <div class="crv-intel-chips-label">Quick Analysis</div>
-            <div class="crv-intel-chips">
-              <span class="crv-intel-chip" onclick="intelAsk('Who should I call first today?')">Who to call first today?</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Top 10 hottest prospects right now')">Top 10 hottest prospects</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Who toured recently and has not been followed up with?')">Toured · no follow-up</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Who has an upcoming move-in date?')">Upcoming move-ins</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Who has gone cold in the last 30 days?')">Gone cold</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Who is most likely to rent in the next two weeks?')">Most likely to rent soon</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Which leads match our current available listings?')">Match available listings</span>
-              <span class="crv-intel-chip" onclick="intelAsk('Who came in from Zillow or apartments.com this week?')">New web leads this week</span>
+        <div class="jmc-layout">
+          <!-- ── Mission Sidebar ── -->
+          <div class="jmc-sidebar">
+            <div class="jmc-sidebar-hdr">
+              <span class="jmc-sidebar-hdr-icon">🧠</span>
+              <div>
+                <div class="jmc-sidebar-hdr-text">JIREH</div>
+                <div class="jmc-sidebar-hdr-sub">Mission Command</div>
+              </div>
+            </div>
+
+            <!-- LEASING MISSIONS -->
+            <div class="jmc-cat">
+              <div class="jmc-cat-label"><span>Leasing</span></div>
+              <div class="jmc-mission" data-query="Who should I call first today? Rank by likelihood to rent, engagement level, and urgency." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">🎯</span>
+                <div>
+                  <div class="jmc-mission-name">Priority Call List</div>
+                  <div class="jmc-mission-desc">Who to call first today, ranked by urgency</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Top 10 hottest prospects right now — who is most likely to rent in the next two weeks based on engagement, showing activity, budget match, and move-in timeline?" onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">🔥</span>
+                <div>
+                  <div class="jmc-mission-name">Hottest Prospects</div>
+                  <div class="jmc-mission-desc">Most likely to sign a lease this week</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Which leads match our current available listings? Cross-reference their stated beds, budget, and property interest against what is actually available right now." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">🏠</span>
+                <div>
+                  <div class="jmc-mission-name">Listing Match</div>
+                  <div class="jmc-mission-desc">Leads matching current vacancies</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Who came in from Zillow, apartments.com, or any web source in the last 7 days that has NOT been contacted yet or only contacted once?" onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">🌐</span>
+                <div>
+                  <div class="jmc-mission-name">New Web Leads</div>
+                  <div class="jmc-mission-desc">Fresh inbound leads needing first contact</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Who has an upcoming move-in date in the next 30 days? Prioritize those who haven't been followed up with to confirm move-in details." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">📦</span>
+                <div>
+                  <div class="jmc-mission-name">Upcoming Move-Ins</div>
+                  <div class="jmc-mission-desc">Prospects with move-in dates approaching</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- FOLLOW-UP MISSIONS -->
+            <div class="jmc-cat">
+              <div class="jmc-cat-label"><span>Follow-Up</span></div>
+              <div class="jmc-mission" data-query="Who toured or had a showing recently but has NOT been followed up with? These are warm leads going cold — rank by days since showing and engagement level." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">👀</span>
+                <div>
+                  <div class="jmc-mission-name">Toured · No Follow-Up</div>
+                  <div class="jmc-mission-desc">Had showings but haven't heard back</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Who has gone cold in the last 30 days? These are people we were actively talking to who suddenly stopped responding. Rank by how engaged they were before going silent." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">🧊</span>
+                <div>
+                  <div class="jmc-mission-name">Gone Cold</div>
+                  <div class="jmc-mission-desc">Active leads who went silent</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Who in the CRM has not been contacted in over 14 days and is still in an active pipeline stage (Lead, Prospect, Applicant, Approved)? These are people falling through the cracks." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">⚠️</span>
+                <div>
+                  <div class="jmc-mission-name">Falling Through Cracks</div>
+                  <div class="jmc-mission-desc">Active leads with no recent contact</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ENFORCEMENT / RESIDENT MISSIONS -->
+            <div class="jmc-cat">
+              <div class="jmc-cat-label"><span>Resident Ops</span></div>
+              <div class="jmc-mission" data-query="Who is currently Delinquent on rent? Rank by urgency and identify who might need help finding rent assistance programs, payment plans, or who should be escalated. Include any past-due balance data and days past due." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">💰</span>
+                <div>
+                  <div class="jmc-mission-name">Delinquent Residents</div>
+                  <div class="jmc-mission-desc">Past-due tenants needing outreach or help</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Who is in the Evicting stage? Rank by urgency and suggest whether to attempt one last resolution call, connect them with caseworker resources, or proceed with enforcement. Include timeline context." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">⚖️</span>
+                <div>
+                  <div class="jmc-mission-name">Eviction Pipeline</div>
+                  <div class="jmc-mission-desc">Cases in eviction needing action</div>
+                </div>
+              </div>
+              <div class="jmc-mission" data-query="Which residents haven't been contacted in over 30 days for a wellness or satisfaction check? Include current residents, especially newer residents in their first 90 days." onclick="jmcSelectMission(this)">
+                <span class="jmc-mission-icon">🏡</span>
+                <div>
+                  <div class="jmc-mission-name">Resident Check-Ins</div>
+                  <div class="jmc-mission-desc">Residents due for a wellness check</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- CUSTOM MISSION -->
+            <div class="jmc-custom-sep"></div>
+            <div class="jmc-mission" data-query="custom" onclick="jmcCustomMode()" id="jmc-custom-mission">
+              <span class="jmc-mission-icon">✏️</span>
+              <div>
+                <div class="jmc-mission-name">Custom Mission</div>
+                <div class="jmc-mission-desc">Ask Jireh anything about your CRM</div>
+              </div>
             </div>
           </div>
-          <div style="display:flex;gap:8px;margin-bottom:20px">
-            <input id="intel-input" class="crv-intel-input" type="text" placeholder="Ask Jireh to analyze your CRM…" onkeydown="if(event.key==='Enter')intelSubmit()">
-            <button id="intel-btn" class="crv-intel-btn" onclick="intelSubmit()">Analyze</button>
-          </div>
-          <div id="intel-history" class="crv-intel-history" style="padding:0">
-            <div class="crv-intel-empty" id="intel-empty">
-              <div class="crv-intel-empty-icon">🧠</div>
-              <div>Ask Jireh to analyze your CRM</div>
-              <div style="font-size:10px;margin-top:4px;opacity:.7">Cross-references live AppFolio listings &amp; application guidelines</div>
+
+          <!-- ── Main Results Area ── -->
+          <div class="jmc-main">
+            <div class="jmc-briefing-bar">
+              <span class="jmc-briefing-label" id="jmc-bar-label">MISSION BRIEFING</span>
+              <span class="jmc-briefing-title" id="jmc-bar-title">Select a mission to begin</span>
+              <span class="jmc-briefing-status idle" id="jmc-bar-status">STANDBY</span>
+            </div>
+
+            <div class="jmc-results" id="jmc-results">
+              <div class="jmc-empty" id="jmc-empty">
+                <div class="jmc-empty-icon">🧠</div>
+                <div class="jmc-empty-title">MISSION COMMAND</div>
+                <div class="jmc-empty-sub">Select a mission from the sidebar or create a custom query<br>Jireh will analyze your CRM data and cross-reference live listings</div>
+              </div>
+            </div>
+
+            <div class="jmc-input-bar">
+              <input id="jmc-input" class="jmc-input" type="text" placeholder="Ask Jireh anything — or pick a mission from the left…" onkeydown="if(event.key==='Enter')jmcSubmitCustom()">
+              <button id="jmc-submit-btn" class="jmc-submit-btn" onclick="jmcSubmitCustom()">Launch</button>
             </div>
           </div>
         </div>
@@ -10955,114 +11316,193 @@ setInterval(() => {
 }, 1000);
 
 // ══════════════════════════════════════════════════════════════════
-// JIREH INTELLIGENCE — AI CRM Analysis Engine
+// JIREH MISSION COMMAND — AI CRM Analysis Engine
 // ══════════════════════════════════════════════════════════════════
-let _intelLastResult = null;
+let _jmcLastResult = null;
+let _jmcActiveMission = null;
+let _jmcLoading = false;
 
-function intelAsk(query) {
-  const inp = document.getElementById('intel-input');
-  if (inp) inp.value = query;
-  intelSubmit();
+// Legacy aliases so other parts of the app still work
+function intelAsk(query) { jmcRunQuery(query, 'Custom Query'); }
+function intelSubmit() { jmcSubmitCustom(); }
+
+function jmcSelectMission(el) {
+  if (_jmcLoading) return;
+  const query = el.getAttribute('data-query');
+  if (!query || query === 'custom') return;
+  // Highlight active mission
+  document.querySelectorAll('.jmc-mission').forEach(m => m.classList.remove('active'));
+  el.classList.add('active');
+  const name = el.querySelector('.jmc-mission-name')?.textContent || 'Mission';
+  jmcRunQuery(query, name);
 }
 
-async function intelSubmit() {
-  const inp   = document.getElementById('intel-input');
+function jmcCustomMode() {
+  document.querySelectorAll('.jmc-mission').forEach(m => m.classList.remove('active'));
+  document.getElementById('jmc-custom-mission')?.classList.add('active');
+  document.getElementById('jmc-input')?.focus();
+  jmcSetBar('CUSTOM MISSION', 'Type your query below and hit Launch', 'idle', 'STANDBY');
+}
+
+function jmcSubmitCustom() {
+  const inp = document.getElementById('jmc-input');
   const query = inp?.value?.trim();
-  if (!query) return;
-  if (inp) inp.value = '';
-  const btn  = document.getElementById('intel-btn');
-  const hist = document.getElementById('intel-history');
-  document.getElementById('intel-empty')?.remove();
-  if (btn) { btn.textContent = '…'; btn.disabled = true; }
-  if (hist) {
-    const d = document.createElement('div');
-    d.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:4px';
-    d.innerHTML = `<div style="max-width:90%;background:var(--bg-3);border:1px solid var(--border);border-radius:10px 10px 2px 10px;padding:8px 12px;font-size:12px;color:var(--text)">${esc(query)}</div>`;
-    hist.appendChild(d); hist.scrollTop = hist.scrollHeight;
+  if (!query || _jmcLoading) return;
+  inp.value = '';
+  document.querySelectorAll('.jmc-mission').forEach(m => m.classList.remove('active'));
+  document.getElementById('jmc-custom-mission')?.classList.add('active');
+  jmcRunQuery(query, 'Custom: ' + query.slice(0, 60));
+}
+
+function jmcSetBar(label, title, statusClass, statusText) {
+  const lbl = document.getElementById('jmc-bar-label');
+  const ttl = document.getElementById('jmc-bar-title');
+  const st  = document.getElementById('jmc-bar-status');
+  if (lbl) lbl.textContent = label;
+  if (ttl) ttl.textContent = title;
+  if (st) { st.textContent = statusText; st.className = 'jmc-briefing-status ' + statusClass; }
+}
+
+async function jmcRunQuery(query, missionName) {
+  if (_jmcLoading) return;
+  _jmcLoading = true;
+  _jmcActiveMission = missionName;
+
+  const results = document.getElementById('jmc-results');
+  const btn = document.getElementById('jmc-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+  jmcSetBar('MISSION ACTIVE', missionName, 'loading', 'ANALYZING');
+
+  // Show loading state
+  if (results) {
+    results.innerHTML = `
+      <div class="jmc-thinking">
+        <div class="jmc-thinking-spinner"></div>
+        <div class="jmc-thinking-text">Jireh is scanning CRM data &amp; cross-referencing live listings…</div>
+      </div>`;
   }
-  const thk = document.createElement('div');
-  thk.id = 'intel-thinking';
-  thk.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 0';
-  thk.innerHTML = `<span style="font-size:16px">🧠</span><span style="font-size:11px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.05em">Analyzing CRM + checking live listings…</span>`;
-  if (hist) { hist.appendChild(thk); hist.scrollTop = hist.scrollHeight; }
+
   try {
     const r = await api('/api/jareih/analyze', 'POST', { query });
-    thk.remove();
-    if (r.result) { _intelLastResult = { result: r.result, query }; renderIntelResult(r.result, hist); }
+    if (r.result) {
+      _jmcLastResult = { result: r.result, query, missionName };
+      jmcSetBar('MISSION COMPLETE', missionName, 'ready', r.result.topContacts?.length + ' CONTACTS');
+      jmcRenderResult(r.result, results);
+    } else {
+      throw new Error('No result returned');
+    }
   } catch(e) {
-    thk.remove();
-    const ed = document.createElement('div');
-    ed.innerHTML = `<div style="padding:10px;background:rgba(255,70,70,0.07);border:1px solid rgba(255,70,70,0.15);border-radius:8px;font-size:11px;color:#ff6644">Analysis failed: ${esc(e.message)}</div>`;
-    if (hist) hist.appendChild(ed);
+    jmcSetBar('MISSION FAILED', missionName, 'idle', 'ERROR');
+    if (results) {
+      results.innerHTML = `
+        <div style="padding:24px">
+          <div style="padding:16px;background:rgba(255,70,70,0.07);border:1px solid rgba(255,70,70,0.15);border-radius:var(--radius-lg);font-size:12px;color:#ff6644">
+            <strong>Analysis failed:</strong> ${esc(e.message)}<br>
+            <span style="font-size:11px;opacity:0.7;margin-top:4px;display:block">Try again or rephrase your query.</span>
+          </div>
+        </div>`;
+    }
   }
-  if (btn) { btn.textContent = 'Analyze'; btn.disabled = false; }
-  if (inp) inp.focus();
-  if (hist) hist.scrollTop = hist.scrollHeight;
+
+  _jmcLoading = false;
+  if (btn) { btn.disabled = false; btn.textContent = 'Launch'; }
 }
 
-function renderIntelResult(result, hist) {
-  if (!hist) return;
-  const contacts  = result.topContacts || [];
-  const urgColor  = { high: 'var(--red)', medium: '#cc8800', low: '#00aa60' };
-  const urgLabel  = { high: '🔴 HIGH', medium: '🟡 MED', low: '🟢 LOW' };
-  let html = '<div class="crv-card">';
-  html += '<div class="crv-card-head"><div class="crv-card-headline">' + esc(result.headline || '') + '</div></div>';
-  html += '<div class="crv-card-insight"><p>' + esc(result.insight || '') + '</p></div>';
-  if (result.listingContext) {
-    html += '<div class="crv-card-listing"><div class="crv-card-listing-lbl">📋 LIVE LISTING DATA</div><p>' + esc(result.listingContext) + '</p></div>';
+function jmcRenderResult(result, container) {
+  if (!container) return;
+  const contacts = result.topContacts || [];
+  const urgLabels = { high: '🔴 HIGH', medium: '🟡 MEDIUM', low: '🟢 LOW' };
+
+  let html = '<div class="jmc-result-card">';
+
+  // Headline
+  html += '<div class="jmc-result-headline-wrap">';
+  html += '<div class="jmc-result-headline">' + esc(result.headline || '') + '</div>';
+  html += '</div>';
+
+  // Insight
+  if (result.insight) {
+    html += '<div class="jmc-result-insight">' + esc(result.insight) + '</div>';
   }
+
+  // Listing context
+  if (result.listingContext) {
+    html += '<div class="jmc-result-listing">';
+    html += '<div class="jmc-result-listing-lbl">📋 Live Listing Cross-Reference</div>';
+    html += '<p>' + esc(result.listingContext) + '</p>';
+    html += '</div>';
+  }
+
+  // Contacts
   if (contacts.length) {
-    html += '<div class="crv-contacts-section"><div class="crv-contacts-lbl">Top Contacts (' + contacts.length + ')</div>';
+    html += '<div class="jmc-contacts-hdr">';
+    html += '<span>Ranked Contacts (' + contacts.length + ')</span>';
+    html += '<span style="font-size:8px;opacity:0.6">CLICK TO OPEN RECORD</span>';
+    html += '</div>';
+
     contacts.forEach((c, i) => {
       const clickAttr = c.id ? ` onclick="openContact('${c.id}')"` : '';
-      const urgBg = c.urgency === 'high' ? '232,0,58' : c.urgency === 'medium' ? '200,136,0' : '0,170,96';
-      html += '<div class="crv-contact-row"' + clickAttr + '>'
-        + '<div class="crv-contact-rank">' + (i + 1) + '</div>'
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">'
-        + '<span class="crv-contact-name">' + esc(c.name || '') + '</span>'
-        + (c.urgency ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(' + urgBg + ',0.12);color:' + (urgColor[c.urgency] || 'var(--text-3)') + ';font-family:var(--font-mono);font-weight:700">' + urgLabel[c.urgency] + '</span>' : '')
-        + (c.stage ? '<span style="font-size:10px;color:var(--text-3)">' + esc(c.stage) + '</span>' : '')
-        + '</div>'
-        + '<div class="crv-contact-reason">' + esc(c.reason || '') + '</div>'
-        + (c.suggestedAction ? '<div class="crv-contact-action">→ ' + esc(c.suggestedAction) + '</div>' : '')
-        + '</div></div>';
+      html += '<div class="jmc-contact"' + clickAttr + '>';
+      html += '<div class="jmc-contact-rank">' + (i + 1) + '</div>';
+      html += '<div class="jmc-contact-info">';
+      html += '<div class="jmc-contact-top">';
+      html += '<span class="jmc-contact-name">' + esc(c.name || '') + '</span>';
+      if (c.urgency) {
+        html += '<span class="jmc-urgency-badge ' + c.urgency + '">' + (urgLabels[c.urgency] || c.urgency) + '</span>';
+      }
+      if (c.stage) {
+        html += '<span class="jmc-contact-stage">' + esc(c.stage) + '</span>';
+      }
+      html += '</div>';
+      if (c.reason) {
+        html += '<div class="jmc-contact-reason">' + esc(c.reason) + '</div>';
+      }
+      if (c.suggestedAction) {
+        html += '<div class="jmc-contact-action">→ ' + esc(c.suggestedAction) + '</div>';
+      }
+      html += '</div></div>';
     });
+
+    // Action bar
+    html += '<div class="jmc-action-bar">';
+    html += '<button class="jmc-action-btn download" onclick="jmcDownloadList()"><span class="jmc-action-icon">⬇</span> Download List</button>';
+    html += '<button class="jmc-action-btn powerdial" onclick="jmcPowerDial()"><span class="jmc-action-icon">📞</span> Power Dial All</button>';
+    html += '<button class="jmc-action-btn jireh-auto" onclick="jmcJirehCallAll()"><span class="jmc-action-icon">🤖</span> Jireh Calls All</button>';
     html += '</div>';
-    html += '<div class="crv-actions">'
-      + '<button class="crv-btn-dl" onclick="intelDownloadList()">⬇ Download List</button>'
-      + '<button class="crv-btn-dial" onclick="intelPowerDial()">📞 Power Dial</button>'
-      + '<button class="crv-btn-jireh" onclick="intelJireh_CallAll()">🤖 Jireh Calls All</button>'
-      + '</div>';
   }
+
+  // Methodology
   if (result.methodology) {
-    html += '<div class="crv-methodology"><p>' + esc(result.methodology) + '</p></div>';
+    html += '<div class="jmc-methodology">📊 ' + esc(result.methodology) + '</div>';
   }
+
   html += '</div>';
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  hist.appendChild(div);
-  hist.scrollTop = hist.scrollHeight;
+  container.innerHTML = html;
 }
 
-function intelDownloadList() {
-  const contacts = _intelLastResult?.result?.topContacts;
+function jmcDownloadList() {
+  const contacts = _jmcLastResult?.result?.topContacts;
   if (!contacts?.length) return;
+  const mission = _jmcLastResult?.missionName || 'mission';
   const rows = contacts.map((c, i) =>
     [i + 1, '"' + (c.name || '').replace(/"/g, '') + '"', c.stage || '', c.urgency || '',
      '"' + (c.reason || '').replace(/"/g, '') + '"',
      '"' + (c.suggestedAction || '').replace(/"/g, '') + '"'].join(',')
   );
-  const csv  = ['Rank,Name,Stage,Urgency,Reason,Suggested Action', ...rows].join('\n');
+  const csv = ['Rank,Name,Stage,Urgency,Reason,Suggested Action', ...rows].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement('a'), { href: url, download: `jireh-call-list-${new Date().toISOString().slice(0, 10)}.csv` });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {
+    href: url,
+    download: `jireh-${mission.replace(/[^a-z0-9]/gi,'-').toLowerCase()}-${new Date().toISOString().slice(0,10)}.csv`
+  });
   a.click(); URL.revokeObjectURL(url);
-  toast('📥 Call list downloaded', 'success');
+  toast('📥 Call list downloaded — ' + contacts.length + ' contacts', 'success');
 }
 
-async function intelPowerDial() {
-  const contacts = _intelLastResult?.result?.topContacts?.filter(c => c.id);
+async function jmcPowerDial() {
+  const contacts = _jmcLastResult?.result?.topContacts?.filter(c => c.id);
   if (!contacts?.length) { toast('No contacts with IDs to dial', 'error'); return; }
   toast('Building power dialer queue…', 'info');
   const people = (await Promise.all(contacts.map(c => api(`/api/people/${c.id}`).catch(() => null))))
@@ -11072,14 +11512,15 @@ async function intelPowerDial() {
   if (!people.length) { toast('None of the contacts have phone numbers', 'error'); return; }
   PD.queue = people; PD.index = 0; PD.paused = false; PD.active = true; PD.waitingToCall = true;
   pdShow(); pdUpdateUI(); openContact(PD.queue[0].id);
-  toast(`📞 Power dialer loaded — ${PD.queue.length} contacts from Jireh's list`, 'success');
+  toast(`📞 Power dialer loaded — ${PD.queue.length} contacts from Jireh mission`, 'success');
 }
 
-async function intelJireh_CallAll() {
-  const contacts = _intelLastResult?.result?.topContacts?.filter(c => c.id);
+async function jmcJirehCallAll() {
+  const contacts = _jmcLastResult?.result?.topContacts?.filter(c => c.id);
   if (!contacts?.length) { toast('No contacts with IDs', 'error'); return; }
-  const goal = _intelLastResult?.query || 'Follow up and gauge interest in renting';
-  const ok = confirm(`Have Jireh call all ${contacts.length} contacts?\n\nGoal: "${goal}"\n\nCalls launch every 45 seconds.`);
+  const goal = _jmcLastResult?.query || 'Follow up and gauge interest in renting';
+  const mission = _jmcLastResult?.missionName || 'mission';
+  const ok = confirm(`🤖 JIREH AUTO-CALL\n\nHave Jireh call all ${contacts.length} contacts from "${mission}"?\n\nGoal: "${goal.slice(0,100)}"\n\nCalls launch every 45 seconds.`);
   if (!ok) return;
   contacts.forEach((c, i) => {
     setTimeout(async () => {
@@ -11090,7 +11531,20 @@ async function intelJireh_CallAll() {
       } catch(e) {}
     }, i * 45000);
   });
-  toast(`🤖 Jireh will call ${contacts.length} contacts over ~${Math.round(contacts.length * 45 / 60)} minutes`, 'success');
+  toast(`🤖 Jireh will call ${contacts.length} contacts over ~${Math.round(contacts.length * 45 / 60)} min`, 'success');
+}
+
+// Legacy compatibility aliases
+function intelDownloadList() { jmcDownloadList(); }
+function intelPowerDial() { jmcPowerDial(); }
+function intelJireh_CallAll() { jmcJirehCallAll(); }
+function renderIntelResult(result, hist) {
+  // Legacy — if called from somewhere else, redirect
+  if (hist) {
+    const div = document.createElement('div');
+    jmcRenderResult(result, div);
+    hist.appendChild(div);
+  }
 }
 
 // Stage badge — shows matched contact's pipeline stage on incoming calls
