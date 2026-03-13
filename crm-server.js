@@ -16,6 +16,17 @@ const httpServer = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
+// ── Global crash guards — prevent silent process death on unhandled async errors ──
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Promise Rejection:', reason?.stack || reason);
+  // Log but do NOT exit — keeps the server alive for other requests
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err?.stack || err);
+  // Restart via Railway/PM2 rather than hanging in a broken state
+  process.exit(1);
+});
+
 // ── DATABASE_URL guard — crash loudly rather than silently lose data ──
 if (!process.env.DATABASE_URL) {
   console.error('❌ FATAL: DATABASE_URL is not set. Refusing to start without a database.');
@@ -3345,7 +3356,7 @@ async function initLeadScraper() {
   setTimeout(runLeadScraper, 15000);
   setInterval(runLeadScraper, 5 * 60 * 1000);
 }
-initLeadScraper();
+// initLeadScraper() is called inside checkDB→initDB chain below to ensure DB is ready first
 
 // Manual trigger endpoint
 app.post('/api/lead-scraper/run', auth, async (req, res) => {
@@ -5802,6 +5813,9 @@ app.post('/api/jareih/inject-ara', auth, async (req, res) => {
 
 
 checkDB().then(() => initDB()).then(() => {
+  // Lead scraper — moved here so it only starts after DB is fully initialized
+  initLeadScraper();
+
   // Showing followup text poller — runs every 2 minutes
   setInterval(pollShowingFollowups, 2 * 60 * 1000);
   setTimeout(pollShowingFollowups, 10000); // first check 10s after boot
@@ -5819,4 +5833,7 @@ checkDB().then(() => initDB()).then(() => {
     console.log(`Grok:     ${process.env.GROK_API_KEY ? '✓' : '✗'}`);
     console.log(`Jareih AI Calls: ${process.env.DEEPGRAM_API_KEY && process.env.GROK_API_KEY ? '✓ ready' : '✗ needs DEEPGRAM + GROK keys'}`);
   });
+}).catch(err => {
+  console.error('[FATAL] Startup failed:', err?.stack || err);
+  process.exit(1);
 }); // end checkDB().then(() => initDB()).then
