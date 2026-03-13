@@ -4380,6 +4380,7 @@ async function araTTS(text) {
     body: JSON.stringify({
       text,
       voice_id: 'ara',
+      language: 'en',
       output_format: { codec: 'mulaw', sample_rate: 8000, container: 'none' }
     })
   });
