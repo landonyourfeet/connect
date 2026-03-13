@@ -4416,6 +4416,7 @@ async function speakToCall(callId, text) {
   try {
     const audio = await araTTS(text);
     console.log(`[Ara speak] callId=${callId} streamSid=${session.streamSid} audioBytes=${audio.length}`);
+    session.araLock = true; // hold until mark event fires after playback
 
     // Twilio bidirectional streams require audio chunked in 20ms frames
     // mulaw 8000Hz = 8000 samples/sec × 1 byte/sample × 0.02s = 160 bytes per chunk
@@ -4429,6 +4430,10 @@ async function speakToCall(callId, text) {
       }));
     }
     console.log(`[Ara speak] sent ${Math.ceil(audio.length / CHUNK_SIZE)} chunks`);
+
+    // Send a mark event so we know when playback finishes
+    const markLabel = `ara-done-${Date.now()}`;
+    session.ws.send(JSON.stringify({ event: 'mark', streamSid: session.streamSid, mark: { name: markLabel } }));
 
     const clean = text.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
     session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
@@ -4449,22 +4454,37 @@ async function araRespond(callId, contactSpeech) {
     const actSummary = (ctx.recentActivity||[]).slice(0,8).map(a=>`[${a.type}] ${(a.body||'').slice(0,120)}`).join('\n');
     session.grokHistory = [{
       role: 'system',
-      content: `You are Jareih, a professional AI leasing agent calling on behalf of O.K.C. Real property management.
-Calling: ${ctx.name} (stage: ${ctx.stage||'Lead'})
-GOAL: ${session.goal}
-Notes: ${ctx.notes||'none'}
-Recent activity:\n${actSummary||'none'}
+      content: `You are Jie-rah (spelled Jareih), an AI assistant calling on behalf of O.K.C. Real property management in Oklahoma City.
 
-PRONUNCIATION: The company name is ALWAYS spoken as "O.K.C. Real" — never "okcreal", never "aukreal". Spell it out every time: O.K.C. Real.
+WHO YOU ARE CALLING: ${ctx.name} (stage: ${ctx.stage||'Lead'})
+YOUR GOAL FOR THIS CALL: ${session.goal}
+Notes on this person: ${ctx.notes||'none'}
+Recent activity with them:\n${actSummary||'none'}
 
-RULES:
-- Keep every response SHORT — 1-3 sentences, natural phone speech only
-- You are Jareih, an AI assistant from O.K.C. Real
-- If asked whether you are AI, say "I'm Jareih, an A.I. assistant with O.K.C. Real"
-- When the goal is achieved OR the contact wants to end the call, ALWAYS close with this exact line:
-  "Again, this is Jareih with O.K.C. Real, an A.I. assistant. Please give us a call back if you have any questions. Goodbye!" then append [END_CALL]
-- If goal achieved also append [GOAL_ACHIEVED]
-- No markdown, no lists — pure spoken language`
+YOUR PERSONALITY:
+You are warm, relaxed, and genuinely friendly — like a real person making a quick call, not a robot reading a script.
+Have a real conversation. Be curious about them. Listen. React naturally to what they say.
+Your goal is to build a connection AND achieve the mission — do both together, not one after the other.
+Sound like a person who actually cares, not an agent running through a checklist.
+
+HOW TO TALK:
+- Short, natural responses — 1-2 sentences usually. Let the conversation breathe.
+- Use casual connectors: "yeah", "totally", "oh nice", "got it", "for sure" when they fit naturally
+- React to what they actually said before moving to the next point
+- Ask only ONE question at a time — never stack multiple questions
+- No filler phrases like "Great!", "Absolutely!", "Certainly!" — just be natural
+- No markdown, no lists — pure conversational spoken language
+
+NAMES & PRONUNCIATION:
+- You are "Jie-rah" (Jareih) — introduce yourself as Jie-rah
+- The company is always "O.K.C. Real" — never "okcreal" or "aukreal", always spell it out
+
+ENDING THE CALL:
+- Only end when the goal is fully achieved OR the person clearly wants to go
+- Always close with: "Again, this is Jie-rah with O.K.C. Real, an A.I. assistant. Please give us a call back if you have any questions. Goodbye!" then append [END_CALL]
+- If goal was achieved, also append [GOAL_ACHIEVED]
+
+If asked whether you are AI: "Yeah, I'm Jie-rah, an A.I. assistant with O.K.C. Real — but I promise I'm way more fun than most!"`
     }];
   }
 
@@ -4627,14 +4647,23 @@ function setupJareihCallWS(server) {
           console.log(`[Ara WS] start callId=${callId} streamSid=${session.streamSid}`);
           broadcastToAll({ type:'jareih_call_update', callId, personId:session.personId, event:'status', status:'connected' });
           broadcastToAll({ type:'jareih_active_calls', calls: getActiveCallsPayload() });
-          setTimeout(async () => {
-            try {
-              console.log(`[Ara] firing greeting callId=${callId}`);
-              const greeting = await araRespond(callId, null);
-              console.log(`[Ara] greeting text="${greeting?.slice(0,60)}"`);
-              if (greeting) await speakToCall(callId, greeting);
-            } catch(e) { console.error('[Ara greeting]', e.message); }
-          }, 2000);
+          if (!session.greetingFired) {
+            session.greetingFired = true;
+            setTimeout(async () => {
+              try {
+                console.log(`[Ara] firing greeting callId=${callId}`);
+                const greeting = await araRespond(callId, null);
+                console.log(`[Ara] greeting text="${greeting?.slice(0,60)}"`);
+                if (greeting) await speakToCall(callId, greeting);
+              } catch(e) { console.error('[Ara greeting]', e.message); }
+            }, 2000);
+          }
+          break;
+        case 'mark':
+          // Ara finished speaking — unlock so contact speech can trigger responses
+          if (msg.mark?.name?.startsWith('ara-done-')) {
+            session.araLock = false;
+          }
           break;
         case 'media':
           if (dgWs.readyState === WebSocket.OPEN && msg.media?.payload) {
