@@ -2834,6 +2834,38 @@ app.post('/api/me/availability', auth, async (req, res) => {
 });
 
 app.get('/api/me', auth, async (req, res) => {
+
+// ─── Agent Call State (on-call / off-call broadcast) ─────────────────────────
+const _agentsOnCall = new Map(); // agentId -> { name, personId, direction, since }
+
+app.post('/api/me/call-state', auth, (req, res) => {
+  const { state, personId, personName, direction } = req.body; // state: 'on-call' | 'off-call'
+  const agentId = String(req.agent.id);
+  if (state === 'on-call') {
+    _agentsOnCall.set(agentId, { name: req.agent.name, personId, personName, direction, since: Date.now() });
+  } else {
+    _agentsOnCall.delete(agentId);
+  }
+  broadcastToAll({
+    type: 'agent_call_state',
+    agentId,
+    agentName: req.agent.name,
+    state,
+    personId: personId || null,
+    personName: personName || null,
+    direction: direction || null,
+    onCallAgentIds: Array.from(_agentsOnCall.keys())
+  });
+  res.json({ ok: true });
+});
+
+app.get('/api/agents/on-call', auth, (req, res) => {
+  const result = {};
+  for (const [id, info] of _agentsOnCall) { result[id] = info; }
+  res.json(result);
+});
+
+app.get('/api/me', auth, async (req, res) => {
   try {
     const r = await pool.query('SELECT id,name,email,role,phone,avatar_color,avatar_b64,gmail_email,is_active FROM agents WHERE id=$1', [req.agent.id]);
     res.json(r.rows[0]);
