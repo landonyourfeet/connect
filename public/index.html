@@ -7306,30 +7306,40 @@ const JirehVoice = (() => {
   let _audioCtx = null;
   let _analyser = null;
   let _analyserData = null;
-  let _micStream = null;
   let _vizRaf = null;
-  let _prevMode = null;
+  let _speechActive = false; // tracks whether user is actively speaking
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  // ── Audio → Bioluminescence bridge ──────────────────────────────────────
+  // ── Bioluminescence bridge ─────────────────────────────────────────────
   function initAudioContext() {
     if (_audioCtx) return;
-    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
   }
 
-  function startVizLoop() {
+  // Simulated mic energy based on speechstart/speechend events
+  // (avoids getUserMedia which fights SpeechRecognition for the mic)
+  let _simTarget = 0;
+  let _simSmooth = 0;
+  function startSimVizLoop() {
     if (_vizRaf) return;
     function tick() {
       _vizRaf = requestAnimationFrame(tick);
-      if (!_analyser || !_analyserData) { JirehOrganic.setVoice(0); return; }
-      _analyser.getByteFrequencyData(_analyserData);
-      const bins = _analyserData.length;
-      const s = Math.floor(bins * 0.04), e = Math.floor(bins * 0.50);
-      let sum = 0;
-      for (let i = s; i < e; i++) sum += _analyserData[i];
-      const level = (e > s) ? (sum / (e - s)) / 90 : 0;
-      JirehOrganic.setVoice(Math.max(0, Math.min(1, level)));
+      if (_analyser && _analyserData) {
+        // Real audio playing (Ara's voice) — read actual levels
+        _analyser.getByteFrequencyData(_analyserData);
+        const bins = _analyserData.length;
+        const s = Math.floor(bins * 0.04), e = Math.floor(bins * 0.50);
+        let sum = 0;
+        for (let i = s; i < e; i++) sum += _analyserData[i];
+        const level = (e > s) ? (sum / (e - s)) / 90 : 0;
+        JirehOrganic.setVoice(Math.max(0, Math.min(1, level)));
+      } else {
+        // Simulated: organic pulse when user is speaking, gentle idle otherwise
+        _simTarget = _speechActive ? 0.35 + Math.random() * 0.45 : 0.02;
+        _simSmooth += (_simTarget - _simSmooth) * (_simTarget > _simSmooth ? 0.25 : 0.08);
+        JirehOrganic.setVoice(_simSmooth);
+      }
     }
     tick();
   }
@@ -7337,18 +7347,6 @@ const JirehVoice = (() => {
   function stopVizLoop() {
     if (_vizRaf) { cancelAnimationFrame(_vizRaf); _vizRaf = null; }
     JirehOrganic.setVoice(0);
-  }
-
-  function connectMicToViz() {
-    if (!_audioCtx || !_micStream) return;
-    try {
-      const src = _audioCtx.createMediaStreamSource(_micStream);
-      _analyser = _audioCtx.createAnalyser();
-      _analyser.fftSize = 512;
-      _analyser.smoothingTimeConstant = 0.5;
-      src.connect(_analyser);
-      _analyserData = new Uint8Array(_analyser.frequencyBinCount);
-    } catch(e) { console.warn('[JV] mic→viz error:', e.message); }
   }
 
   function connectAudioToViz(audioEl) {
@@ -7361,44 +7359,37 @@ const JirehVoice = (() => {
       src.connect(_analyser);
       src.connect(_audioCtx.destination);
       _analyserData = new Uint8Array(_analyser.frequencyBinCount);
-    } catch(e) { console.warn('[JV] audio→viz error:', e.message); }
+    } catch(e) { console.warn('[JV] audio→viz:', e.message); }
   }
 
   function enterVoiceMode() {
-    _prevMode = null;
     const bar = document.getElementById('conn-status-bar');
-    if (bar) { bar.classList.add('voice-active'); }
+    if (bar) bar.classList.add('voice-active');
     JirehOrganic.setMode('voice');
-    startVizLoop();
+    startSimVizLoop();
   }
 
   function exitVoiceMode() {
     stopVizLoop();
     JirehOrganic.setVoice(0);
     const bar = document.getElementById('conn-status-bar');
-    if (bar) { bar.classList.remove('voice-active'); }
+    if (bar) bar.classList.remove('voice-active');
     JirehOrganic.setMode('idle');
-    if (_micStream) { _micStream.getTracks().forEach(t => t.stop()); _micStream = null; }
     _analyser = null; _analyserData = null;
+    _speechActive = false; _simSmooth = 0;
   }
 
-  // ── Core functions ─────────────────────────────────────────────────────
+  // ── Core ────────────────────────────────────────────────────────────────
   function toggle() {
-    if (_listening || _speaking) { stop(); close(); return; }
-    if (!SpeechRecognition) { toast('Voice not supported in this browser — use Chrome', 'error'); return; }
+    if (_listening || _speaking || _overlay) { close(); return; }
+    if (!SpeechRecognition) { toast('Voice not supported — use Chrome or Edge', 'error'); return; }
     start();
   }
 
-  async function start() {
+  function start() {
     showOverlay();
     initAudioContext();
-    if (_audioCtx?.state === 'suspended') await _audioCtx.resume();
-
-    // Get mic stream for visualizer
-    try {
-      _micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch(e) { console.warn('[JV] Mic access denied:', e.message); }
-
+    if (_audioCtx?.state === 'suspended') _audioCtx.resume().catch(()=>{});
     enterVoiceMode();
     startListening();
   }
@@ -7406,14 +7397,15 @@ const JirehVoice = (() => {
   function stop() {
     _listening = false;
     _speaking = false;
-    if (_recognition) { try { _recognition.stop(); } catch(e) {} }
-    if (_audio) { _audio.pause(); _audio = null; }
+    _speechActive = false;
+    if (_recognition) { try { _recognition.abort(); } catch(e) {} _recognition = null; }
+    if (_audio) { _audio.pause(); _audio.src = ''; _audio = null; }
     updateMicBtn('idle');
-    exitVoiceMode();
   }
 
   function close() {
     stop();
+    exitVoiceMode();
     _history = [];
     if (_overlay) { _overlay.remove(); _overlay = null; }
   }
@@ -7429,17 +7421,23 @@ const JirehVoice = (() => {
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:14px;color:var(--red)">🎙</span>
           <span style="font-size:11px;font-weight:800;font-family:var(--font-mono);letter-spacing:0.12em;color:#fff">JIREH VOICE</span>
-          <span id="jv-state" style="font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:0.05em;font-family:var(--font-mono)">READY</span>
+          <span id="jv-state" style="font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:0.05em;font-family:var(--font-mono)">LISTENING</span>
         </div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
           <button onclick="JirehVoice.clearHistory()" style="background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.3)'">CLEAR</button>
-          <button onclick="JirehVoice.close()" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:15px;line-height:1" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.35)'">✕</button>
+          <button onclick="JirehVoice.close()" style="background:#c0001e;border:none;color:#fff;cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.08em;font-weight:800;padding:5px 12px;border-radius:5px;transition:background 0.15s"
+            onmouseover="this.style.background='#e8003a'" onmouseout="this.style.background='#c0001e'">END</button>
         </div>
       </div>
       <div class="jv-body" id="jv-body">
         <div class="jv-bubble ara">Hey ${esc(agentName)}! I'm listening — what's on your mind?</div>
       </div>
-      <div class="jv-status" id="jv-status">TAP MIC OR JUST START TALKING</div>
+      <div id="jv-bottom" style="padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px">
+        <div id="jv-indicator" style="width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);animation:voicePulse 1.5s ease-in-out infinite"></div>
+        <span id="jv-status" style="font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;color:var(--text-3);flex:1">LISTENING — SPEAK NOW</span>
+        <button onclick="JirehVoice.close()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--red);cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em;font-weight:700;padding:5px 14px;border-radius:5px;transition:all 0.15s"
+          onmouseover="this.style.background='rgba(232,0,58,0.15)'" onmouseout="this.style.background='var(--bg-4)'">✕ END VOICE</button>
+      </div>
     `;
     document.body.appendChild(div);
     _overlay = div;
@@ -7455,11 +7453,16 @@ const JirehVoice = (() => {
     body.scrollTop = body.scrollHeight;
   }
 
-  function setStatus(text) {
+  function setStatus(text, indicatorColor) {
     const el = document.getElementById('jv-state');
     if (el) el.textContent = text;
     const el2 = document.getElementById('jv-status');
     if (el2) el2.textContent = text;
+    const ind = document.getElementById('jv-indicator');
+    if (ind && indicatorColor) {
+      ind.style.background = indicatorColor;
+      ind.style.boxShadow = `0 0 8px ${indicatorColor}`;
+    }
   }
 
   function updateMicBtn(state) {
@@ -7473,49 +7476,71 @@ const JirehVoice = (() => {
   }
 
   function startListening() {
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition || !_overlay) return;
     _recognition = new SpeechRecognition();
     _recognition.continuous = false;
-    _recognition.interimResults = false;
+    _recognition.interimResults = true;
     _recognition.lang = 'en-US';
+    _recognition.maxAlternatives = 1;
 
     _listening = true;
     _speaking = false;
     updateMicBtn('listening');
-    setStatus('LISTENING…');
+    setStatus('LISTENING — SPEAK NOW', 'var(--red)');
 
-    // Connect mic to bioluminescence
-    if (_micStream) { connectMicToViz(); }
+    _recognition.onspeechstart = () => { _speechActive = true; };
+    _recognition.onspeechend = () => { _speechActive = false; };
 
     _recognition.onresult = async (event) => {
-      const transcript = event.results[0][0].transcript.trim();
-      if (!transcript) { startListening(); return; }
+      // Get the final result
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript = event.results[i][0].transcript.trim();
+        }
+      }
+      if (!transcript) return; // interim result — keep listening
+      _speechActive = false;
       addBubble('user', transcript);
       _history.push({ role: 'user', content: transcript });
+      // Stop recognition before sending (prevents overlap)
+      _listening = false;
+      if (_recognition) { try { _recognition.abort(); } catch(e) {} _recognition = null; }
       await sendToJireh(transcript);
     };
 
     _recognition.onerror = (event) => {
-      if (event.error === 'no-speech') { if (_listening) startListening(); return; }
-      if (event.error === 'aborted') return;
+      _speechActive = false;
+      if (event.error === 'no-speech') {
+        // No speech detected — restart silently
+        if (_listening && _overlay) { setTimeout(() => { if (_listening) startListening(); }, 100); }
+        return;
+      }
+      if (event.error === 'aborted' || event.error === 'not-allowed') return;
       console.warn('[JV] Recognition error:', event.error);
-      setStatus('MIC ERROR — TAP TO RETRY');
+      setStatus('MIC ERROR — TAP MIC TO RETRY', '#ff8c00');
       updateMicBtn('idle');
       _listening = false;
     };
 
     _recognition.onend = () => {
-      if (_listening && !_speaking) startListening();
+      _speechActive = false;
+      // Auto-restart if still in listening mode
+      if (_listening && !_speaking && _overlay) {
+        setTimeout(() => { if (_listening && _overlay) startListening(); }, 100);
+      }
     };
 
-    _recognition.start();
+    try { _recognition.start(); }
+    catch(e) {
+      console.warn('[JV] Recognition start error:', e.message);
+      setStatus('MIC ERROR: ' + e.message, '#ff8c00');
+    }
   }
 
   async function sendToJireh(text) {
-    _listening = false;
     updateMicBtn('thinking');
-    setStatus('JIREH IS THINKING…');
-    _analyser = null; _analyserData = null; // disconnect mic analyser
+    setStatus('JIREH IS THINKING…', '#ff8c00');
 
     try {
       const resp = await api('/api/jareih/voice-chat', 'POST', { text, history: _history.slice(-12) });
@@ -7525,13 +7550,14 @@ const JirehVoice = (() => {
 
       if (resp.audioToken) {
         updateMicBtn('speaking');
-        setStatus('JIREH SPEAKING…');
+        setStatus('JIREH SPEAKING…', '#00e87a');
         _speaking = true;
 
         _audio = new Audio();
-        // Connect audio element to bioluminescence BEFORE setting src
+        // Connect Ara's audio to the bioluminescence visualizer
         if (_audioCtx) {
-          try { connectAudioToViz(_audio); } catch(e) { console.warn('[JV] audio viz connect:', e.message); }
+          if (_audioCtx.state === 'suspended') await _audioCtx.resume().catch(()=>{});
+          try { connectAudioToViz(_audio); } catch(e) {}
         }
         _audio.src = `/api/jareih/voice-audio/${resp.audioToken}.wav`;
 
@@ -7539,34 +7565,29 @@ const JirehVoice = (() => {
           _speaking = false;
           _audio = null;
           _analyser = null; _analyserData = null;
-          if (_overlay && _overlay.style.display !== 'none') {
+          // Resume listening after Ara finishes
+          if (_overlay) {
             _listening = true;
             startListening();
           }
         };
         _audio.onerror = () => {
-          _speaking = false;
-          _audio = null;
+          _speaking = false; _audio = null;
           _analyser = null; _analyserData = null;
-          if (_overlay && _overlay.style.display !== 'none') {
-            _listening = true;
-            startListening();
-          }
+          if (_overlay) { _listening = true; startListening(); }
         };
         _audio.play().catch(() => {
           _speaking = false;
-          _listening = true;
-          startListening();
+          if (_overlay) { _listening = true; startListening(); }
         });
       } else {
-        _listening = true;
-        startListening();
+        // No audio — resume listening (text-only response)
+        if (_overlay) { _listening = true; startListening(); }
       }
     } catch(e) {
-      addBubble('ara', 'Sorry, I had trouble processing that. Try again?');
+      addBubble('ara', 'Sorry, I had trouble with that. Try again?');
       console.error('[JV]', e);
-      _listening = true;
-      startListening();
+      if (_overlay) { _listening = true; startListening(); }
     }
   }
 
