@@ -10,6 +10,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { initWorkOrderAlerts, registerWorkOrderRoutes, startAlertPoller } = require('./work-order-alerts');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -3049,6 +3050,9 @@ async function initDB() {
     UNIQUE(wo_number)
   )`, 'create work_orders');
   await run(`CREATE TABLE IF NOT EXISTS work_order_uploads (id SERIAL PRIMARY KEY, filename TEXT, uploaded_by TEXT, record_count INTEGER, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create work_order_uploads');
+
+  // ── Work Order Alert System — adds alert columns, indexes, person linkage ──
+  await initWorkOrderAlerts(pool);
 
   await run(`CREATE TABLE IF NOT EXISTS tasks (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), person_id TEXT, agent_id TEXT, title TEXT NOT NULL, note TEXT, due_date DATE, completed BOOLEAN DEFAULT false, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW())`, 'create tasks');
 
@@ -6686,6 +6690,10 @@ app.post('/api/jareih/inject-ara', auth, async (req, res) => {
 checkDB().then(() => initDB()).then(() => {
   // Lead scraper — moved here so it only starts after DB is fully initialized
   initLeadScraper();
+
+  // ── Work Order Alert System — routes + 30-min reclassification poller ──
+  registerWorkOrderRoutes(app, pool, auth, broadcastToAll);
+  startAlertPoller(pool, broadcastToAll);
 
   // Showing followup text poller — runs every 2 minutes
   setInterval(pollShowingFollowups, 2 * 60 * 1000);
