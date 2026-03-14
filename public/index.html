@@ -7349,8 +7349,10 @@ const JirehVoice = (() => {
     JirehOrganic.setVoice(0);
   }
 
+  let _connectedAudio = null; // track which element is connected to prevent double-connect
   function connectAudioToViz(audioEl) {
     if (!_audioCtx || !audioEl) return;
+    if (_connectedAudio === audioEl) return; // already connected
     try {
       const src = _audioCtx.createMediaElementSource(audioEl);
       _analyser = _audioCtx.createAnalyser();
@@ -7359,6 +7361,7 @@ const JirehVoice = (() => {
       src.connect(_analyser);
       src.connect(_audioCtx.destination);
       _analyserData = new Uint8Array(_analyser.frequencyBinCount);
+      _connectedAudio = audioEl;
     } catch(e) { console.warn('[JV] audio→viz:', e.message); }
   }
 
@@ -7553,33 +7556,38 @@ const JirehVoice = (() => {
         setStatus('JIREH SPEAKING…', '#00e87a');
         _speaking = true;
 
-        _audio = new Audio();
-        // Connect Ara's audio to the bioluminescence visualizer
-        if (_audioCtx) {
-          if (_audioCtx.state === 'suspended') await _audioCtx.resume().catch(()=>{});
-          try { connectAudioToViz(_audio); } catch(e) {}
-        }
-        _audio.src = `/api/jareih/voice-audio/${resp.audioToken}.wav`;
+        _audio = new Audio(`/api/jareih/voice-audio/${resp.audioToken}`);
+        _audio.crossOrigin = 'anonymous';
 
         _audio.onended = () => {
           _speaking = false;
-          _audio = null;
-          _analyser = null; _analyserData = null;
-          // Resume listening after Ara finishes
-          if (_overlay) {
-            _listening = true;
-            startListening();
-          }
-        };
-        _audio.onerror = () => {
-          _speaking = false; _audio = null;
+          _audio = null; _connectedAudio = null;
           _analyser = null; _analyserData = null;
           if (_overlay) { _listening = true; startListening(); }
         };
-        _audio.play().catch(() => {
+        _audio.onerror = (e) => {
+          console.warn('[JV] Audio playback error:', _audio?.error?.message || e);
+          _speaking = false; _audio = null; _connectedAudio = null;
+          _analyser = null; _analyserData = null;
+          if (_overlay) { _listening = true; startListening(); }
+        };
+
+        // Try to connect to bioluminescence visualizer (non-blocking)
+        try {
+          if (_audioCtx) {
+            if (_audioCtx.state === 'suspended') await _audioCtx.resume();
+            connectAudioToViz(_audio);
+          }
+        } catch(vizErr) {
+          console.warn('[JV] Viz connect failed (audio will still play):', vizErr.message);
+        }
+
+        try { await _audio.play(); }
+        catch(playErr) {
+          console.warn('[JV] Audio play failed:', playErr.message);
           _speaking = false;
           if (_overlay) { _listening = true; startListening(); }
-        });
+        }
       } else {
         // No audio — resume listening (text-only response)
         if (_overlay) { _listening = true; startListening(); }
