@@ -2278,6 +2278,111 @@ app.post('/api/twilio/voicemail', async (req, res) => {
   } catch (e) { console.error('Voicemail error:', e.message); }
 });
 
+// ─── DATA ENRICHMENT (People Data Labs) ──────────────────────────────────────
+app.get('/api/people/:id/enrich', auth, async (req, res) => {
+  try {
+    const personId = req.params.id;
+    // Check cache first (enrichment stored as JSON in custom_fields.pdl_enrichment)
+    const pR = await pool.query('SELECT first_name, last_name, email, phone, city, state, custom_fields FROM people WHERE id=$1', [personId]);
+    const person = pR.rows[0];
+    if (!person) return res.status(404).json({ error: 'Contact not found' });
+
+    // Return cached enrichment if less than 30 days old
+    const cached = person.custom_fields?.pdl_enrichment;
+    if (cached && cached.fetched_at) {
+      const age = Date.now() - new Date(cached.fetched_at).getTime();
+      if (age < 30 * 86400000) return res.json({ enrichment: cached, cached: true });
+    }
+
+    // Call PDL Person Enrichment API
+    const pdlKey = process.env.PDL_API_KEY;
+    if (!pdlKey) return res.status(503).json({ error: 'PDL_API_KEY not configured. Add it to your environment variables.' });
+
+    const params = new URLSearchParams();
+    params.set('api_key', pdlKey);
+    params.set('min_likelihood', '4');
+    // Only request fields we need
+    params.set('data_include', 'full_name,sex,birth_year,birth_date,linkedin_url,facebook_url,twitter_url,industry,job_title,job_company_name,job_company_industry,location_name,experience,education,skills,interests,summary,emails,phones');
+
+    if (person.email) params.set('email', person.email);
+    if (person.phone) params.set('phone', person.phone.replace(/\D/g, '').replace(/^1/, '+1'));
+    if (person.first_name) params.set('first_name', person.first_name);
+    if (person.last_name) params.set('last_name', person.last_name);
+    const loc = [person.city, person.state].filter(Boolean).join(', ');
+    if (loc) params.set('location', loc);
+    else params.set('location', 'Oklahoma City, Oklahoma');
+
+    console.log(`[PDL Enrich] Looking up ${person.first_name} ${person.last_name} (email: ${person.email || 'none'}, phone: ${person.phone || 'none'})`);
+
+    const pdlResp = await fetch(`https://api.peopledatalabs.com/v5/person/enrich?${params}`, {
+      headers: { 'X-Api-Key': pdlKey }
+    });
+    const pdlData = await pdlResp.json();
+
+    if (pdlData.status !== 200 || !pdlData.data) {
+      console.log(`[PDL Enrich] No match for ${person.first_name} ${person.last_name} (status: ${pdlData.status})`);
+      // Cache the miss so we don't re-query for 7 days
+      const miss = { status: 'no_match', fetched_at: new Date().toISOString() };
+      await pool.query(
+        `UPDATE people SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb WHERE id=$2`,
+        [JSON.stringify({ pdl_enrichment: miss }), personId]
+      ).catch(() => {});
+      return res.json({ enrichment: miss, cached: false });
+    }
+
+    const d = pdlData.data;
+    const enrichment = {
+      status: 'matched',
+      likelihood: pdlData.likelihood || 0,
+      fetched_at: new Date().toISOString(),
+      full_name: d.full_name,
+      sex: d.sex,
+      birth_year: d.birth_year,
+      birth_date: d.birth_date,
+      age: d.birth_year ? (new Date().getFullYear() - d.birth_year) : null,
+      linkedin_url: d.linkedin_url ? `https://${d.linkedin_url}` : null,
+      facebook_url: d.facebook_url ? `https://${d.facebook_url}` : null,
+      twitter_url: d.twitter_url ? `https://${d.twitter_url}` : null,
+      industry: d.industry,
+      job_title: d.job_title,
+      job_company_name: d.job_company_name,
+      job_company_industry: d.job_company_industry,
+      location_name: d.location_name,
+      summary: d.summary,
+      skills: (d.skills || []).slice(0, 10),
+      interests: (d.interests || []).slice(0, 8),
+      experience: (d.experience || []).slice(0, 5).map(e => ({
+        title: e.title?.name || e.title,
+        company: e.company?.name,
+        industry: e.company?.industry,
+        start: e.start_date,
+        end: e.end_date,
+        current: !e.end_date
+      })),
+      education: (d.education || []).slice(0, 3).map(e => ({
+        school: e.school?.name,
+        degree: e.degrees?.join(', '),
+        major: e.majors?.join(', '),
+        end: e.end_date
+      })),
+      additional_emails: (d.emails || []).filter(e => e.address !== person.email).map(e => e.address).slice(0, 3),
+      additional_phones: (d.phones || []).filter(p => p.number !== person.phone).map(p => p.number).slice(0, 3)
+    };
+
+    // Cache in custom_fields
+    await pool.query(
+      `UPDATE people SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb WHERE id=$2`,
+      [JSON.stringify({ pdl_enrichment: enrichment }), personId]
+    ).catch(() => {});
+
+    console.log(`[PDL Enrich] Matched ${person.first_name} ${person.last_name} → ${d.job_title || 'no title'} at ${d.job_company_name || 'unknown'} (likelihood: ${pdlData.likelihood})`);
+    res.json({ enrichment, cached: false });
+  } catch(e) {
+    console.error('[PDL Enrich] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── VOICEMAIL GREETING ──────────────────────────────────────────────────────
 // Upload: saves audio as base64 in app_settings so Twilio can play it
 const uploadGreeting = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
