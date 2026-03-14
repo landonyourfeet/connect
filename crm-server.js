@@ -10,7 +10,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { initWorkOrderAlerts, registerWorkOrderRoutes, startAlertPoller } = require('./work-order-alerts');
+const { initWorkOrderAlerts } = require('./work-order-alerts');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -5583,6 +5583,330 @@ app.get('/api/work-orders/stats', auth, async (req, res) => {
 });
 
 // =============================================================================
+// WORK ORDER ALERTS — Performance, Alerts, Person-level, Cross-reference
+// These are at the top level (not inside async chain) so they always register
+// =============================================================================
+const WO_OVERDUE_HOURS = 6;
+const WO_OPEN = ['New','Estimate Requested','Estimated','Assigned','Scheduled','Waiting','Work Done','Ready to Bill'];
+const WO_CLOSED = ['Completed','Completed No Need To Bill','Canceled','Cancelled'];
+
+function classifyWOAlert(wo) {
+  if (WO_CLOSED.includes(wo.status)) return 'COMPLETED';
+  if (!WO_OPEN.includes(wo.status)) return 'COMPLETED';
+  if (!wo.scheduled_end) return 'NOT_SCHEDULED';
+  const se = new Date(wo.scheduled_end);
+  if (isNaN(se.getTime())) return 'NOT_SCHEDULED';
+  if ((Date.now() - se.getTime()) / 3600000 >= WO_OVERDUE_HOURS) return 'OVERDUE';
+  return 'ON_TRACK';
+}
+
+// ── Performance dashboard ────────────────────────────────────────────────────
+app.get('/api/work-orders/performance', auth, async (req, res) => {
+  try {
+    const kpi = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled'))::int AS open,
+        COUNT(*) FILTER (WHERE status IN ('Completed','Completed No Need To Bill'))::int AS completed,
+        COUNT(*) FILTER (WHERE status = 'Canceled' OR status = 'Cancelled')::int AS canceled,
+        ROUND(AVG(
+          CASE WHEN completed_on IS NOT NULL AND created_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (completed_on - created_at)) / 86400.0 END
+        )::numeric, 1) AS avg_days_to_close
+      FROM work_orders
+    `);
+
+    // Alert breakdown (real-time)
+    const alertsR = await pool.query(`
+      SELECT status, scheduled_end, created_at FROM work_orders
+      WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')
+    `);
+    let overdue = 0, notScheduled = 0, onTrack = 0;
+    for (const wo of alertsR.rows) {
+      const a = classifyWOAlert(wo);
+      if (a === 'OVERDUE') overdue++;
+      else if (a === 'NOT_SCHEDULED') notScheduled++;
+      else if (a === 'ON_TRACK') onTrack++;
+    }
+
+    // Vendor ranking
+    const vendors = await pool.query(`
+      SELECT vendor,
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status IN ('Completed','Completed No Need To Bill'))::int AS completed,
+        COUNT(*) FILTER (WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled'))::int AS open,
+        ROUND(AVG(
+          CASE WHEN completed_on IS NOT NULL AND created_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (completed_on - created_at)) / 86400.0 END
+        )::numeric, 1) AS avg_days_to_close,
+        ROUND(SUM(COALESCE(amount,0))::numeric, 2) AS total_cost
+      FROM work_orders WHERE vendor IS NOT NULL AND vendor != ''
+      GROUP BY vendor ORDER BY COUNT(*) DESC
+    `);
+
+    // Property volume
+    const propVolume = await pool.query(`
+      WITH monthly AS (
+        SELECT property, DATE_TRUNC('month', created_at) AS month, COUNT(*)::int AS cnt
+        FROM work_orders WHERE created_at > NOW() - INTERVAL '6 months'
+        GROUP BY property, DATE_TRUNC('month', created_at)
+      )
+      SELECT property,
+        COALESCE(MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END), 0)::int AS this_month,
+        ROUND(AVG(CASE WHEN month < DATE_TRUNC('month', NOW()) THEN cnt END)::numeric, 1) AS rolling_avg,
+        CASE WHEN AVG(CASE WHEN month < DATE_TRUNC('month', NOW()) THEN cnt END) > 0
+          THEN ROUND((COALESCE(MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END), 0)
+            / AVG(CASE WHEN month < DATE_TRUNC('month', NOW()) THEN cnt END) - 1) * 100)::int
+          ELSE 0 END AS delta_pct,
+        COALESCE(MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END), 0)
+          > COALESCE(AVG(CASE WHEN month < DATE_TRUNC('month', NOW()) THEN cnt END), 999) AS exceeds_avg
+      FROM monthly GROUP BY property
+      HAVING COALESCE(MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END), 0)
+        + COALESCE(MAX(CASE WHEN month = DATE_TRUNC('month', NOW() - INTERVAL '1 month') THEN cnt END), 0) > 0
+      ORDER BY COALESCE(MAX(CASE WHEN month = DATE_TRUNC('month', NOW()) THEN cnt END), 0) DESC LIMIT 20
+    `);
+
+    // Issue breakdown
+    const issues = await pool.query(`
+      SELECT COALESCE(issue, 'Unspecified') AS issue, COUNT(*)::int AS cnt
+      FROM work_orders WHERE issue IS NOT NULL AND issue != ''
+      GROUP BY issue ORDER BY COUNT(*) DESC LIMIT 15
+    `);
+
+    res.json({
+      kpi: kpi.rows[0],
+      alerts: { overdue, notScheduled, onTrack },
+      vendors: vendors.rows,
+      propertyVolume: propVolume.rows,
+      issueBreakdown: issues.rows,
+    });
+  } catch(e) { console.error('[WO Perf]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// ── All open alerts ──────────────────────────────────────────────────────────
+app.get('/api/work-orders/alerts', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT wo_number, property, unit, resident, status, vendor, issue,
+             priority, scheduled_start, scheduled_end, created_at,
+             person_id, is_household, matched_tenants
+      FROM work_orders
+      WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')
+      ORDER BY created_at ASC
+    `);
+    const alerts = rows.map(wo => ({
+      ...wo,
+      alert_state: classifyWOAlert(wo),
+      days_open: wo.created_at ? Math.round(((Date.now() - new Date(wo.created_at).getTime()) / 86400000) * 10) / 10 : null,
+    }));
+    const overdue = alerts.filter(a => a.alert_state === 'OVERDUE').length;
+    const notScheduled = alerts.filter(a => a.alert_state === 'NOT_SCHEDULED').length;
+    const onTrack = alerts.filter(a => a.alert_state === 'ON_TRACK').length;
+    res.json({ alerts, summary: { total: alerts.length, overdue, notScheduled, onTrack } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Person-level work orders (for leads page) ───────────────────────────────
+app.get('/api/work-orders/by-person/:personId', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT wo_number, property, unit, resident, status, vendor, issue,
+              priority, alert_state, scheduled_start, scheduled_end, created_at,
+              days_open, job_description, is_household, matched_tenants
+       FROM work_orders WHERE person_id = $1
+       ORDER BY CASE WHEN status IN ('Completed','Completed No Need To Bill','Canceled','Cancelled') THEN 1 ELSE 0 END, created_at DESC`,
+      [req.params.personId]
+    );
+    // Also get household WOs
+    const { rows: hhRows } = await pool.query(
+      `SELECT DISTINCT wo.wo_number, wo.property, wo.unit, wo.resident, wo.status,
+              wo.vendor, wo.issue, wo.priority, wo.alert_state, wo.scheduled_start,
+              wo.scheduled_end, wo.created_at, wo.days_open, wo.job_description,
+              wo.is_household, wo.matched_tenants
+       FROM work_orders wo
+       JOIN person_relationships pr ON (
+         (pr.person_id_a = $1 AND wo.person_id = pr.person_id_b)
+         OR (pr.person_id_b = $1 AND wo.person_id = pr.person_id_a)
+       )
+       WHERE pr.label = 'household'
+         AND wo.status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')
+         AND wo.wo_number NOT IN (SELECT wo_number FROM work_orders WHERE person_id = $1)`,
+      [req.params.personId]
+    );
+
+    const allWOs = [...rows, ...hhRows].map(wo => ({
+      ...wo, alert_state: classifyWOAlert(wo),
+    }));
+    const open = allWOs.filter(w => w.alert_state !== 'COMPLETED');
+    res.json({
+      workOrders: allWOs, open: open.length,
+      overdue: open.filter(w => w.alert_state === 'OVERDUE').length,
+      notScheduled: open.filter(w => w.alert_state === 'NOT_SCHEDULED').length,
+      onTrack: open.filter(w => w.alert_state === 'ON_TRACK').length,
+      hasHouseholdWOs: hhRows.length > 0,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Enhanced upload with cross-reference + alerts ────────────────────────────
+app.post('/api/work-orders/upload-v2', auth, async (req, res) => {
+  try {
+    const { rows, filename } = req.body;
+    if (!rows || !Array.isArray(rows) || rows.length === 0)
+      return res.status(400).json({ error: 'No rows provided' });
+    const batchId = crypto.randomUUID();
+    let inserted = 0, skipped = 0, matched = 0, households = 0;
+
+    for (const r of rows) {
+      if (!r.wo_number && !r.job_description) { skipped++; continue; }
+      const woObj = { status: r.status||'', scheduled_end: r.scheduled_end ? new Date(r.scheduled_end) : null };
+      const alertState = classifyWOAlert(woObj);
+      const createdDate = r.created_at ? new Date(r.created_at) : null;
+      const daysOpen = createdDate && !isNaN(createdDate.getTime())
+        ? Math.round(((Date.now() - createdDate.getTime()) / 86400000) * 10) / 10 : null;
+
+      // Cross-reference rent roll
+      let personId = null, matchedTenants = [], isHousehold = false;
+      try {
+        const prop = r.property || '';
+        const unitRaw = r.unit || null;
+        let rrRows;
+        if (unitRaw) {
+          const normUnit = unitRaw.replace(/^(Unit|APT|Apt|#|Villa Chateau Apartments:\s*Unit)\s*/i, '').trim().toLowerCase();
+          const { rows: rr } = await pool.query(
+            `SELECT id, tenant_name, person_id FROM rent_roll
+             WHERE property = $1 AND status = 'Current'
+             AND LOWER(TRIM(REGEXP_REPLACE(unit, '^(Unit|APT|Apt|#)\\s*', '', 'i'))) = $2`,
+            [prop, normUnit]);
+          rrRows = rr;
+        } else {
+          const { rows: rr } = await pool.query(
+            `SELECT id, tenant_name, person_id FROM rent_roll
+             WHERE property = $1 AND status = 'Current'`, [prop]);
+          if (rr.length === 1) rrRows = rr; else rrRows = [];
+        }
+        matchedTenants = rrRows.map(t => t.tenant_name);
+        isHousehold = rrRows.length > 1;
+        if (rrRows.length) {
+          personId = rrRows[0].person_id;
+          // Try name match for primary
+          if (r.resident) {
+            const resNorm = (r.resident||'').replace(/[^a-z]/gi,'').toLowerCase();
+            for (const t of rrRows) {
+              const tNorm = (t.tenant_name||'').replace(/[^a-z]/gi,'').toLowerCase();
+              const parts = (r.resident||'').split(',').map(s=>s.trim());
+              const rev = parts.length===2 ? (parts[1]+parts[0]).replace(/[^a-z]/gi,'').toLowerCase() : '';
+              if (tNorm === resNorm || tNorm === rev) { personId = t.person_id; break; }
+            }
+          }
+          if (personId) matched++;
+          if (isHousehold) households++;
+        }
+      } catch(xrefErr) { /* non-fatal */ }
+
+      try {
+        await pool.query(
+          `INSERT INTO work_orders
+             (property, wo_number, priority, wo_type, job_description, instructions,
+              status, vendor, unit, resident, created_at, scheduled_start, scheduled_end,
+              work_done_on, completed_on, amount, issue, recurring, upload_batch,
+              alert_state, person_id, matched_tenants, is_household, days_open)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+           ON CONFLICT (wo_number) DO UPDATE SET
+             status=EXCLUDED.status, vendor=EXCLUDED.vendor,
+             scheduled_start=EXCLUDED.scheduled_start, scheduled_end=EXCLUDED.scheduled_end,
+             work_done_on=EXCLUDED.work_done_on, completed_on=EXCLUDED.completed_on,
+             amount=EXCLUDED.amount, issue=EXCLUDED.issue, instructions=EXCLUDED.instructions,
+             upload_batch=EXCLUDED.upload_batch, alert_state=EXCLUDED.alert_state,
+             person_id=COALESCE(EXCLUDED.person_id, work_orders.person_id),
+             matched_tenants=EXCLUDED.matched_tenants, is_household=EXCLUDED.is_household,
+             days_open=EXCLUDED.days_open`,
+          [ r.property||null, r.wo_number||null, r.priority||null, r.wo_type||null,
+            r.job_description||null, r.instructions||null, r.status||null,
+            r.vendor||null, r.unit||null, r.resident||null,
+            r.created_at ? new Date(r.created_at) : null,
+            r.scheduled_start ? new Date(r.scheduled_start) : null,
+            r.scheduled_end ? new Date(r.scheduled_end) : null,
+            r.work_done_on ? new Date(r.work_done_on) : null,
+            r.completed_on ? new Date(r.completed_on) : null,
+            r.amount ? parseFloat(r.amount) : null,
+            r.issue||null, r.recurring||null, batchId,
+            alertState, personId, matchedTenants.length ? matchedTenants : null,
+            isHousehold, daysOpen ]
+        );
+        inserted++;
+      } catch(e) { console.warn('[WO Upload v2] skip:', e.message); skipped++; }
+    }
+
+    const uploader = req.agent?.name || req.agent?.id || null;
+    await pool.query(`INSERT INTO work_order_uploads (filename,uploaded_by,record_count) VALUES ($1,$2,$3)`,
+      [filename||'work_orders.xlsx', uploader, inserted]);
+    broadcastToAll({ type: 'work_orders_updated', inserted, matched });
+    res.json({ ok: true, inserted, skipped, matched, households, batchId });
+  } catch(e) { console.error('[WO Upload v2]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// ── Auto-link rent roll to people + household grouping ───────────────────────
+app.post('/api/work-orders/auto-link', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, tenant_name FROM rent_roll WHERE person_id IS NULL AND status = 'Current'`);
+    let linked = 0;
+    for (const rr of rows) {
+      const parts = (rr.tenant_name||'').trim().split(/\s+/);
+      if (parts.length < 2) continue;
+      const first = parts[0], last = parts[parts.length-1];
+      const { rows: ppl } = await pool.query(
+        `SELECT id FROM people WHERE LOWER(TRIM(first_name))=LOWER($1) AND LOWER(TRIM(last_name))=LOWER($2) LIMIT 1`,
+        [first, last]);
+      if (ppl[0]) {
+        await pool.query('UPDATE rent_roll SET person_id=$1 WHERE id=$2', [ppl[0].id, rr.id]);
+        linked++;
+      }
+    }
+    // Update work_orders person_id from newly linked rent_roll
+    await pool.query(`
+      UPDATE work_orders wo SET person_id = rr.person_id
+      FROM rent_roll rr
+      WHERE wo.person_id IS NULL AND rr.person_id IS NOT NULL AND rr.property = wo.property AND rr.status = 'Current'
+        AND (wo.unit IS NOT NULL AND LOWER(TRIM(rr.unit)) = LOWER(TRIM(wo.unit))
+          OR (wo.unit IS NULL AND (rr.unit IS NULL OR rr.unit = '')))`).catch(()=>{});
+    // Auto-group households
+    const { rows: hhGroups } = await pool.query(`
+      SELECT property, unit, ARRAY_AGG(person_id) AS person_ids FROM rent_roll
+      WHERE person_id IS NOT NULL AND status='Current' GROUP BY property, unit HAVING COUNT(DISTINCT person_id)>1`);
+    let hhCreated = 0;
+    for (const g of hhGroups) {
+      const ids = g.person_ids.filter(Boolean);
+      for (let i=0; i<ids.length; i++) for (let j=i+1; j<ids.length; j++) {
+        const a=Math.min(ids[i],ids[j]), b=Math.max(ids[i],ids[j]);
+        await pool.query(`INSERT INTO person_relationships(person_id_a,person_id_b,label) VALUES($1,$2,'household') ON CONFLICT DO NOTHING`,[a,b]).catch(()=>{});
+        hhCreated++;
+      }
+    }
+    res.json({ ok:true, linked, households: { units: hhGroups.length, relationships: hhCreated } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Reclassify all open WO alerts ────────────────────────────────────────────
+app.post('/api/work-orders/reclassify', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, status, scheduled_end, created_at FROM work_orders
+       WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')`);
+    let overdue=0, notSched=0, onTrack=0;
+    for (const wo of rows) {
+      const alert = classifyWOAlert(wo);
+      const daysOpen = wo.created_at ? Math.round(((Date.now()-new Date(wo.created_at).getTime())/86400000)*10)/10 : null;
+      await pool.query('UPDATE work_orders SET alert_state=$1, days_open=$2 WHERE id=$3', [alert, daysOpen, wo.id]);
+      if (alert==='OVERDUE') overdue++; else if (alert==='NOT_SCHEDULED') notSched++; else if (alert==='ON_TRACK') onTrack++;
+    }
+    await pool.query(`UPDATE work_orders SET alert_state='COMPLETED' WHERE status IN ('Completed','Completed No Need To Bill','Canceled','Cancelled') AND alert_state!='COMPLETED'`);
+    res.json({ ok:true, overdue, notScheduled: notSched, onTrack });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
 // DASHBOARD — mission control stats
 // =============================================================================
 app.get('/api/dashboard/stats', auth, async (req, res) => {
@@ -6732,9 +7056,22 @@ checkDB().then(() => initDB()).then(() => {
   // Lead scraper — moved here so it only starts after DB is fully initialized
   initLeadScraper();
 
-  // ── Work Order Alert System — routes + 30-min reclassification poller ──
-  registerWorkOrderRoutes(app, pool, auth, broadcastToAll);
-  startAlertPoller(pool, broadcastToAll);
+  // ── Work Order Alert System — DB migration + 30-min reclassification poller ──
+  initWorkOrderAlerts(pool).catch(e => console.warn('[WO Migration]', e.message));
+  // Reclassify alerts every 30 min + 30s after boot
+  const _woReclassify = async () => {
+    try {
+      const { rows } = await pool.query(`SELECT id, status, scheduled_end, created_at FROM work_orders WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')`);
+      for (const wo of rows) {
+        const alert = classifyWOAlert(wo);
+        const daysOpen = wo.created_at ? Math.round(((Date.now()-new Date(wo.created_at).getTime())/86400000)*10)/10 : null;
+        await pool.query('UPDATE work_orders SET alert_state=$1, days_open=$2 WHERE id=$3', [alert, daysOpen, wo.id]);
+      }
+      await pool.query(`UPDATE work_orders SET alert_state='COMPLETED' WHERE status IN ('Completed','Completed No Need To Bill','Canceled','Cancelled') AND alert_state!='COMPLETED'`);
+    } catch(e) { console.warn('[WO Reclassify]', e.message); }
+  };
+  setInterval(_woReclassify, 30 * 60 * 1000);
+  setTimeout(_woReclassify, 30000);
 
   // Showing followup text poller — runs every 2 minutes
   setInterval(pollShowingFollowups, 2 * 60 * 1000);
