@@ -613,6 +613,75 @@ app.post('/api/people/:id/id-photo', auth, async (req, res) => {
       [photoB64, photoName || 'id-photo', req.params.id]
     );
     res.json({ ok: true });
+
+    // Async: run OCR via Grok Vision in the background
+    (async () => {
+      try {
+        const grok = initGrok();
+        if (!grok) return;
+        const personR = await pool.query('SELECT first_name, last_name FROM people WHERE id=$1', [req.params.id]);
+        const pName = personR.rows[0] ? `${personR.rows[0].first_name} ${personR.rows[0].last_name||''}`.trim() : 'unknown';
+        console.log(`[ID OCR] Starting for ${pName}...`);
+
+        const ocrResp = await grok.chat.completions.create({
+          model: 'grok-3', max_tokens: 600,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${photoB64}` } },
+              { type: 'text', text: `This is a photo of an ID document (driver's license, state ID, passport, etc). Extract ALL text fields you can read. Return ONLY a JSON object with these fields (use null for anything you can't read):
+{
+  "full_legal_name": "first middle last",
+  "first_name": "",
+  "middle_name": "",
+  "last_name": "",
+  "date_of_birth": "YYYY-MM-DD",
+  "address": "full street address",
+  "city": "",
+  "state": "",
+  "zip": "",
+  "id_number": "DL or ID number",
+  "id_type": "drivers_license or state_id or passport or other",
+  "issuing_state": "",
+  "expiration_date": "YYYY-MM-DD",
+  "sex": "male or female",
+  "height": "",
+  "eye_color": "",
+  "issue_date": "YYYY-MM-DD"
+}
+Return ONLY the JSON, no markdown fences, no explanation.` }
+            ]
+          }]
+        });
+
+        const raw = ocrResp.choices[0]?.message?.content?.trim() || '';
+        const clean = raw.replace(/```json|```/g, '').trim();
+        let ocr;
+        try { ocr = JSON.parse(clean); } catch(e) { console.warn('[ID OCR] Failed to parse:', clean.slice(0, 200)); return; }
+
+        // Calculate age from DOB
+        if (ocr.date_of_birth) {
+          try {
+            const dob = new Date(ocr.date_of_birth);
+            ocr.age = Math.floor((Date.now() - dob.getTime()) / (365.25 * 86400000));
+          } catch(e) {}
+        }
+
+        // Check if expired
+        if (ocr.expiration_date) {
+          try { ocr.is_expired = new Date(ocr.expiration_date) < new Date(); } catch(e) {}
+        }
+
+        ocr.ocr_date = new Date().toISOString();
+
+        await pool.query(
+          `UPDATE people SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb WHERE id=$2`,
+          [JSON.stringify({ id_ocr: ocr }), req.params.id]
+        );
+        console.log(`[ID OCR] ${pName}: ${ocr.full_legal_name || 'name not read'}, DOB: ${ocr.date_of_birth || '?'}, ${ocr.issuing_state || '?'} ${ocr.id_type || 'ID'}`);
+      } catch(e) { console.warn('[ID OCR] Error:', e.message); }
+    })();
+
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2282,103 +2351,181 @@ app.post('/api/twilio/voicemail', async (req, res) => {
 app.get('/api/people/:id/enrich', auth, async (req, res) => {
   try {
     const personId = req.params.id;
-    // Check cache first (enrichment stored as JSON in custom_fields.pdl_enrichment)
-    const pR = await pool.query('SELECT first_name, last_name, email, phone, city, state, custom_fields FROM people WHERE id=$1', [personId]);
+    const forceRefresh = req.query.refresh === '1';
+
+    // Fetch full person record including OCR data and CRM context
+    const pR = await pool.query(`SELECT p.*, 
+      (SELECT COUNT(*) FROM activities WHERE person_id=p.id::text AND type='call') as call_count,
+      (SELECT COUNT(*) FROM activities WHERE person_id=p.id::text AND type='sms') as sms_count,
+      (SELECT created_at FROM activities WHERE person_id=p.id::text ORDER BY created_at DESC LIMIT 1) as last_activity,
+      (SELECT body FROM activities WHERE person_id=p.id::text AND type='call' AND body IS NOT NULL ORDER BY created_at DESC LIMIT 1) as last_call_summary
+    FROM people p WHERE p.id=$1`, [personId]);
     const person = pR.rows[0];
     if (!person) return res.status(404).json({ error: 'Contact not found' });
 
-    // Return cached enrichment if less than 30 days old
+    const idOcr = person.custom_fields?.id_ocr || null;
+
+    // Return cached enrichment if less than 30 days old (unless forced)
     const cached = person.custom_fields?.pdl_enrichment;
-    if (cached && cached.fetched_at) {
+    if (!forceRefresh && cached && cached.fetched_at && cached.status !== 'no_match') {
       const age = Date.now() - new Date(cached.fetched_at).getTime();
-      if (age < 30 * 86400000) return res.json({ enrichment: cached, cached: true });
+      if (age < 30 * 86400000) return res.json({ enrichment: cached, idOcr, cached: true });
     }
 
-    // Call PDL Person Enrichment API
+    // ── PDL Enrichment ──
     const pdlKey = process.env.PDL_API_KEY;
-    if (!pdlKey) return res.status(503).json({ error: 'PDL_API_KEY not configured. Add it to your environment variables.' });
+    let enrichment = { status: 'no_match', fetched_at: new Date().toISOString() };
 
-    const params = new URLSearchParams();
-    params.set('api_key', pdlKey);
-    params.set('min_likelihood', '4');
-    // Only request fields we need
-    params.set('data_include', 'full_name,sex,birth_year,birth_date,linkedin_url,facebook_url,twitter_url,industry,job_title,job_company_name,job_company_industry,location_name,experience,education,skills,interests,summary,emails,phones');
+    if (pdlKey) {
+      const params = new URLSearchParams();
+      params.set('api_key', pdlKey);
+      params.set('min_likelihood', '2'); // Low threshold for renters
+      params.set('data_include', 'full_name,sex,birth_year,birth_date,linkedin_url,facebook_url,twitter_url,industry,job_title,job_company_name,job_company_industry,location_name,experience,education,skills,interests,summary,emails,phones');
 
-    if (person.email) params.set('email', person.email);
-    if (person.phone) params.set('phone', person.phone.replace(/\D/g, '').replace(/^1/, '+1'));
-    if (person.first_name) params.set('first_name', person.first_name);
-    if (person.last_name) params.set('last_name', person.last_name);
-    const loc = [person.city, person.state].filter(Boolean).join(', ');
-    if (loc) params.set('location', loc);
-    else params.set('location', 'Oklahoma City, Oklahoma');
+      // Use OCR data if available (much better match signals)
+      const firstName = idOcr?.first_name || person.first_name;
+      const lastName = idOcr?.last_name || person.last_name;
+      if (firstName) params.set('first_name', firstName);
+      if (lastName) params.set('last_name', lastName);
+      if (person.email) params.set('email', person.email);
 
-    console.log(`[PDL Enrich] Looking up ${person.first_name} ${person.last_name} (email: ${person.email || 'none'}, phone: ${person.phone || 'none'})`);
+      // Phone — normalize
+      const phone = person.phone?.replace(/\D/g, '');
+      if (phone && phone.length >= 10) params.set('phone', '+1' + phone.slice(-10));
 
-    const pdlResp = await fetch(`https://api.peopledatalabs.com/v5/person/enrich?${params}`, {
-      headers: { 'X-Api-Key': pdlKey }
-    });
-    const pdlData = await pdlResp.json();
+      // DOB from OCR — strongest match signal for renters
+      if (idOcr?.date_of_birth) params.set('birth_date', idOcr.date_of_birth);
 
-    if (pdlData.status !== 200 || !pdlData.data) {
-      console.log(`[PDL Enrich] No match for ${person.first_name} ${person.last_name} (status: ${pdlData.status})`);
-      // Cache the miss so we don't re-query for 7 days
-      const miss = { status: 'no_match', fetched_at: new Date().toISOString() };
-      await pool.query(
-        `UPDATE people SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb WHERE id=$2`,
-        [JSON.stringify({ pdl_enrichment: miss }), personId]
-      ).catch(() => {});
-      return res.json({ enrichment: miss, cached: false });
+      // Address — from OCR first, then CRM
+      const addr = idOcr?.address || person.address;
+      const city = idOcr?.city || person.city;
+      const state = idOcr?.state || person.state;
+      if (addr) params.set('street_address', addr);
+      if (city && state) params.set('location', `${city}, ${state}`);
+      else if (city || state) params.set('location', city || state);
+      else params.set('location', 'Oklahoma City, Oklahoma');
+
+      console.log(`[PDL Enrich] Looking up ${firstName} ${lastName} (DOB: ${idOcr?.date_of_birth || 'none'}, email: ${person.email || 'none'}, phone: ${person.phone || 'none'})`);
+
+      try {
+        const pdlResp = await fetch(`https://api.peopledatalabs.com/v5/person/enrich?${params}`, {
+          headers: { 'X-Api-Key': pdlKey }
+        });
+        const pdlData = await pdlResp.json();
+
+        if (pdlData.status === 200 && pdlData.data) {
+          const d = pdlData.data;
+          enrichment = {
+            status: 'matched',
+            likelihood: pdlData.likelihood || 0,
+            fetched_at: new Date().toISOString(),
+            full_name: d.full_name,
+            sex: d.sex,
+            birth_year: d.birth_year,
+            birth_date: d.birth_date,
+            age: d.birth_year ? (new Date().getFullYear() - d.birth_year) : null,
+            linkedin_url: d.linkedin_url ? `https://${d.linkedin_url}` : null,
+            facebook_url: d.facebook_url ? `https://${d.facebook_url}` : null,
+            twitter_url: d.twitter_url ? `https://${d.twitter_url}` : null,
+            industry: d.industry,
+            job_title: d.job_title,
+            job_company_name: d.job_company_name,
+            job_company_industry: d.job_company_industry,
+            location_name: d.location_name,
+            summary: d.summary,
+            skills: (d.skills || []).slice(0, 10),
+            interests: (d.interests || []).slice(0, 8),
+            experience: (d.experience || []).slice(0, 5).map(e => ({
+              title: e.title?.name || e.title,
+              company: e.company?.name,
+              industry: e.company?.industry,
+              start: e.start_date,
+              end: e.end_date,
+              current: !e.end_date
+            })),
+            education: (d.education || []).slice(0, 3).map(e => ({
+              school: e.school?.name,
+              degree: e.degrees?.join(', '),
+              major: e.majors?.join(', '),
+              end: e.end_date
+            })),
+            additional_emails: (d.emails || []).filter(e => e.address !== person.email).map(e => e.address).slice(0, 3),
+            additional_phones: (d.phones || []).filter(p => p.number !== person.phone).map(p => p.number).slice(0, 3)
+          };
+          console.log(`[PDL Enrich] Matched → ${d.job_title || 'no title'} at ${d.job_company_name || '?'} (likelihood: ${pdlData.likelihood})`);
+        } else {
+          console.log(`[PDL Enrich] No match (status: ${pdlData.status})`);
+        }
+      } catch(pdlErr) { console.warn('[PDL Enrich] API error:', pdlErr.message); }
     }
 
-    const d = pdlData.data;
-    const enrichment = {
-      status: 'matched',
-      likelihood: pdlData.likelihood || 0,
-      fetched_at: new Date().toISOString(),
-      full_name: d.full_name,
-      sex: d.sex,
-      birth_year: d.birth_year,
-      birth_date: d.birth_date,
-      age: d.birth_year ? (new Date().getFullYear() - d.birth_year) : null,
-      linkedin_url: d.linkedin_url ? `https://${d.linkedin_url}` : null,
-      facebook_url: d.facebook_url ? `https://${d.facebook_url}` : null,
-      twitter_url: d.twitter_url ? `https://${d.twitter_url}` : null,
-      industry: d.industry,
-      job_title: d.job_title,
-      job_company_name: d.job_company_name,
-      job_company_industry: d.job_company_industry,
-      location_name: d.location_name,
-      summary: d.summary,
-      skills: (d.skills || []).slice(0, 10),
-      interests: (d.interests || []).slice(0, 8),
-      experience: (d.experience || []).slice(0, 5).map(e => ({
-        title: e.title?.name || e.title,
-        company: e.company?.name,
-        industry: e.company?.industry,
-        start: e.start_date,
-        end: e.end_date,
-        current: !e.end_date
-      })),
-      education: (d.education || []).slice(0, 3).map(e => ({
-        school: e.school?.name,
-        degree: e.degrees?.join(', '),
-        major: e.majors?.join(', '),
-        end: e.end_date
-      })),
-      additional_emails: (d.emails || []).filter(e => e.address !== person.email).map(e => e.address).slice(0, 3),
-      additional_phones: (d.phones || []).filter(p => p.number !== person.phone).map(p => p.number).slice(0, 3)
-    };
-
-    // Cache in custom_fields
+    // Cache PDL result
     await pool.query(
       `UPDATE people SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb WHERE id=$2`,
       [JSON.stringify({ pdl_enrichment: enrichment }), personId]
     ).catch(() => {});
 
-    console.log(`[PDL Enrich] Matched ${person.first_name} ${person.last_name} → ${d.job_title || 'no title'} at ${d.job_company_name || 'unknown'} (likelihood: ${pdlData.likelihood})`);
-    res.json({ enrichment, cached: false });
+    // ── AI Intelligence Brief ──
+    let aiBrief = null;
+    const grok = initGrok();
+    if (grok) {
+      try {
+        const stage = person.stage || 'Lead';
+        const daysSinceCreated = Math.round((Date.now() - new Date(person.created_at).getTime()) / 86400000);
+        const daysSinceActivity = person.last_activity ? Math.round((Date.now() - new Date(person.last_activity).getTime()) / 86400000) : null;
+        const pastDue = person.custom_fields?.past_due_balance || person.past_due_balance;
+        const pastDueDays = person.custom_fields?.past_due_days || person.past_due_days;
+
+        const briefPrompt = `You are an intelligence analyst for OKCREAL, a property management company in Oklahoma City. Generate a concise AGENT INTELLIGENCE BRIEF for a leasing/enforcement agent about this person. Be direct, factual, and actionable.
+
+PERSON IN CRM:
+- Name: ${person.first_name} ${person.last_name || ''}
+- Stage: ${stage}
+- In CRM since: ${daysSinceCreated} days
+- Last activity: ${daysSinceActivity !== null ? daysSinceActivity + ' days ago' : 'never'}
+- Total calls: ${person.call_count || 0}, texts: ${person.sms_count || 0}
+- Source: ${person.source || 'unknown'}
+- Tags: ${person.tags || 'none'}
+- Notes: ${(person.notes || '').slice(0, 300)}
+${pastDue ? `- PAST DUE BALANCE: $${pastDue}` : ''}
+${pastDueDays ? `- DAYS OVERDUE: ${pastDueDays}` : ''}
+${person.last_call_summary ? `- Last call summary: ${person.last_call_summary.slice(0, 200)}` : ''}
+
+${idOcr ? `ID DOCUMENT (OCR):
+- Legal name: ${idOcr.full_legal_name || '?'}
+- DOB: ${idOcr.date_of_birth || '?'} (Age: ${idOcr.age || '?'})
+- Address on ID: ${[idOcr.address, idOcr.city, idOcr.state, idOcr.zip].filter(Boolean).join(', ') || '?'}
+- ID #: ${idOcr.id_number || '?'} (${idOcr.issuing_state || '?'} ${idOcr.id_type || 'ID'})
+- Expires: ${idOcr.expiration_date || '?'}${idOcr.is_expired ? ' ⚠️ EXPIRED' : ''}
+` : 'NO ID ON FILE'}
+
+${enrichment.status === 'matched' ? `BACKGROUND DATA (People Data Labs, confidence ${enrichment.likelihood}/10):
+- Current job: ${enrichment.job_title || 'unknown'} at ${enrichment.job_company_name || 'unknown'}
+- Industry: ${enrichment.industry || '?'}
+- Location: ${enrichment.location_name || '?'}
+- Employment history: ${(enrichment.experience || []).map(e => `${e.title || '?'} at ${e.company || '?'} (${e.start || '?'}–${e.end || 'present'})`).join('; ') || 'none found'}
+- Education: ${(enrichment.education || []).map(e => e.school).filter(Boolean).join(', ') || 'none found'}
+- Social: ${[enrichment.linkedin_url ? 'LinkedIn' : null, enrichment.facebook_url ? 'Facebook' : null].filter(Boolean).join(', ') || 'none'}
+` : 'NO BACKGROUND MATCH FOUND — this person has a thin public footprint.'}
+
+Write 3-5 sentences. Focus on:
+1. Employment stability — are they currently employed? Recent gaps? Frequent job changes?
+2. Risk assessment — given their stage (${stage}), how should the agent approach them?
+3. Specific recommended action — what should the agent do RIGHT NOW?
+${stage === 'Delinquent' || stage === 'Evicting' ? '4. Payment ability — based on employment data, can they likely pay? Should we offer a payment plan or connect with rent assistance?' : ''}
+Be specific and practical. This is for a property manager, not a credit agency.`;
+
+        const briefResp = await grok.chat.completions.create({
+          model: 'grok-3', max_tokens: 400,
+          messages: [{ role: 'user', content: briefPrompt }]
+        });
+        aiBrief = briefResp.choices[0]?.message?.content?.trim() || null;
+      } catch(e) { console.warn('[AI Brief] Error:', e.message); }
+    }
+
+    res.json({ enrichment, idOcr, aiBrief, cached: false });
   } catch(e) {
-    console.error('[PDL Enrich] Error:', e.message);
+    console.error('[Enrich] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -4081,7 +4228,7 @@ app.get('/api/calls/log', auth, async (req, res) => {
 
     const r = await pool.query(`
       SELECT
-        c.id, c.direction, c.status, c.duration_seconds, c.from_number, c.to_number,
+        c.id, c.person_id, c.direction, c.status, c.duration_seconds, c.from_number, c.to_number,
         c.started_at, c.ended_at, c.recording_url, c.transcript, c.summary,
         c.call_source, c.agent_id,
         p.first_name, p.last_name, p.stage,
