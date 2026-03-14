@@ -2028,6 +2028,7 @@
     #view-dashboard { overflow-y:auto; background:#0a0a0a; }
     #view-dashboard.active { display:flex !important; flex-direction:column; }
     [data-theme="light"] #view-dashboard { background:#f0f0f0; }
+    [data-theme="light"] #view-workorders { background:#f0f0f0; }
 
     .mc-wrap { padding:20px 24px; min-height:100%; font-family:var(--font-mono); }
     .mc-masthead { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid #1e1e1e; }
@@ -3296,6 +3297,11 @@
           <span class="nav-icon">🏠</span>
           Showings
         </div>
+        <div class="nav-item" data-view="workorders" onclick="navigate('workorders')" id="nav-workorders">
+          <span class="nav-icon">🔧</span>
+          <span class="nav-label">Work Orders</span>
+          <span id="wo-nav-badge" style="display:none;margin-left:auto;background:#ff8c00;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.05em"></span>
+        </div>
       </div>
       <div class="sidebar-bottom">
         <!-- Privacy blur shortcut hint -->
@@ -3611,6 +3617,9 @@
       <!-- VIEW: Security Alerts -->
       <div class="view" id="view-showings">
         <div id="showings-root" style="height:100%;overflow:hidden;display:flex;flex-direction:column"></div>
+      </div>
+      <div class="view" id="view-workorders" style="overflow-y:auto;background:#0a0a0a">
+        <div id="workorders-root" style="max-width:1100px;margin:0 auto;padding:24px"></div>
       </div>
       <div class="view" id="view-dashboard"></div>
       <div class="view" id="view-security">
@@ -4350,6 +4359,8 @@ function navigate(view, listId = null) {
       history.pushState({ view: 'security' }, '', '/security');
     } else if (view === 'showings') {
       history.pushState({ view: 'showings' }, '', '/showings');
+    } else if (view === 'workorders') {
+      history.pushState({ view: 'workorders' }, '', '/workorders');
     } else if (view === 'callreports') {
       history.pushState({ view: 'callreports' }, '', '/callreports');
     } else if (view === 'dashboard') {
@@ -4374,6 +4385,7 @@ function navigate(view, listId = null) {
   else if (view === 'admin') { loadAdmin(); document.getElementById('header-title').textContent = 'Admin'; }
   else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
   else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
+  else if (view === 'workorders') { document.getElementById('header-title').textContent = 'Work Orders'; setTimeout(renderWorkOrdersView, 0); }
   else if (view === 'callreports') { document.getElementById('header-title').textContent = 'Call Reports'; setTimeout(loadCallReports, 0); }
   else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Mission Control'; setTimeout(renderDashboard, 0); }
   // Cancel galaxy animation when leaving dashboard
@@ -10756,6 +10768,14 @@ async function renderWoAlertPanel(containerId) {
     const notSched = data.alerts.filter(a => a.alert_state === 'NOT_SCHEDULED');
     const onTrack  = data.alerts.filter(a => a.alert_state === 'ON_TRACK');
 
+    // Update nav badge
+    const navBadge = document.getElementById('wo-nav-badge');
+    if (navBadge) {
+      const critical = overdue.length + notSched.length;
+      if (critical > 0) { navBadge.style.display = ''; navBadge.textContent = critical; navBadge.style.background = overdue.length ? '#e8003a' : '#ff8c00'; }
+      else { navBadge.style.display = 'none'; }
+    }
+
     let html = `<div style="display:flex;gap:12px;margin-bottom:8px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em">
       ${overdue.length  ? `<span style="color:#e8003a">${overdue.length} OVERDUE</span>` : ''}
       ${notSched.length ? `<span style="color:#ff8c00">${notSched.length} UNSCHEDULED</span>` : ''}
@@ -10783,6 +10803,211 @@ async function renderWoAlertPanel(containerId) {
 
     el.innerHTML = html;
   } catch(e) { console.warn('[WO Alerts]', e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORK ORDERS FULL SCREEN — Performance + Control
+// ═══════════════════════════════════════════════════════════════════════════════
+async function renderWorkOrdersView() {
+  const root = document.getElementById('workorders-root');
+  if (!root) return;
+  root.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#555"><div class="spinner"></div></div>';
+
+  try {
+    const [perf, alerts, woStats] = await Promise.all([
+      api('/api/work-orders/performance'),
+      api('/api/work-orders/alerts'),
+      api('/api/work-orders/stats').catch(() => null),
+    ]);
+
+    const kpi = perf.kpi || {};
+    const al = perf.alerts || {};
+    const vendors = perf.vendors || [];
+    const propVol = perf.propertyVolume || [];
+    const issues = perf.issueBreakdown || [];
+    const alertList = alerts?.alerts || [];
+
+    const overdue  = alertList.filter(a => a.alert_state === 'OVERDUE');
+    const notSched = alertList.filter(a => a.alert_state === 'NOT_SCHEDULED');
+    const onTrack  = alertList.filter(a => a.alert_state === 'ON_TRACK');
+
+    const statusColor = overdue.length ? '#e8003a' : (notSched.length ? '#ff8c00' : '#00e87a');
+    const statusText = overdue.length ? `${overdue.length} OVERDUE` : (notSched.length ? `${notSched.length} NEED SCHEDULING` : 'ALL ON TRACK');
+
+    const alertBadge = (state) => {
+      if (state === 'OVERDUE') return '<span style="background:#e8003a;color:#fff;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">OVERDUE</span>';
+      if (state === 'NOT_SCHEDULED') return '<span style="background:#ff8c00;color:#fff;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">NOT SCHEDULED</span>';
+      return '<span style="background:#00e87a;color:#000;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">ON TRACK</span>';
+    };
+
+    const shortP = p => (p||'').split(' - ')[0].replace(/ (DUPLEX|FOURPLEX|APARTMENTS|TOWNHOMES)/i,'').substring(0,28);
+
+    const mc = 'font-family:var(--font-mono);';
+    const cardStyle = 'background:var(--bg-card,#0d0d0d);border:1px solid var(--border,#1a1a1a);border-radius:8px;padding:16px 20px;margin-bottom:16px;';
+
+    let html = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div style="width:8px;height:8px;border-radius:50%;background:${statusColor};box-shadow:0 0 8px ${statusColor};animation:pulse 1.2s ease-in-out infinite"></div>
+        <span style="${mc}font-size:10px;letter-spacing:3px;color:${statusColor};text-transform:uppercase">${statusText}</span>
+      </div>
+      <div style="font-size:28px;font-weight:800;color:var(--text,#fff);letter-spacing:0.02em;margin-bottom:2px">Work Orders</div>
+      <div style="${mc}font-size:10px;letter-spacing:2px;color:#555;margin-bottom:24px;text-transform:uppercase">AppFolio → Connect · Alerts · Performance · Vendor Ranking</div>
+
+      <!-- KPI STRIP -->
+      <div style="${cardStyle}">
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:${statusColor};text-transform:uppercase;margin-bottom:14px">Performance Summary</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:14px">
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Total WOs</div>
+            <div style="${mc}font-size:22px;color:#00c8ff">${kpi.total || 0}</div>
+          </div>
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Open</div>
+            <div style="${mc}font-size:22px;color:#ff8c00">${kpi.open || 0}</div>
+          </div>
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Completed</div>
+            <div style="${mc}font-size:22px;color:#00e87a">${kpi.completed || 0}</div>
+          </div>
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Avg Days to Close</div>
+            <div style="${mc}font-size:22px;color:#00c8ff">${kpi.avg_days_to_close || '—'}d</div>
+          </div>
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Overdue</div>
+            <div style="${mc}font-size:22px;color:#e8003a">${al.overdue || 0}</div>
+          </div>
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Not Scheduled</div>
+            <div style="${mc}font-size:22px;color:#ff8c00">${al.notScheduled || 0}</div>
+          </div>
+          <div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">On Track</div>
+            <div style="${mc}font-size:22px;color:#00e87a">${al.onTrack || 0}</div>
+          </div>
+        </div>
+      </div>`;
+
+    // OPEN ALERT TABLE
+    if (alertList.length) {
+      html += `<div style="${cardStyle}">
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:${statusColor};text-transform:uppercase;margin-bottom:14px">Open Work Orders — Alert Status</div>
+        <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <tr>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">WO #</th>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Alert</th>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Property</th>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Unit</th>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Resident</th>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Vendor</th>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Issue</th>
+            <th style="padding:6px 8px;text-align:right;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Age</th>
+          </tr>`;
+      for (const a of alertList) {
+        const days = a.days_open != null ? Math.round(parseFloat(a.days_open)) + 'd' : '';
+        html += `<tr style="border-bottom:1px solid #111">
+            <td style="padding:6px 8px;${mc}font-size:10px;color:#00c8ff">${esc(a.wo_number)}</td>
+            <td style="padding:6px 8px">${alertBadge(a.alert_state)}</td>
+            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(shortP(a.property))}</td>
+            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(a.unit||'—')}</td>
+            <td style="padding:6px 8px;color:#ccc;font-size:11px">${esc(a.resident||'—')}</td>
+            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(a.vendor||'—')}</td>
+            <td style="padding:6px 8px;color:#888;font-size:11px">${esc(a.issue||'—')}</td>
+            <td style="padding:6px 8px;text-align:right;${mc}font-size:10px;color:#666">${days}</td>
+          </tr>`;
+      }
+      html += '</table></div></div>';
+    }
+
+    // VENDOR RANKING
+    if (vendors.length) {
+      html += `<div style="${cardStyle}">
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:14px">Vendor Ranking — By Total WOs Assigned</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <tr>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Vendor</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Total</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Completed</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Open</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Avg Close</th>
+            <th style="padding:6px 8px;text-align:right;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Total Cost</th>
+          </tr>`;
+      for (const v of vendors) {
+        html += `<tr style="border-bottom:1px solid #111">
+            <td style="padding:6px 8px;color:#ccc;font-size:12px">${esc(v.vendor)}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#00c8ff">${v.total}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#00e87a">${v.completed}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#ff8c00">${v.open}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#aaa">${v.avg_days_to_close != null ? v.avg_days_to_close + 'd' : '—'}</td>
+            <td style="padding:6px 8px;text-align:right;${mc}font-size:11px;color:#666">$${parseFloat(v.total_cost||0).toLocaleString('en-US',{minimumFractionDigits:0})}</td>
+          </tr>`;
+      }
+      html += '</table></div>';
+    }
+
+    // PROPERTY VOLUME
+    if (propVol.length) {
+      html += `<div style="${cardStyle}">
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:#ff8c00;text-transform:uppercase;margin-bottom:14px">Property Volume — Current Month vs 3-Month Rolling Avg</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <tr>
+            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Property</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">This Month</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">3mo Avg</th>
+            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Delta</th>
+          </tr>`;
+      for (const p of propVol) {
+        const exceeds = p.exceeds_avg;
+        const color = exceeds ? '#e8003a' : (parseInt(p.this_month) > 0 ? '#00e87a' : '#555');
+        const deltaStr = p.delta_pct > 0 ? `+${p.delta_pct}%` : (p.delta_pct < 0 ? `${p.delta_pct}%` : '—');
+        html += `<tr style="border-bottom:1px solid #111">
+            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(shortP(p.property))}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:${color}">${p.this_month}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#666">${p.rolling_avg || '—'}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:${exceeds ? '#e8003a' : '#666'}">${exceeds ? '⚠ ' : ''}${deltaStr}</td>
+          </tr>`;
+      }
+      html += '</table></div>';
+    }
+
+    // ISSUE BREAKDOWN
+    if (issues.length) {
+      html += `<div style="${cardStyle}">
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:#00e87a;text-transform:uppercase;margin-bottom:14px">Issue Type Breakdown</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+      const maxCnt = Math.max(...issues.map(i => parseInt(i.cnt)));
+      for (const i of issues) {
+        const pct = Math.round((parseInt(i.cnt) / maxCnt) * 100);
+        html += `<div style="background:#111;border:1px solid #1a1a1a;border-radius:5px;padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:6px">
+          <span style="color:#aaa">${esc(i.issue)}</span>
+          <span style="${mc}font-size:10px;color:#00c8ff;font-weight:700">${i.cnt}</span>
+        </div>`;
+      }
+      html += '</div></div>';
+    }
+
+    // WO METER (reuse existing)
+    html += `<div style="${cardStyle}">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:#ff8c00;text-transform:uppercase;margin-bottom:14px">Property Trend — Month Over Month</div>
+      <div id="wo-full-meter" style="min-height:40px"></div>
+    </div>`;
+
+    html += `<div style="${mc}font-size:8px;color:#333;text-align:center;margin-top:16px;letter-spacing:2px;text-transform:uppercase">OKCREAL CONNECT · WORK ORDER MANAGEMENT · DAILY SYNC</div>`;
+
+    root.innerHTML = html;
+
+    // Render the meter into the full-view copy
+    if (woStats) {
+      const origEl = document.getElementById('mc-wo-meter');
+      const fullEl = document.getElementById('wo-full-meter');
+      if (fullEl && origEl) fullEl.innerHTML = origEl.innerHTML;
+    }
+
+  } catch(e) {
+    console.error('[WO View]', e);
+    root.innerHTML = `<div style="padding:40px;color:#e8003a">${e.message}</div>`;
+  }
 }
 
 // Hook into startShowingAlertPoller so it starts at the same time
