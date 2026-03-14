@@ -7191,6 +7191,131 @@ app.get('/api/jareih/tts-twiml/:token', (req, res) => {
   res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Play>${audioUrl}</Play></Response>`);
 });
 
+// ── Browser-friendly TTS (WAV) for voice chat ──────────────────────────────
+async function araTTSBrowser(text) {
+  const resp = await fetch('https://api.x.ai/v1/tts', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.GROK_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice_id: 'ara', language: 'en', output_format: { codec: 'pcm', sample_rate: 24000, container: 'wav' } })
+  });
+  if (!resp.ok) {
+    // Fallback: try mulaw with wav container
+    const resp2 = await fetch('https://api.x.ai/v1/tts', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.GROK_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice_id: 'ara', language: 'en', output_format: { codec: 'mulaw', sample_rate: 8000, container: 'wav' } })
+    });
+    if (!resp2.ok) throw new Error(`xAI TTS browser: ${resp2.status}`);
+    return Buffer.from(await resp2.arrayBuffer());
+  }
+  return Buffer.from(await resp.arrayBuffer());
+}
+
+app.get('/api/jareih/voice-audio/:token.wav', (req, res) => {
+  const buf = ttsAudioCache.get('voice-' + req.params.token);
+  if (!buf) return res.status(404).end();
+  res.setHeader('Content-Type', 'audio/wav');
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(buf);
+  // Clean up after serving
+  setTimeout(() => ttsAudioCache.delete('voice-' + req.params.token), 60000);
+});
+
+// ── Voice Chat endpoint — conversational AI with CRM context + Ara voice ───
+app.post('/api/jareih/voice-chat', auth, async (req, res) => {
+  try {
+    const { text, history } = req.body;
+    if (!text) return res.status(400).json({ error: 'No text' });
+
+    const agentName = req.agent?.name || 'there';
+    const agentFirst = agentName.split(' ')[0];
+
+    // Scripture guardrail check
+    const guardrailCheck = checkScriptureGuardrails(text);
+    if (guardrailCheck.blocked) {
+      const reply = guardrailCheck.message;
+      let audioToken = null;
+      try {
+        const audio = await araTTSBrowser(reply.substring(0, 300));
+        audioToken = crypto.randomBytes(8).toString('hex');
+        ttsAudioCache.set('voice-' + audioToken, audio);
+      } catch(e) { console.warn('[Voice TTS]', e.message); }
+      return res.json({ text: reply, audioToken, guardrail: true });
+    }
+
+    const grok = initGrok();
+    if (!grok) return res.status(503).json({ error: 'AI not configured' });
+
+    // Gather CRM context
+    const [stagesR, recentR, openWoR, rentRollR] = await Promise.all([
+      pool.query(`SELECT stage, COUNT(*)::int AS cnt FROM people GROUP BY stage ORDER BY cnt DESC`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT type, COUNT(*)::int AS cnt FROM activities WHERE created_at > NOW() - INTERVAL '24 hours' GROUP BY type`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE scheduled_end IS NOT NULL AND scheduled_end + INTERVAL '6 hours' < NOW()) AS overdue, COUNT(*) FILTER (WHERE scheduled_end IS NULL) AS unscheduled FROM work_orders WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')`).catch(() => ({ rows: [{}] })),
+      pool.query(`SELECT COUNT(*)::int AS occupied FROM rent_roll WHERE status='Current'`).catch(() => ({ rows: [{}] })),
+    ]);
+
+    const stageBreakdown = stagesR.rows.map(r => `${r.stage||'Unknown'}: ${r.cnt}`).join(', ');
+    const activityToday = recentR.rows.map(r => `${r.type}: ${r.cnt}`).join(', ') || 'none yet today';
+    const wo = openWoR.rows[0] || {};
+    const occupied = rentRollR.rows[0]?.occupied || '?';
+    const today = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+    const systemPrompt = `You are Jireh (spelled Jareih), a voice AI assistant for OKCREAL Connect property management CRM.
+You are speaking with ${agentName}, an agent on the team. Address them as "${agentFirst}" naturally in conversation.
+
+Today is ${today}.
+
+${getGuardrailPromptBlock()}
+
+CRM SNAPSHOT:
+- Pipeline: ${stageBreakdown}
+- Activity today: ${activityToday}
+- Open work orders: ${wo.total||0} total (${wo.overdue||0} overdue, ${wo.unscheduled||0} unscheduled)
+- Occupied units: ${occupied}
+
+YOUR PERSONALITY:
+- Warm, natural, conversational — like a trusted coworker who knows the business inside and out
+- Use ${agentFirst}'s name occasionally (not every response — keep it natural)
+- Short responses — 2-3 sentences usually. This is a voice conversation, not an essay.
+- React to what they say before giving info. Be a real conversationalist.
+- When you don't know something specific, say so honestly and suggest where to look.
+- You can help with: CRM strategy, tenant questions, work order triage, showing follow-up advice, team priorities, property insights.
+- Keep it spoken-language natural — no lists, no markdown, no formatting. Just talk.
+
+Remember: you represent a company built on biblical values. Be excellent, be warm, be wise.`;
+
+    const messages = [{ role: 'system', content: systemPrompt }];
+    if (Array.isArray(history)) {
+      for (const m of history.slice(-12)) {
+        if (m.role && m.content) messages.push({ role: m.role, content: String(m.content) });
+      }
+    }
+    messages.push({ role: 'user', content: text });
+
+    const completion = await grok.chat.completions.create({
+      model: 'grok-3', max_tokens: 250, messages
+    });
+
+    const reply = completion.choices[0].message.content.trim();
+
+    // Generate Ara voice audio
+    let audioToken = null;
+    try {
+      const audio = await araTTSBrowser(reply);
+      audioToken = crypto.randomBytes(8).toString('hex');
+      ttsAudioCache.set('voice-' + audioToken, audio);
+      console.log(`[Voice Chat] ${agentFirst}: "${text.substring(0,50)}" → Ara: "${reply.substring(0,50)}…" audio=${audio.length}b`);
+    } catch(ttsErr) {
+      console.warn('[Voice TTS] Audio gen failed, text-only fallback:', ttsErr.message);
+    }
+
+    res.json({ text: reply, audioToken });
+  } catch(e) {
+    console.error('[Voice Chat]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Contact/status callback
 app.post('/api/jareih/call-status/:callId', async (req, res) => {
   res.sendStatus(200);
