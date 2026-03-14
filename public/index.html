@@ -3,6 +3,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -4746,6 +4747,7 @@ async function openContact(personId, fromNav=false) {
     loadCaseworkerPanel(personId, person.stage);
     loadShowingRoster(person);
     loadRentRollInfo(person);
+    loadPersonWorkOrders(person);
     // Silently sync Gmail in background if contact has email
     if (person.email) {
       api('/api/gmail/sync-contact', 'POST', { personId: person.id })
@@ -9641,6 +9643,7 @@ async function renderDashboard() {
             <span id="wo-open-badge" style="font-size:7px;letter-spacing:0.12em;color:#555"></span>
           </div>
           <div id="mc-wo-meter" style="min-height:40px"></div>
+          <div id="wo-alert-panel" style="margin-top:10px;border-top:1px solid #111;padding-top:10px"></div>
         </div>
 
         <!-- GALACTIC MAP -->
@@ -9769,6 +9772,7 @@ async function refreshDashboard() {
     window._mcWoStats = woStats;
     renderMcPanels(stats, galaxy);
     renderWoMeter(woStats);
+    renderWoAlertPanel('wo-alert-panel');
     renderVacancyBar(galaxy);
     initGalaxyCanvas(galaxy);
     loadScraperStatus();
@@ -10566,7 +10570,7 @@ async function shPollInProgress() {
   } catch(e) { console.warn('[Banner]', e.message); }
 }
 
-// ── WORK ORDERS UPLOAD ─────────────────────────────────────────────────────
+// ── WORK ORDERS UPLOAD (v2 — with alert classification + rent roll cross-reference) ──
 async function woUpload(input) {
   const file = input?.files?.[0];
   if (!file) return;
@@ -10600,7 +10604,7 @@ async function woUpload(input) {
       // Property header rows have value in col 0 but no WO number
       const propVal = r[col('Property')];
       const woNum   = r[col('Work Order Number')];
-      if (propVal && !woNum) { lastProp = String(propVal).split(' - ')[0].trim(); continue; }
+      if (propVal && !woNum) { lastProp = String(propVal).trim(); continue; }
       if (!woNum) continue;
 
       const parseDate = v => {
@@ -10611,27 +10615,37 @@ async function woUpload(input) {
       };
 
       rows.push({
-        property:      lastProp || (propVal ? String(propVal).split(' - ')[0].trim() : null),
-        wo_number:     String(woNum),
-        priority:      r[col('Priority')]||null,
-        wo_type:       r[col('Work Order Type')]||null,
+        property:        lastProp || (propVal ? String(propVal).trim() : null),
+        wo_number:       String(woNum),
+        priority:        r[col('Priority')]||null,
+        wo_type:         r[col('Work Order Type')]||null,
         job_description: r[col('Job Description')]||null,
-        status:        r[col('Status')]||null,
-        vendor:        r[col('Vendor')]||null,
-        unit:          r[col('Unit')]||null,
-        resident:      r[col('Primary Resident')]||null,
-        created_at:    parseDate(r[col('Created At')]),
+        instructions:    r[col('Instructions')]||null,
+        status:          r[col('Status')]||null,
+        vendor:          r[col('Vendor')]||null,
+        unit:            r[col('Unit')]||null,
+        resident:        r[col('Primary Resident')]||null,
+        created_at:      parseDate(r[col('Created At')]),
         scheduled_start: parseDate(r[col('Scheduled Start')]),
-        completed_on:  parseDate(r[col('Completed On')]),
-        amount:        r[col('Amount')] ? parseFloat(r[col('Amount')]) : null,
+        scheduled_end:   parseDate(r[col('Scheduled End')]),
+        work_done_on:    parseDate(r[col('Work Done On')]),
+        completed_on:    parseDate(r[col('Completed On')]),
+        amount:          r[col('Amount')] ? parseFloat(r[col('Amount')]) : null,
+        issue:           r[col('Work Order Issue')]||null,
+        recurring:       r[col('Recurring')]||null,
       });
     }
 
     if (!rows.length) { toast('❌ No valid work orders found in file', 'error'); return; }
-    const d = await api('/api/work-orders/upload', 'POST', { rows, filename: file.name });
-    toast(`✅ Imported ${d.inserted} work orders${d.skipped?' ('+d.skipped+' skipped)':''}`, 'success');
-    // Refresh WO meter
+    const d = await api('/api/work-orders/upload-v2', 'POST', { rows, filename: file.name });
+    const parts = [`✅ Imported ${d.inserted} work orders`];
+    if (d.matched) parts.push(`${d.matched} matched to tenants`);
+    if (d.households) parts.push(`${d.households} household units`);
+    if (d.skipped)  parts.push(`${d.skipped} skipped`);
+    toast(parts.join(' · '), 'success');
+    // Refresh WO meter + alert panel
     api('/api/work-orders/stats').then(renderWoMeter).catch(()=>{});
+    if (typeof renderWoAlertPanel === 'function') renderWoAlertPanel('wo-alert-panel');
     if (typeof refreshDashboard === 'function') refreshDashboard();
   } catch(e) {
     console.error('[woUpload]', e);
@@ -10640,6 +10654,135 @@ async function woUpload(input) {
     if (lbl) { lbl.style.pointerEvents=''; lbl.style.opacity=''; }
     if (input) input.value = '';
   }
+}
+
+// ── WORK ORDER ALERTS — Person-level module for leads page ────────────────
+async function loadPersonWorkOrders(person) {
+  if (!person?.id) return;
+  const personId = person.id;
+  // Remove previous instance if exists
+  const existing = document.getElementById(`wo-info-${personId}`);
+  if (existing) existing.remove();
+
+  try {
+    const data = await api(`/api/work-orders/by-person/${personId}`);
+    if (!data || !data.workOrders?.length) return;
+
+    const open = data.workOrders.filter(w => w.alert_state !== 'COMPLETED');
+    const closed = data.workOrders.filter(w => w.alert_state === 'COMPLETED');
+    if (!open.length && !closed.length) return;
+
+    const alertBadge = (state) => {
+      if (state === 'OVERDUE') return '<span style="background:#e8003a;color:#fff;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:0.05em">OVERDUE</span>';
+      if (state === 'NOT_SCHEDULED') return '<span style="background:#ff8c00;color:#fff;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:0.05em">NOT SCHEDULED</span>';
+      if (state === 'ON_TRACK') return '<span style="background:#00e87a;color:#000;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:0.05em">ON TRACK</span>';
+      return '<span style="background:#333;color:#888;padding:2px 6px;border-radius:3px;font-size:9px">CLOSED</span>';
+    };
+
+    const titleColor = data.overdue ? 'var(--red,#e8003a)' : (data.notScheduled ? 'var(--amber,#ff8c00)' : 'var(--green,#00e87a)');
+
+    const div = document.createElement('div');
+    div.id = `wo-info-${personId}`;
+    div.className = 'right-section';
+
+    let html = `<div class="right-section-header">
+        <span class="right-section-title" style="color:${titleColor}">🔧 Work Orders</span>
+        ${open.length ? `<span style="background:${data.overdue ? '#e8003a' : '#ff8c00'};color:#fff;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700">${open.length} open</span>` : ''}
+        ${data.hasHouseholdWOs ? '<span style="font-size:8px;color:#888;letter-spacing:0.05em;margin-left:4px">+HOUSEHOLD</span>' : ''}
+      </div>`;
+
+    if (open.length) {
+      html += '<div style="display:flex;flex-direction:column;gap:5px">';
+      for (const wo of open) {
+        const daysStr = wo.days_open != null ? `${Math.round(parseFloat(wo.days_open))}d open` : '';
+        html += `<div style="background:var(--bg-card,#0a0a0a);border:1px solid var(--border-color,#1a1a1a);border-radius:6px;padding:7px 9px;font-size:11px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <span style="font-family:var(--font-mono);color:var(--accent,#6366f1);font-size:10px">WO ${esc(wo.wo_number)}</span>
+              ${alertBadge(wo.alert_state)}
+            </div>
+            <div style="color:var(--text-3,#666);font-size:10px;display:flex;gap:6px;flex-wrap:wrap">
+              ${wo.issue ? `<span>${esc(wo.issue)}</span>` : ''}
+              ${wo.vendor ? `<span>· ${esc(wo.vendor)}</span>` : ''}
+              ${daysStr ? `<span>· ${daysStr}</span>` : ''}
+            </div>
+            ${wo.job_description ? `<div style="color:var(--text-4,#444);font-size:9px;margin-top:3px;max-height:28px;overflow:hidden">${esc(wo.job_description).substring(0,100)}</div>` : ''}
+          </div>`;
+      }
+      html += '</div>';
+    }
+
+    if (closed.length) {
+      html += `<details style="margin-top:6px"><summary style="font-size:10px;color:#555;cursor:pointer;font-family:var(--font-mono)">${closed.length} completed</summary>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">`;
+      for (const wo of closed.slice(0, 8)) {
+        html += `<div style="font-size:9px;color:#444;display:flex;gap:5px;font-family:var(--font-mono)">
+          <span style="color:#555">WO ${esc(wo.wo_number)}</span>
+          <span>${esc(wo.issue||wo.status||'')}</span>
+        </div>`;
+      }
+      html += '</div></details>';
+    }
+
+    div.innerHTML = html;
+
+    // Insert after the rent roll info section, or before the showings roster
+    const rrInfo = document.getElementById(`rr-info-${personId}`);
+    const rosterWrap = document.getElementById(`sh-roster-${personId}`);
+    if (rrInfo) rrInfo.after(div);
+    else if (rosterWrap) rosterWrap.parentNode.insertBefore(div, rosterWrap);
+  } catch(e) { /* silent — WO data may not exist for this person */ }
+}
+
+// Alias for SSE handler compatibility
+function renderPersonWorkOrders(personId, container) {
+  if (container) {
+    // Legacy container-based call
+    loadPersonWorkOrders({ id: personId });
+  }
+}
+
+// ── WORK ORDER ALERTS — Command module alert panel ────────────────────────
+async function renderWoAlertPanel(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  try {
+    const data = await api('/api/work-orders/alerts');
+    if (!data?.alerts?.length) {
+      el.innerHTML = '<div style="font-size:9px;color:#333;text-align:center;padding:12px;letter-spacing:0.1em">NO OPEN WORK ORDERS</div>';
+      return;
+    }
+
+    const overdue  = data.alerts.filter(a => a.alert_state === 'OVERDUE');
+    const notSched = data.alerts.filter(a => a.alert_state === 'NOT_SCHEDULED');
+    const onTrack  = data.alerts.filter(a => a.alert_state === 'ON_TRACK');
+
+    let html = `<div style="display:flex;gap:12px;margin-bottom:8px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em">
+      ${overdue.length  ? `<span style="color:#e8003a">${overdue.length} OVERDUE</span>` : ''}
+      ${notSched.length ? `<span style="color:#ff8c00">${notSched.length} UNSCHEDULED</span>` : ''}
+      ${onTrack.length  ? `<span style="color:#00e87a">${onTrack.length} ON TRACK</span>` : ''}
+    </div>`;
+
+    const critical = [...overdue, ...notSched].slice(0, 8);
+    if (critical.length) {
+      html += '<div style="display:flex;flex-direction:column;gap:3px">';
+      for (const a of critical) {
+        const isOverdue = a.alert_state === 'OVERDUE';
+        const color = isOverdue ? '#e8003a' : '#ff8c00';
+        const label = isOverdue ? 'OVR' : 'UNSCHED';
+        const shortProp = (a.property||'').split(' - ')[0].substring(0,20);
+        const days = a.days_open != null ? Math.round(parseFloat(a.days_open)) + 'd' : '';
+        html += `<div style="display:flex;align-items:center;gap:6px;font-size:10px;padding:3px 0;border-bottom:1px solid #111">
+          <span style="background:${color};color:#fff;padding:1px 4px;font-size:7px;font-weight:700;letter-spacing:0.08em;min-width:42px;text-align:center">${label}</span>
+          <span style="color:#888;font-family:var(--font-mono);font-size:9px;min-width:38px">${esc(a.wo_number)}</span>
+          <span style="color:#aaa;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.resident || a.unit || shortProp)}</span>
+          <span style="color:#555;font-family:var(--font-mono);font-size:9px">${days}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+
+    el.innerHTML = html;
+  } catch(e) { console.warn('[WO Alerts]', e.message); }
 }
 
 // Hook into startShowingAlertPoller so it starts at the same time
@@ -11036,6 +11179,17 @@ function connectAgentSse() {
           }
           toast(`🤖 GrokFUB updated debt info`, 'info');
         }
+      } else if (payload.type === 'work_orders_updated') {
+        renderWoAlertPanel('wo-alert-panel');
+        api('/api/work-orders/stats').then(renderWoMeter).catch(()=>{});
+        // Refresh person WO panel if viewing someone
+        if (currentPersonId) {
+          const woEl = document.getElementById('person-wo-alerts');
+          if (woEl) renderPersonWorkOrders(currentPersonId, woEl);
+        }
+      } else if (payload.type === 'rent_roll_updated') {
+        // Rent roll changed — re-run auto-link in background
+        api('/api/work-orders/auto-link', 'POST').catch(()=>{});
       }
     } catch(err) {}
   };
