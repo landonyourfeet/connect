@@ -201,28 +201,55 @@ app.get('/api/people', auth, async (req, res) => {
     const { search, stage, tags, smartListId, limit = 50, offset = 0 } = req.query;
     let where = ['1=1']; let params = [];
     if (search) {
-      const parts = search.trim().split(/\s+/).filter(Boolean);
+      const q = search.trim();
+      const qLower = q.toLowerCase();
+      const parts = q.split(/\s+/).filter(Boolean);
+      const digits = q.replace(/\D/g, '');
+
+      // Build one comprehensive OR clause
+      params.push(`%${q}%`); const pFull = params.length;
+
+      const conditions = [];
+
+      // ── Name: concatenated full name search (handles "Lilah Gonzalez", "Gonzalez, Lilah", partials) ──
+      conditions.push(`(COALESCE(p.first_name,'') || ' ' || COALESCE(p.last_name,'')) ILIKE $${pFull}`);
+      conditions.push(`(COALESCE(p.last_name,'') || ' ' || COALESCE(p.first_name,'')) ILIKE $${pFull}`);
+      conditions.push(`(COALESCE(p.last_name,'') || ', ' || COALESCE(p.first_name,'')) ILIKE $${pFull}`);
+
+      // ── Individual field partial match ──
+      conditions.push(`p.first_name ILIKE $${pFull}`);
+      conditions.push(`p.last_name ILIKE $${pFull}`);
+      conditions.push(`p.email ILIKE $${pFull}`);
+
+      // ── Multi-word: each word must match either first or last name ──
       if (parts.length >= 2) {
-        params.push(`%${parts[0]}%`); const p1 = params.length;
-        params.push(`%${parts.slice(1).join(' ')}%`); const p2 = params.length;
-        params.push(`%${parts[parts.length-1]}%`); const p3 = params.length;
-        params.push(`%${parts.slice(0,-1).join(' ')}%`); const p4 = params.length;
-        params.push(`%${search}%`); const pFull = params.length;
-        where.push(`(
-          (p.first_name ILIKE $${p1} AND p.last_name ILIKE $${p2}) OR
-          (p.first_name ILIKE $${p3} AND p.last_name ILIKE $${p4}) OR
-          p.phone ILIKE $${pFull} OR p.email ILIKE $${pFull} OR
-          EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pFull})
-        )`);
-      } else {
-        params.push(`%${search}%`);
-        const pi = params.length;
-        where.push(`(
-          p.first_name ILIKE $${pi} OR p.last_name ILIKE $${pi} OR
-          p.phone ILIKE $${pi} OR p.email ILIKE $${pi} OR
-          EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pi})
-        )`);
+        const wordConditions = [];
+        for (const word of parts) {
+          params.push(`%${word}%`);
+          const pw = params.length;
+          wordConditions.push(`(p.first_name ILIKE $${pw} OR p.last_name ILIKE $${pw})`);
+        }
+        conditions.push(`(${wordConditions.join(' AND ')})`);
       }
+
+      // ── Phone: if query has 3+ digits, search phone fields with digits-only matching ──
+      if (digits.length >= 3) {
+        params.push(`%${digits}%`); const pDigits = params.length;
+        conditions.push(`REGEXP_REPLACE(COALESCE(p.phone,''), '\\D', '', 'g') LIKE $${pDigits}`);
+        conditions.push(`EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND REGEXP_REPLACE(pp2.phone, '\\D', '', 'g') LIKE $${pDigits})`);
+      } else {
+        // Non-phone: still check raw phone/email fields
+        conditions.push(`p.phone ILIKE $${pFull}`);
+        conditions.push(`EXISTS(SELECT 1 FROM person_phones pp2 WHERE pp2.person_id=p.id AND pp2.phone ILIKE $${pFull})`);
+      }
+
+      // ── Rent roll: search by tenant name, unit, or property address ──
+      conditions.push(`EXISTS(SELECT 1 FROM rent_roll rr WHERE rr.person_id=p.id AND (rr.tenant_name ILIKE $${pFull} OR rr.unit ILIKE $${pFull} OR rr.property ILIKE $${pFull}))`);
+
+      // ── Background / notes ──
+      conditions.push(`p.background ILIKE $${pFull}`);
+
+      where.push(`(${conditions.join(' OR ')})`);
     }
     if (stage) { params.push(stage); where.push(`p.stage=$${params.length}`); }
     if (tags) {
@@ -345,6 +372,20 @@ app.get('/api/people', auth, async (req, res) => {
         phoneMap[row.person_id].push(row.phone);
       });
       r.rows.forEach(p => { p.all_phones = phoneMap[p.id] || (p.phone ? [p.phone] : []); });
+
+      // Enrich with rent roll data (unit + property) when available
+      if (search) {
+        const rrR = await pool.query(
+          `SELECT person_id, unit, property, tenant_name, status FROM rent_roll WHERE person_id = ANY($1) AND status = 'Current'`,
+          [ids]
+        );
+        const rrMap = {};
+        rrR.rows.forEach(row => { if (!rrMap[row.person_id]) rrMap[row.person_id] = row; });
+        r.rows.forEach(p => {
+          const rr = rrMap[p.id];
+          if (rr) { p.rr_unit = rr.unit; p.rr_property = rr.property; p.rr_tenant = rr.tenant_name; }
+        });
+      }
     }
     // Spread custom_fields into each person row so frontend gets flat access (past_due_balance etc.)
     const people = r.rows.map(p => ({ ...p, ...(p.custom_fields || {}) }));
