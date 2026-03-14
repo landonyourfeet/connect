@@ -8613,6 +8613,15 @@ function formatPhone(phone) {
   if (d.length === 11 && d[0]==='1') return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
   return phone;
 }
+// Clickable person name — opens their lead file. Falls back to plain text if no ID.
+function nameLink(name, personId, extraStyle) {
+  if (!name || name === '—') return '<span style="color:var(--text-3)">—</span>';
+  const escaped = esc(name);
+  if (!personId) return `<span>${escaped}</span>`;
+  const base = 'color:var(--text);cursor:pointer;text-decoration:none;border-bottom:1px dashed var(--border-hi);transition:color 0.15s';
+  const s = extraStyle ? base + ';' + extraStyle : base;
+  return `<a onclick="event.stopPropagation();openContact('${personId}')" style="${s}" title="Open ${escaped}'s file">${escaped}</a>`;
+}
 function formatDuration(secs) {
   const m = Math.floor(secs/60), s = secs%60;
   return `${m}:${String(s).padStart(2,'0')}`;
@@ -9170,7 +9179,7 @@ function shBuildPanel(property, showings, trends) {
 
         return `<div class="sh-showing-row" onclick="shOpenFeedback('${s.id}')">
           <div style="flex:1;min-width:0">
-            <div class="sh-showing-name">${esc(s.guest_name||'—')}</div>
+            <div class="sh-showing-name">${s.connect_person_id ? `<a onclick="event.stopPropagation();openContact('${s.connect_person_id}')" style="color:inherit;cursor:pointer;text-decoration:none;border-bottom:1px dashed var(--border-hi)" title="Open lead file">${esc(s.guest_name||'—')}</a>` : esc(s.guest_name||'—')}</div>
             <div class="sh-showing-meta">${esc(dt)}${s.unit?' · '+esc(s.unit):''}${s.showing_type?' · '+esc(s.showing_type):''}</div>
             <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;align-items:center">
               ${rentBadge}
@@ -9218,7 +9227,7 @@ function shOpenFeedback(showingId) {
     <div class="sh-modal-head">
       <div>
         <div class="sh-modal-title">Tour Feedback</div>
-        <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:2px">${esc(s.guest_name||'')} · ${esc((s.property||'').split(' - ')[0])}</div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);margin-top:2px">${s.connect_person_id ? `<a onclick="event.stopPropagation();document.getElementById('sh-modal').remove();openContact('${s.connect_person_id}')" style="color:var(--text-2);cursor:pointer;text-decoration:none;border-bottom:1px dashed var(--border-hi)" title="Open lead file">${esc(s.guest_name||'')}</a>` : esc(s.guest_name||'')} · ${esc((s.property||'').split(' - ')[0])}</div>
         ${s.feedback_source === 'prospect'
           ? `<div style="margin-top:5px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;color:var(--green);background:rgba(0,232,122,0.08);border:1px solid rgba(0,232,122,0.2);padding:3px 8px;border-radius:6px;display:inline-block">📱 PROSPECT SUBMITTED — you can add your own notes below</div>`
           : s.feedback_source === 'agent'
@@ -10796,7 +10805,7 @@ async function renderWoAlertPanel(containerId) {
         html += `<div style="display:flex;align-items:center;gap:6px;font-size:10px;padding:3px 0;border-bottom:1px solid #111">
           <span style="background:${color};color:#fff;padding:1px 4px;font-size:7px;font-weight:700;letter-spacing:0.08em;min-width:42px;text-align:center">${label}</span>
           <span style="color:#888;font-family:var(--font-mono);font-size:9px;min-width:38px">${esc(a.wo_number)}</span>
-          <span style="color:#aaa;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.resident || a.unit || shortProp)}</span>
+          <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nameLink(a.resident || a.unit || shortProp, a.person_id, 'color:#aaa;font-size:10px')}</span>
           <span style="color:#555;font-family:var(--font-mono);font-size:9px">${days}</span>
         </div>`;
       }
@@ -10910,7 +10919,7 @@ async function renderWorkOrdersView() {
             <td style="padding:6px 8px">${alertBadge(a.alert_state)}</td>
             <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(shortP(a.property))}</td>
             <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(a.unit||'—')}</td>
-            <td style="padding:6px 8px;color:var(--text);font-size:11px">${esc(a.resident||'—')}</td>
+            <td style="padding:6px 8px;color:var(--text);font-size:11px">${nameLink(a.resident, a.person_id)}</td>
             <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(a.vendor||'—')}</td>
             <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(a.issue||'—')}</td>
             <td style="padding:6px 8px;text-align:right;${mc}font-size:10px;color:var(--text-3)">${days}</td>
@@ -11933,7 +11942,7 @@ function renderFeedbackReport(d) {
     const cats = (r.categories||[]).slice(0,3).map(c=>`<span style="background:#1e1e1e;padding:1px 5px;border-radius:2px;font-size:7px;color:#888">${esc(c)}</span>`).join(' ');
     return `<tr style="border-bottom:1px solid #141414">
       <td style="padding:7px 8px;font-size:9px;color:#888;white-space:nowrap">${dt}</td>
-      <td style="padding:7px 8px;font-size:9px;color:#ccc">${esc(r.guest_name||'—')}</td>
+      <td style="padding:7px 8px;font-size:9px;color:#ccc">${nameLink(r.guest_name, r.connect_person_id, 'font-size:9px;color:#ccc')}</td>
       <td style="padding:7px 8px;font-size:9px;color:#666">${esc(prop)}</td>
       <td style="padding:7px 8px"><span style="color:${vcol};font-size:8px;font-weight:700;letter-spacing:0.1em">${vlbl}</span></td>
       <td style="padding:7px 8px">${cats}</td>
