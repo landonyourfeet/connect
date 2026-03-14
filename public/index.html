@@ -5017,59 +5017,22 @@ async function secHandleIdUpload(event) {
   if (!file || !_secPersonId) return;
   if (file.size > 10 * 1024 * 1024) { toast('Image too large — max 10MB', 'error'); return; }
 
-  // Auto-crop and rotate ID to landscape, fit standard ID aspect ratio (~1.586:1)
-  const processIdImage = (file) => new Promise((resolve) => {
+  // Compress to reasonable size — NO auto-rotation (let Grok detect orientation)
+  const compressImage = (file) => new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
+      const maxDim = 1000;
       let w = img.width, h = img.height;
-      const ID_RATIO = 1.586; // standard US DL: 3.375" / 2.125"
+      if (w > maxDim || h > maxDim) {
+        const ratio = Math.min(maxDim / w, maxDim / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+      }
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-
-      // Step 1: If portrait (taller than wide), rotate 90° CW — IDs are always landscape
-      let rotated = false;
-      if (h > w * 1.15) { // clearly portrait
-        rotated = true;
-        canvas.width = h; canvas.height = w;
-        ctx.translate(h, 0);
-        ctx.rotate(Math.PI / 2);
-        ctx.drawImage(img, 0, 0);
-        w = h; h = img.width; // swap dimensions
-      } else {
-        canvas.width = w; canvas.height = h;
-        ctx.drawImage(img, 0, 0);
-      }
-
-      // Step 2: Crop to ID aspect ratio (remove excess background)
-      const currentRatio = w / h;
-      let cropX = 0, cropY = 0, cropW = w, cropH = h;
-      if (currentRatio > ID_RATIO * 1.3) {
-        // Too wide — crop sides
-        cropW = Math.round(h * ID_RATIO);
-        cropX = Math.round((w - cropW) / 2);
-      } else if (currentRatio < ID_RATIO * 0.7) {
-        // Too tall — crop top/bottom
-        cropH = Math.round(w / ID_RATIO);
-        cropY = Math.round((h - cropH) / 2);
-      }
-
-      // Step 3: Resize to fit display (max 800x504 for ID)
-      const maxW = 800, maxH = Math.round(800 / ID_RATIO);
-      let finalW = cropW, finalH = cropH;
-      if (finalW > maxW || finalH > maxH) {
-        const ratio = Math.min(maxW / finalW, maxH / finalH);
-        finalW = Math.round(finalW * ratio);
-        finalH = Math.round(finalH * ratio);
-      }
-
-      // Draw final cropped + resized image
-      const finalCanvas = document.createElement('canvas');
-      finalCanvas.width = finalW; finalCanvas.height = finalH;
-      finalCanvas.getContext('2d').drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, finalW, finalH);
-
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
-      resolve(finalCanvas.toDataURL('image/jpeg', 0.85));
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
@@ -5077,18 +5040,21 @@ async function secHandleIdUpload(event) {
 
   try {
     toast('📋 Processing ID photo…', 'info', 2000);
-    const b64 = await processIdImage(file);
+    const b64 = await compressImage(file);
     if (!b64) { toast('Failed to process image', 'error'); return; }
 
     await api(`/api/people/${_secPersonId}/id-photo`, 'POST', { photoB64: b64, photoName: file.name });
-    const img = document.getElementById('sec-id-img');
+    const imgEl = document.getElementById('sec-id-img');
     const missing = document.getElementById('sec-id-missing');
     const delBtn = document.getElementById('sec-id-del-btn');
-    img.src = b64; img.style.display = 'block';
+    imgEl.src = b64; imgEl.style.display = 'block'; imgEl.style.transform = '';
     missing.style.display = 'none'; delBtn.style.display = '';
-    toast('✅ ID photo saved — OCR scanning in background…', 'success', 3000);
+    // Show rotate buttons
+    const rotBtns = document.getElementById('sec-id-rotate-btns');
+    if (rotBtns) rotBtns.style.display = 'flex';
+    toast('✅ ID saved — OCR scanning in background…', 'success', 3000);
 
-    // After a short delay, refresh enrichment to pick up OCR data
+    // Auto-refresh enrichment after OCR finishes
     setTimeout(() => {
       const enrichBody = document.getElementById('enrich-body-' + _secPersonId);
       if (enrichBody) loadEnrichment(_secPersonId, true);
@@ -5097,6 +5063,47 @@ async function secHandleIdUpload(event) {
     toast('Upload failed: ' + (err.message || 'unknown error'), 'error');
   }
   event.target.value = '';
+}
+
+// Manual rotate: rotates the stored image and re-saves
+async function secRotateId(degrees) {
+  if (!_secPersonId) return;
+  const imgEl = document.getElementById('sec-id-img');
+  if (!imgEl || !imgEl.src || imgEl.style.display === 'none') return;
+
+  toast('Rotating…', 'info', 1000);
+  try {
+    // Load current image, rotate on canvas, re-upload
+    const rotated = await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const rad = (degrees * Math.PI) / 180;
+        const sin = Math.abs(Math.sin(rad)), cos = Math.abs(Math.cos(rad));
+        const w = Math.round(img.width * cos + img.height * sin);
+        const h = Math.round(img.width * sin + img.height * cos);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.translate(w / 2, h / 2);
+        ctx.rotate(rad);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => resolve(null);
+      img.src = imgEl.src;
+    });
+
+    if (!rotated) { toast('Rotation failed', 'error'); return; }
+    await api(`/api/people/${_secPersonId}/id-photo`, 'POST', { photoB64: rotated, photoName: 'id-rotated' });
+    imgEl.src = rotated;
+    toast('✅ ID rotated & saved — re-scanning OCR…', 'success', 2000);
+
+    // Re-trigger OCR + enrichment
+    setTimeout(() => {
+      const enrichBody = document.getElementById('enrich-body-' + _secPersonId);
+      if (enrichBody) loadEnrichment(_secPersonId, true);
+    }, 5000);
+  } catch(e) { toast('Rotation failed: ' + e.message, 'error'); }
 }
 
 async function secDeleteIdPhoto() {
@@ -5401,8 +5408,11 @@ function renderContactRecord(person, activities, tasks) {
             </div>
             <div class="sec-id-btns" style="margin-top:6px">
               <button class="sec-micro-btn" onclick="document.getElementById('sec-id-file').click()">📎 Upload</button>
+              <button class="sec-micro-btn" onclick="secRotateId(90)" title="Rotate 90° clockwise">↻ Rotate</button>
+              <button class="sec-micro-btn" onclick="secRotateId(180)" title="Flip 180°">↕ Flip</button>
               <button class="sec-micro-btn del" id="sec-id-del-btn" style="display:none" onclick="secDeleteIdPhoto()">✕ Remove</button>
             </div>
+            <div id="sec-id-rotate-btns" style="display:none"></div>
             <input type="file" id="sec-id-file" accept="image/*" style="display:none" onchange="secHandleIdUpload(event)">
           </div>
 
@@ -12201,6 +12211,15 @@ function renderEnrichmentCard(container, data, personId) {
   if (ocr && ocr.full_legal_name) {
     html += '<hr class="enrich-divider">';
     html += '<div class="enrich-section-label">📋 ID Document (OCR)</div>';
+    // Orientation warning
+    if (ocr.rotation_needed && ocr.rotation_needed !== 0) {
+      const rotLabel = ocr.rotation_needed === 180 ? 'upside down' : `rotated ${ocr.rotation_needed}°`;
+      html += `<div style="padding:6px 8px;background:rgba(255,140,0,0.1);border:1px solid rgba(255,140,0,0.25);border-radius:6px;margin-bottom:6px;display:flex;align-items:center;gap:6px">
+        <span style="font-size:12px">⚠️</span>
+        <span style="font-size:10px;color:var(--amber);flex:1">ID appears ${rotLabel}</span>
+        <button onclick="secRotateId(${ocr.rotation_needed})" style="background:var(--amber);color:#000;border:none;border-radius:4px;padding:3px 8px;font-size:9px;font-weight:700;cursor:pointer;font-family:var(--font-mono)">Fix</button>
+      </div>`;
+    }
     html += `<div class="enrich-row"><span class="enrich-row-icon">🪪</span><span class="enrich-row-label">Legal</span><span class="enrich-row-value" style="font-weight:600">${esc(ocr.full_legal_name)}</span></div>`;
     if (ocr.date_of_birth) {
       html += `<div class="enrich-row"><span class="enrich-row-icon">🎂</span><span class="enrich-row-label">DOB</span><span class="enrich-row-value">${esc(ocr.date_of_birth)}${ocr.age ? ' (' + ocr.age + ' yrs)' : ''}</span></div>`;
