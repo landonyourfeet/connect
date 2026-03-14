@@ -6829,8 +6829,28 @@ const Jareih = (() => {
     pop.style.display = 'block';
     pop.style.animation = 'none';
     requestAnimationFrame(() => { pop.style.animation = ''; });
-    setTimeout(() => document.addEventListener('click', outsideClick), 50);
+    // Don't auto-close on outside click — keep open until user closes via ✕
+    // This prevents results from disappearing before the user reads them
   }
+
+  // Minimal outside-click: only close if user clicks far away from both bar AND popover
+  // AND the popover is not showing action buttons or a pending result
+  function _setupDismiss() {
+    document.addEventListener('mousedown', (e) => {
+      const pop = document.getElementById('jareih-popover');
+      const bar = document.getElementById('jareih-bar');
+      if (!pop || pop.style.display === 'none') return;
+      // Don't close if action buttons are showing (waiting for confirm/cancel)
+      const actionRow = document.getElementById('jareih-action-row');
+      if (actionRow && actionRow.style.display === 'flex' && actionRow.innerHTML.trim()) return;
+      // Don't close if thinking
+      if (_history.some(m => m.type === 'typing')) return;
+      // Close only if click is outside BOTH bar and popover
+      if (bar && !bar.contains(e.target) && !pop.contains(e.target)) close();
+    });
+  }
+  // Run once on module init
+  setTimeout(_setupDismiss, 100);
 
   function appendBubble(role, text, type) {
     _history.push({ role, text, type: type || (role === 'user' ? 'user' : 'reply') });
@@ -7000,11 +7020,14 @@ Ara is connecting. The call transcript will appear here live and save to the tim
       setThinking(false); setStatus('READY');
       appendBubble('jareih', resultMsg, 'success');
       _pending = null;
+      // Toast the result so user sees it even if popover gets covered by navigation
+      if (resultMsg) toast('⬡ ' + resultMsg.split('\n')[0], 'success', 3000);
     } catch(e) {
       _history = _history.filter(m => m.type !== 'typing');
       setThinking(false); setStatus('READY');
       appendBubble('jareih', `Failed: ${e.message}`, 'error');
       _pending = null;
+      toast('⬡ Command failed: ' + e.message, 'error');
     }
   }
 
@@ -7032,14 +7055,10 @@ Ara is connecting. The call transcript will appear here live and save to the tim
   function close() {
     const pop = document.getElementById('jareih-popover');
     if (pop) pop.style.display = 'none';
-    document.removeEventListener('click', outsideClick);
+    hideActionButtons();
   }
 
-  function outsideClick(e) {
-    const bar = document.getElementById('jareih-bar');
-    const pop = document.getElementById('jareih-popover');
-    if (bar && !bar.contains(e.target) && pop && !pop.contains(e.target)) close();
-  }
+  // Legacy outsideClick reference removed — dismiss is now handled by _setupDismiss
 
   // Live call transcript rendering
   function appendCallLine(role, name, text) {
