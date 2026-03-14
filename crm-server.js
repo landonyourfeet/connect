@@ -7193,32 +7193,70 @@ app.get('/api/jareih/tts-twiml/:token', (req, res) => {
 
 // ── Browser-friendly TTS (WAV) for voice chat ──────────────────────────────
 async function araTTSBrowser(text) {
-  const resp = await fetch('https://api.x.ai/v1/tts', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${process.env.GROK_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice_id: 'ara', language: 'en', output_format: { codec: 'pcm', sample_rate: 24000, container: 'wav' } })
-  });
-  if (!resp.ok) {
-    // Fallback: try mulaw with wav container
-    const resp2 = await fetch('https://api.x.ai/v1/tts', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${process.env.GROK_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice_id: 'ara', language: 'en', output_format: { codec: 'mulaw', sample_rate: 8000, container: 'wav' } })
-    });
-    if (!resp2.ok) throw new Error(`xAI TTS browser: ${resp2.status}`);
-    return Buffer.from(await resp2.arrayBuffer());
+  // Try formats in order of browser compatibility: mp3 first, then wav
+  const formats = [
+    { codec: 'mp3', sample_rate: 24000, container: 'mp3' },
+    { codec: 'pcm', sample_rate: 24000, container: 'wav' },
+    { codec: 'mulaw', sample_rate: 8000, container: 'wav' },
+  ];
+  let lastErr = '';
+  for (const fmt of formats) {
+    try {
+      const resp = await fetch('https://api.x.ai/v1/tts', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${process.env.GROK_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice_id: 'ara', language: 'en', output_format: fmt })
+      });
+      if (resp.ok) {
+        const buf = Buffer.from(await resp.arrayBuffer());
+        console.log(`[Ara TTS Browser] ${fmt.codec}/${fmt.container} OK — ${buf.length} bytes`);
+        return { buffer: buf, mime: fmt.container === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
+      }
+      lastErr = `${fmt.codec}: HTTP ${resp.status}`;
+      console.warn(`[Ara TTS Browser] ${fmt.codec}/${fmt.container} failed: ${resp.status}`);
+    } catch(e) { lastErr = e.message; }
   }
-  return Buffer.from(await resp.arrayBuffer());
+  // Last resort: use the existing Twilio TTS (mulaw raw) and wrap in a basic WAV header
+  try {
+    const raw = await araTTS(text); // existing function returns raw mulaw bytes
+    const wavBuf = wrapMulawWav(raw, 8000);
+    console.log(`[Ara TTS Browser] Fallback mulaw→WAV wrapping — ${wavBuf.length} bytes`);
+    return { buffer: wavBuf, mime: 'audio/wav' };
+  } catch(e) {
+    throw new Error(`All TTS formats failed. Last: ${lastErr}`);
+  }
 }
 
-app.get('/api/jareih/voice-audio/:token.wav', (req, res) => {
-  const buf = ttsAudioCache.get('voice-' + req.params.token);
-  if (!buf) return res.status(404).end();
-  res.setHeader('Content-Type', 'audio/wav');
+// Wrap raw mulaw bytes in a valid WAV header so browsers can play it
+function wrapMulawWav(rawData, sampleRate) {
+  const header = Buffer.alloc(44);
+  const dataLen = rawData.length;
+  const fileLen = 36 + dataLen;
+  header.write('RIFF', 0);
+  header.writeUInt32LE(fileLen, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);       // fmt chunk size
+  header.writeUInt16LE(7, 20);        // format = mulaw
+  header.writeUInt16LE(1, 22);        // channels = 1
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate, 28); // byte rate (1 byte per sample)
+  header.writeUInt16LE(1, 32);        // block align
+  header.writeUInt16LE(8, 34);        // bits per sample
+  header.write('data', 36);
+  header.writeUInt32LE(dataLen, 40);
+  return Buffer.concat([header, rawData]);
+}
+
+app.get('/api/jareih/voice-audio/:token', (req, res) => {
+  const key = 'voice-' + req.params.token.replace(/\.\w+$/, ''); // strip extension
+  const entry = ttsAudioCache.get(key);
+  if (!entry) return res.status(404).end();
+  const { buffer, mime } = (typeof entry === 'object' && entry.buffer) ? entry : { buffer: entry, mime: 'audio/wav' };
+  res.setHeader('Content-Type', mime || 'audio/wav');
   res.setHeader('Cache-Control', 'no-store');
-  res.send(buf);
-  // Clean up after serving
-  setTimeout(() => ttsAudioCache.delete('voice-' + req.params.token), 60000);
+  res.send(buffer);
+  setTimeout(() => ttsAudioCache.delete(key), 60000);
 });
 
 // ── Voice Chat endpoint — conversational AI with CRM context + Ara voice ───
@@ -7304,7 +7342,7 @@ Remember: you represent a company built on biblical values. Be excellent, be war
       const audio = await araTTSBrowser(reply);
       audioToken = crypto.randomBytes(8).toString('hex');
       ttsAudioCache.set('voice-' + audioToken, audio);
-      console.log(`[Voice Chat] ${agentFirst}: "${text.substring(0,50)}" → Ara: "${reply.substring(0,50)}…" audio=${audio.length}b`);
+      console.log(`[Voice Chat] ${agentFirst}: "${text.substring(0,50)}" → Ara: "${reply.substring(0,50)}…" audio=${audio.buffer.length}b ${audio.mime}`);
     } catch(ttsErr) {
       console.warn('[Voice TTS] Audio gen failed, text-only fallback:', ttsErr.message);
     }
