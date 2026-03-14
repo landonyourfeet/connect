@@ -629,8 +629,13 @@ app.post('/api/people/:id/id-photo', auth, async (req, res) => {
             role: 'user',
             content: [
               { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${photoB64}` } },
-              { type: 'text', text: `This is a photo of an ID document (driver's license, state ID, passport, etc). Extract ALL text fields you can read. Return ONLY a JSON object with these fields (use null for anything you can't read):
+              { type: 'text', text: `This is a photo of an ID document (driver's license, state ID, passport, etc). Extract ALL text fields you can read. The image may be rotated or upside down — read it regardless.
+
+IMPORTANT: Also detect the orientation. Look at where the text reads naturally — if the text is upside down, the image needs 180° rotation. If sideways, it needs 90° or 270°.
+
+Return ONLY a JSON object with these fields (use null for anything you can't read):
 {
+  "rotation_needed": 0,
   "full_legal_name": "first middle last",
   "first_name": "",
   "middle_name": "",
@@ -649,6 +654,7 @@ app.post('/api/people/:id/id-photo', auth, async (req, res) => {
   "eye_color": "",
   "issue_date": "YYYY-MM-DD"
 }
+rotation_needed: degrees clockwise needed to make the ID right-side-up (0, 90, 180, or 270).
 Return ONLY the JSON, no markdown fences, no explanation.` }
             ]
           }]
