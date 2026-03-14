@@ -7384,12 +7384,22 @@ const JirehVoice = (() => {
 
   // ── Core ────────────────────────────────────────────────────────────────
   function toggle() {
+    console.log('[JV] toggle() called — _listening:', _listening, '_speaking:', _speaking, '_overlay:', !!_overlay);
     if (_listening || _speaking || _overlay) { close(); return; }
-    if (!SpeechRecognition) { toast('Voice not supported — use Chrome or Edge', 'error'); return; }
+    if (!SpeechRecognition) {
+      console.warn('[JV] SpeechRecognition not available');
+      toast('Voice not supported — use Chrome or Edge', 'error');
+      // Still open overlay with text-only mode
+      showOverlay();
+      initAudioContext();
+      enterVoiceMode();
+      return;
+    }
     start();
   }
 
   function start() {
+    console.log('[JV] start() — opening overlay, entering voice mode');
     showOverlay();
     initAudioContext();
     if (_audioCtx?.state === 'suspended') _audioCtx.resume().catch(()=>{});
@@ -7435,11 +7445,20 @@ const JirehVoice = (() => {
       <div class="jv-body" id="jv-body">
         <div class="jv-bubble ara">Hey ${esc(agentName)}! I'm listening — what's on your mind?</div>
       </div>
-      <div id="jv-bottom" style="padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px">
-        <div id="jv-indicator" style="width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);animation:voicePulse 1.5s ease-in-out infinite"></div>
-        <span id="jv-status" style="font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;color:var(--text-3);flex:1">LISTENING — SPEAK NOW</span>
-        <button onclick="JirehVoice.close()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--red);cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em;font-weight:700;padding:5px 14px;border-radius:5px;transition:all 0.15s"
-          onmouseover="this.style.background='rgba(232,0,58,0.15)'" onmouseout="this.style.background='var(--bg-4)'">✕ END VOICE</button>
+      <div id="jv-bottom" style="padding:10px 14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="jv-indicator" style="width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);animation:voicePulse 1.5s ease-in-out infinite;flex-shrink:0"></div>
+          <span id="jv-status" style="font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;color:var(--text-3);flex:1">LISTENING — SPEAK NOW</span>
+          <button onclick="JirehVoice.close()" style="background:var(--bg-4);border:1px solid var(--border);color:var(--red);cursor:pointer;font-size:10px;font-family:var(--font-mono);letter-spacing:0.05em;font-weight:700;padding:5px 14px;border-radius:5px;transition:all 0.15s;flex-shrink:0"
+            onmouseover="this.style.background='rgba(232,0,58,0.15)'" onmouseout="this.style.background='var(--bg-4)'">END</button>
+        </div>
+        <div style="display:flex;gap:6px">
+          <input id="jv-text-input" type="text" placeholder="Or type here…" autocomplete="off"
+            style="flex:1;height:30px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-3);color:var(--text);font-size:11px;font-family:var(--font-mono);outline:none"
+            onkeydown="if(event.key==='Enter'&&this.value.trim()){JirehVoice._sendText(this.value.trim());this.value='';}" />
+          <button onclick="var i=document.getElementById('jv-text-input');if(i.value.trim()){JirehVoice._sendText(i.value.trim());i.value='';}"
+            style="height:30px;padding:0 10px;border:1px solid var(--red);border-radius:6px;background:var(--red);color:#fff;font-size:10px;font-weight:700;font-family:var(--font-mono);cursor:pointer">SEND</button>
+        </div>
       </div>
     `;
     document.body.appendChild(div);
@@ -7479,7 +7498,8 @@ const JirehVoice = (() => {
   }
 
   function startListening() {
-    if (!SpeechRecognition || !_overlay) return;
+    if (!SpeechRecognition || !_overlay) { console.warn('[JV] startListening skip — no SR or overlay'); return; }
+    console.log('[JV] startListening()');
     _recognition = new SpeechRecognition();
     _recognition.continuous = false;
     _recognition.interimResults = true;
@@ -7491,22 +7511,19 @@ const JirehVoice = (() => {
     updateMicBtn('listening');
     setStatus('LISTENING — SPEAK NOW', 'var(--red)');
 
-    _recognition.onspeechstart = () => { _speechActive = true; };
-    _recognition.onspeechend = () => { _speechActive = false; };
+    _recognition.onspeechstart = () => { _speechActive = true; console.log('[JV] speechstart'); };
+    _recognition.onspeechend = () => { _speechActive = false; console.log('[JV] speechend'); };
 
     _recognition.onresult = async (event) => {
-      // Get the final result
       let transcript = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          transcript = event.results[i][0].transcript.trim();
-        }
+        if (event.results[i].isFinal) transcript = event.results[i][0].transcript.trim();
       }
-      if (!transcript) return; // interim result — keep listening
+      console.log('[JV] onresult — transcript:', transcript || '(interim)');
+      if (!transcript) return;
       _speechActive = false;
       addBubble('user', transcript);
       _history.push({ role: 'user', content: transcript });
-      // Stop recognition before sending (prevents overlap)
       _listening = false;
       if (_recognition) { try { _recognition.abort(); } catch(e) {} _recognition = null; }
       await sendToJireh(transcript);
@@ -7514,39 +7531,48 @@ const JirehVoice = (() => {
 
     _recognition.onerror = (event) => {
       _speechActive = false;
+      console.warn('[JV] onerror:', event.error);
       if (event.error === 'no-speech') {
-        // No speech detected — restart silently
-        if (_listening && _overlay) { setTimeout(() => { if (_listening) startListening(); }, 100); }
+        if (_listening && _overlay) setTimeout(() => { if (_listening) startListening(); }, 200);
         return;
       }
-      if (event.error === 'aborted' || event.error === 'not-allowed') return;
-      console.warn('[JV] Recognition error:', event.error);
-      setStatus('MIC ERROR — TAP MIC TO RETRY', '#ff8c00');
+      if (event.error === 'aborted') return;
+      if (event.error === 'not-allowed') {
+        setStatus('MIC BLOCKED — TYPE BELOW', '#e8003a');
+        addBubble('ara', 'Mic access was blocked by your browser. No worries — type in the box below and I\'ll respond with my voice!');
+        _listening = false;
+        return;
+      }
+      setStatus('MIC ERROR — TYPE BELOW', '#ff8c00');
       updateMicBtn('idle');
       _listening = false;
     };
 
     _recognition.onend = () => {
+      console.log('[JV] onend — listening:', _listening, 'speaking:', _speaking);
       _speechActive = false;
-      // Auto-restart if still in listening mode
-      if (_listening && !_speaking && _overlay) {
-        setTimeout(() => { if (_listening && _overlay) startListening(); }, 100);
-      }
+      if (_listening && !_speaking && _overlay) setTimeout(() => { if (_listening && _overlay) startListening(); }, 200);
     };
 
-    try { _recognition.start(); }
-    catch(e) {
-      console.warn('[JV] Recognition start error:', e.message);
-      setStatus('MIC ERROR: ' + e.message, '#ff8c00');
+    try {
+      _recognition.start();
+      console.log('[JV] recognition.start() OK');
+    } catch(e) {
+      console.error('[JV] recognition.start() FAILED:', e.message);
+      setStatus('MIC FAILED — TYPE BELOW', '#ff8c00');
+      addBubble('ara', 'Speech recognition couldn\'t start — just type below and I\'ll talk back!');
     }
   }
 
   async function sendToJireh(text) {
+    console.log('[JV] sendToJireh:', text);
     updateMicBtn('thinking');
     setStatus('JIREH IS THINKING…', '#ff8c00');
 
     try {
+      console.log('[JV] Calling /api/jareih/voice-chat...');
       const resp = await api('/api/jareih/voice-chat', 'POST', { text, history: _history.slice(-12) });
+      console.log('[JV] Response:', { text: resp.text?.substring(0,60), audioToken: resp.audioToken });
       const reply = resp.text;
       _history.push({ role: 'assistant', content: reply });
       addBubble('ara', reply);
@@ -7556,36 +7582,31 @@ const JirehVoice = (() => {
         setStatus('JIREH SPEAKING…', '#00e87a');
         _speaking = true;
 
-        _audio = new Audio(`/api/jareih/voice-audio/${resp.audioToken}`);
-        _audio.crossOrigin = 'anonymous';
+        const audioUrl = `/api/jareih/voice-audio/${resp.audioToken}`;
+        console.log('[JV] Playing audio:', audioUrl);
+        _audio = new Audio(audioUrl);
 
+        _audio.oncanplaythrough = () => { console.log('[JV] Audio canplaythrough — ready to play'); };
         _audio.onended = () => {
+          console.log('[JV] Audio ended');
           _speaking = false;
           _audio = null; _connectedAudio = null;
           _analyser = null; _analyserData = null;
           if (_overlay) { _listening = true; startListening(); }
         };
         _audio.onerror = (e) => {
-          console.warn('[JV] Audio playback error:', _audio?.error?.message || e);
+          console.error('[JV] Audio error:', _audio?.error?.code, _audio?.error?.message);
           _speaking = false; _audio = null; _connectedAudio = null;
           _analyser = null; _analyserData = null;
+          addBubble('ara', '(Audio failed to play — check console for details)');
           if (_overlay) { _listening = true; startListening(); }
         };
 
-        // Try to connect to bioluminescence visualizer (non-blocking)
-        try {
-          if (_audioCtx) {
-            if (_audioCtx.state === 'suspended') await _audioCtx.resume();
-            connectAudioToViz(_audio);
-          }
-        } catch(vizErr) {
-          console.warn('[JV] Viz connect failed (audio will still play):', vizErr.message);
-        }
-
-        try { await _audio.play(); }
+        try { await _audio.play(); console.log('[JV] audio.play() resolved'); }
         catch(playErr) {
-          console.warn('[JV] Audio play failed:', playErr.message);
+          console.error('[JV] audio.play() rejected:', playErr.message);
           _speaking = false;
+          addBubble('ara', '(Couldn\'t play audio — browser may have blocked autoplay)');
           if (_overlay) { _listening = true; startListening(); }
         }
       } else {
@@ -7608,7 +7629,17 @@ const JirehVoice = (() => {
     }
   }
 
-  return { toggle, start, stop, close, clearHistory, get _listening() { return _listening; } };
+  function _sendText(text) {
+    if (!text || _speaking) return;
+    if (!_overlay) { showOverlay(); initAudioContext(); enterVoiceMode(); }
+    if (_recognition) { try { _recognition.abort(); } catch(e) {} _recognition = null; }
+    _listening = false;
+    addBubble('user', text);
+    _history.push({ role: 'user', content: text });
+    sendToJireh(text);
+  }
+
+  return { toggle, start, stop, close, clearHistory, _sendText, get _listening() { return _listening; } };
 })();
 
 // ── LEAD SCRAPER ─────────────────────────────────────────────────────────────
