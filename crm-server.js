@@ -7203,25 +7203,47 @@ async function araTTSBrowser(text) {
   return { buffer: wavBuf, mime: 'audio/wav' };
 }
 
-// Wrap raw mulaw bytes in a valid WAV header so browsers can play it
-function wrapMulawWav(rawData, sampleRate) {
+// Decode mulaw to 16-bit PCM and wrap in a standard WAV that every browser supports
+function wrapMulawWav(rawMulaw, sampleRate) {
+  // mulaw → PCM16 lookup (ITU-T G.711)
+  const BIAS = 0x84, CLIP = 32635;
+  function mulawDecode(byte) {
+    byte = ~byte & 0xFF;
+    const sign = byte & 0x80;
+    const exponent = (byte >> 4) & 0x07;
+    let mantissa = byte & 0x0F;
+    let sample = (mantissa << 4) + BIAS;
+    sample <<= exponent;
+    sample -= BIAS;
+    sample = sign ? -sample : sample;
+    // Clamp to 16-bit signed range
+    return Math.max(-32768, Math.min(32767, sample));
+  }
+
+  const numSamples = rawMulaw.length;
+  const pcmData = Buffer.alloc(numSamples * 2); // 16-bit = 2 bytes per sample
+  for (let i = 0; i < numSamples; i++) {
+    const sample = mulawDecode(rawMulaw[i]);
+    pcmData.writeInt16LE(sample, i * 2);
+  }
+
+  // Standard PCM WAV header (format code 1 — universally supported)
   const header = Buffer.alloc(44);
-  const dataLen = rawData.length;
-  const fileLen = 36 + dataLen;
+  const dataLen = pcmData.length;
   header.write('RIFF', 0);
-  header.writeUInt32LE(fileLen, 4);
+  header.writeUInt32LE(36 + dataLen, 4);
   header.write('WAVE', 8);
   header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16);       // fmt chunk size
-  header.writeUInt16LE(7, 20);        // format = mulaw
-  header.writeUInt16LE(1, 22);        // channels = 1
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(sampleRate, 28); // byte rate
-  header.writeUInt16LE(1, 32);        // block align
-  header.writeUInt16LE(8, 34);        // bits per sample
+  header.writeUInt32LE(16, 16);          // fmt chunk size
+  header.writeUInt16LE(1, 20);           // format = PCM (NOT mulaw)
+  header.writeUInt16LE(1, 22);           // channels = 1
+  header.writeUInt32LE(sampleRate, 24);  // sample rate
+  header.writeUInt32LE(sampleRate * 2, 28); // byte rate (16-bit mono)
+  header.writeUInt16LE(2, 32);           // block align (2 bytes per sample)
+  header.writeUInt16LE(16, 34);          // bits per sample
   header.write('data', 36);
   header.writeUInt32LE(dataLen, 40);
-  return Buffer.concat([header, rawData]);
+  return Buffer.concat([header, pcmData]);
 }
 
 app.get('/api/jareih/voice-audio/:token', (req, res) => {
