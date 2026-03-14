@@ -4905,6 +4905,7 @@ app.get('/api/showings/feedback-report', auth, async (req, res) => {
         s.showing_time,
         s.unit,
         s.showing_type,
+        s.connect_person_id,
         f.verdict,
         f.categories,
         f.notes,
