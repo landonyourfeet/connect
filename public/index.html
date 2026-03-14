@@ -4,6 +4,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -3262,7 +3263,7 @@
       </div>
       <div class="sidebar-nav" id="sidebar-nav">
         <div class="nav-item active" data-view="dashboard" onclick="navigate('dashboard')" id="nav-dashboard">
-          <span class="nav-icon">⚡</span><span class="nav-label">Mission Control</span>
+          <span class="nav-icon">⚡</span><span class="nav-label">Command Module</span>
         </div>
         <div class="nav-item" data-view="inbox" onclick="navigate('inbox')">
           <span class="nav-icon">📥</span>
@@ -3618,7 +3619,7 @@
       <div class="view" id="view-showings">
         <div id="showings-root" style="height:100%;overflow:hidden;display:flex;flex-direction:column"></div>
       </div>
-      <div class="view" id="view-workorders" style="overflow-y:auto;background:#0a0a0a">
+      <div class="view" id="view-workorders" style="overflow-y:auto;background:var(--bg-3)">
         <div id="workorders-root" style="max-width:1100px;margin:0 auto;padding:24px"></div>
       </div>
       <div class="view" id="view-dashboard"></div>
@@ -4387,7 +4388,7 @@ function navigate(view, listId = null) {
   else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
   else if (view === 'workorders') { document.getElementById('header-title').textContent = 'Work Orders'; setTimeout(renderWorkOrdersView, 0); }
   else if (view === 'callreports') { document.getElementById('header-title').textContent = 'Call Reports'; setTimeout(loadCallReports, 0); }
-  else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Mission Control'; setTimeout(renderDashboard, 0); }
+  else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Command Module'; setTimeout(renderDashboard, 0); }
   // Cancel galaxy animation when leaving dashboard
   if (view !== 'dashboard' && typeof _mcAnimFrame !== 'undefined' && _mcAnimFrame) {
     cancelAnimationFrame(_mcAnimFrame); _mcAnimFrame = null;
@@ -10812,7 +10813,7 @@ async function renderWoAlertPanel(containerId) {
 async function renderWorkOrdersView() {
   const root = document.getElementById('workorders-root');
   if (!root) return;
-  root.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#555"><div class="spinner"></div></div>';
+  root.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:200px;color:var(--text-3)"><div class="spinner"></div></div>';
 
   try {
     const [perf, alerts, woStats] = await Promise.all([
@@ -10832,59 +10833,61 @@ async function renderWorkOrdersView() {
     const notSched = alertList.filter(a => a.alert_state === 'NOT_SCHEDULED');
     const onTrack  = alertList.filter(a => a.alert_state === 'ON_TRACK');
 
-    const statusColor = overdue.length ? '#e8003a' : (notSched.length ? '#ff8c00' : '#00e87a');
+    const statusColor = overdue.length ? 'var(--red)' : (notSched.length ? 'var(--amber)' : 'var(--green)');
+    const statusRaw = overdue.length ? '#e8003a' : (notSched.length ? '#ff8c00' : '#00e87a');
     const statusText = overdue.length ? `${overdue.length} OVERDUE` : (notSched.length ? `${notSched.length} NEED SCHEDULING` : 'ALL ON TRACK');
 
     const alertBadge = (state) => {
-      if (state === 'OVERDUE') return '<span style="background:#e8003a;color:#fff;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">OVERDUE</span>';
-      if (state === 'NOT_SCHEDULED') return '<span style="background:#ff8c00;color:#fff;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">NOT SCHEDULED</span>';
-      return '<span style="background:#00e87a;color:#000;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">ON TRACK</span>';
+      if (state === 'OVERDUE') return '<span style="background:var(--red);color:#fff;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">OVERDUE</span>';
+      if (state === 'NOT_SCHEDULED') return '<span style="background:var(--amber);color:#fff;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">NOT SCHEDULED</span>';
+      return '<span style="background:var(--green);color:#000;padding:2px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em">ON TRACK</span>';
     };
 
     const shortP = p => (p||'').split(' - ')[0].replace(/ (DUPLEX|FOURPLEX|APARTMENTS|TOWNHOMES)/i,'').substring(0,28);
 
     const mc = 'font-family:var(--font-mono);';
-    const cardStyle = 'background:var(--bg-card,#0d0d0d);border:1px solid var(--border,#1a1a1a);border-radius:8px;padding:16px 20px;margin-bottom:16px;';
+    const cardStyle = 'background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:16px;';
+    const thStyle = `padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)`;
 
     let html = `
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <div style="width:8px;height:8px;border-radius:50%;background:${statusColor};box-shadow:0 0 8px ${statusColor};animation:pulse 1.2s ease-in-out infinite"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:${statusRaw};box-shadow:0 0 8px ${statusRaw};animation:pulse 1.2s ease-in-out infinite"></div>
         <span style="${mc}font-size:10px;letter-spacing:3px;color:${statusColor};text-transform:uppercase">${statusText}</span>
       </div>
-      <div style="font-size:28px;font-weight:800;color:var(--text,#fff);letter-spacing:0.02em;margin-bottom:2px">Work Orders</div>
-      <div style="${mc}font-size:10px;letter-spacing:2px;color:#555;margin-bottom:24px;text-transform:uppercase">AppFolio → Connect · Alerts · Performance · Vendor Ranking</div>
+      <div style="font-size:28px;font-weight:800;color:var(--text);letter-spacing:0.02em;margin-bottom:2px">Work Orders</div>
+      <div style="${mc}font-size:10px;letter-spacing:2px;color:var(--text-3);margin-bottom:24px;text-transform:uppercase">AppFolio → Connect · Alerts · Performance · Vendor Ranking</div>
 
       <!-- KPI STRIP -->
       <div style="${cardStyle}">
         <div style="${mc}font-size:9px;letter-spacing:3px;color:${statusColor};text-transform:uppercase;margin-bottom:14px">Performance Summary</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:14px">
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Total WOs</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">Total WOs</div>
             <div style="${mc}font-size:22px;color:#00c8ff">${kpi.total || 0}</div>
           </div>
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Open</div>
-            <div style="${mc}font-size:22px;color:#ff8c00">${kpi.open || 0}</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">Open</div>
+            <div style="${mc}font-size:22px;color:var(--amber)">${kpi.open || 0}</div>
           </div>
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Completed</div>
-            <div style="${mc}font-size:22px;color:#00e87a">${kpi.completed || 0}</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">Completed</div>
+            <div style="${mc}font-size:22px;color:var(--green)">${kpi.completed || 0}</div>
           </div>
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Avg Days to Close</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">Avg Days to Close</div>
             <div style="${mc}font-size:22px;color:#00c8ff">${kpi.avg_days_to_close || '—'}d</div>
           </div>
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Overdue</div>
-            <div style="${mc}font-size:22px;color:#e8003a">${al.overdue || 0}</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">Overdue</div>
+            <div style="${mc}font-size:22px;color:var(--red)">${al.overdue || 0}</div>
           </div>
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">Not Scheduled</div>
-            <div style="${mc}font-size:22px;color:#ff8c00">${al.notScheduled || 0}</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">Not Scheduled</div>
+            <div style="${mc}font-size:22px;color:var(--amber)">${al.notScheduled || 0}</div>
           </div>
           <div>
-            <div style="${mc}font-size:8px;letter-spacing:2px;color:#666;text-transform:uppercase;margin-bottom:3px">On Track</div>
-            <div style="${mc}font-size:22px;color:#00e87a">${al.onTrack || 0}</div>
+            <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:3px">On Track</div>
+            <div style="${mc}font-size:22px;color:var(--green)">${al.onTrack || 0}</div>
           </div>
         </div>
       </div>`;
@@ -10896,26 +10899,21 @@ async function renderWorkOrdersView() {
         <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:11px">
           <tr>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">WO #</th>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Alert</th>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Property</th>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Unit</th>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Resident</th>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Vendor</th>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Issue</th>
-            <th style="padding:6px 8px;text-align:right;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Age</th>
+            <th style="${thStyle}">WO #</th><th style="${thStyle}">Alert</th><th style="${thStyle}">Property</th>
+            <th style="${thStyle}">Unit</th><th style="${thStyle}">Resident</th><th style="${thStyle}">Vendor</th>
+            <th style="${thStyle}">Issue</th><th style="${thStyle};text-align:right">Age</th>
           </tr>`;
       for (const a of alertList) {
         const days = a.days_open != null ? Math.round(parseFloat(a.days_open)) + 'd' : '';
-        html += `<tr style="border-bottom:1px solid #111">
+        html += `<tr style="border-bottom:1px solid var(--border)">
             <td style="padding:6px 8px;${mc}font-size:10px;color:#00c8ff">${esc(a.wo_number)}</td>
             <td style="padding:6px 8px">${alertBadge(a.alert_state)}</td>
-            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(shortP(a.property))}</td>
-            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(a.unit||'—')}</td>
-            <td style="padding:6px 8px;color:#ccc;font-size:11px">${esc(a.resident||'—')}</td>
-            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(a.vendor||'—')}</td>
-            <td style="padding:6px 8px;color:#888;font-size:11px">${esc(a.issue||'—')}</td>
-            <td style="padding:6px 8px;text-align:right;${mc}font-size:10px;color:#666">${days}</td>
+            <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(shortP(a.property))}</td>
+            <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(a.unit||'—')}</td>
+            <td style="padding:6px 8px;color:var(--text);font-size:11px">${esc(a.resident||'—')}</td>
+            <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(a.vendor||'—')}</td>
+            <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(a.issue||'—')}</td>
+            <td style="padding:6px 8px;text-align:right;${mc}font-size:10px;color:var(--text-3)">${days}</td>
           </tr>`;
       }
       html += '</table></div></div>';
@@ -10927,21 +10925,19 @@ async function renderWorkOrdersView() {
         <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:14px">Vendor Ranking — By Total WOs Assigned</div>
         <table style="width:100%;border-collapse:collapse;font-size:11px">
           <tr>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Vendor</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Total</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Completed</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Open</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Avg Close</th>
-            <th style="padding:6px 8px;text-align:right;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Total Cost</th>
+            <th style="${thStyle}">Vendor</th>
+            <th style="${thStyle};text-align:center">Total</th><th style="${thStyle};text-align:center">Completed</th>
+            <th style="${thStyle};text-align:center">Open</th><th style="${thStyle};text-align:center">Avg Close</th>
+            <th style="${thStyle};text-align:right">Total Cost</th>
           </tr>`;
       for (const v of vendors) {
-        html += `<tr style="border-bottom:1px solid #111">
-            <td style="padding:6px 8px;color:#ccc;font-size:12px">${esc(v.vendor)}</td>
+        html += `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 8px;color:var(--text);font-size:12px">${esc(v.vendor)}</td>
             <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#00c8ff">${v.total}</td>
-            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#00e87a">${v.completed}</td>
-            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#ff8c00">${v.open}</td>
-            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#aaa">${v.avg_days_to_close != null ? v.avg_days_to_close + 'd' : '—'}</td>
-            <td style="padding:6px 8px;text-align:right;${mc}font-size:11px;color:#666">$${parseFloat(v.total_cost||0).toLocaleString('en-US',{minimumFractionDigits:0})}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:var(--green)">${v.completed}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:var(--amber)">${v.open}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:var(--text-2)">${v.avg_days_to_close != null ? v.avg_days_to_close + 'd' : '—'}</td>
+            <td style="padding:6px 8px;text-align:right;${mc}font-size:11px;color:var(--text-3)">$${parseFloat(v.total_cost||0).toLocaleString('en-US',{minimumFractionDigits:0})}</td>
           </tr>`;
       }
       html += '</table></div>';
@@ -10950,23 +10946,23 @@ async function renderWorkOrdersView() {
     // PROPERTY VOLUME
     if (propVol.length) {
       html += `<div style="${cardStyle}">
-        <div style="${mc}font-size:9px;letter-spacing:3px;color:#ff8c00;text-transform:uppercase;margin-bottom:14px">Property Volume — Current Month vs 3-Month Rolling Avg</div>
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--amber);text-transform:uppercase;margin-bottom:14px">Property Volume — Current Month vs 3-Month Rolling Avg</div>
         <table style="width:100%;border-collapse:collapse;font-size:11px">
           <tr>
-            <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Property</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">This Month</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">3mo Avg</th>
-            <th style="padding:6px 8px;text-align:center;${mc}font-size:8px;letter-spacing:2px;color:#555;border-bottom:1px solid #1a1a1a">Delta</th>
+            <th style="${thStyle}">Property</th>
+            <th style="${thStyle};text-align:center">This Month</th>
+            <th style="${thStyle};text-align:center">3mo Avg</th>
+            <th style="${thStyle};text-align:center">Delta</th>
           </tr>`;
       for (const p of propVol) {
         const exceeds = p.exceeds_avg;
-        const color = exceeds ? '#e8003a' : (parseInt(p.this_month) > 0 ? '#00e87a' : '#555');
+        const color = exceeds ? 'var(--red)' : (parseInt(p.this_month) > 0 ? 'var(--green)' : 'var(--text-3)');
         const deltaStr = p.delta_pct > 0 ? `+${p.delta_pct}%` : (p.delta_pct < 0 ? `${p.delta_pct}%` : '—');
-        html += `<tr style="border-bottom:1px solid #111">
-            <td style="padding:6px 8px;color:#aaa;font-size:11px">${esc(shortP(p.property))}</td>
+        html += `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc(shortP(p.property))}</td>
             <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:${color}">${p.this_month}</td>
-            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:#666">${p.rolling_avg || '—'}</td>
-            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:${exceeds ? '#e8003a' : '#666'}">${exceeds ? '⚠ ' : ''}${deltaStr}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:var(--text-3)">${p.rolling_avg || '—'}</td>
+            <td style="padding:6px 8px;text-align:center;${mc}font-size:12px;color:${exceeds ? 'var(--red)' : 'var(--text-3)'}">${exceeds ? '⚠ ' : ''}${deltaStr}</td>
           </tr>`;
       }
       html += '</table></div>';
@@ -10975,13 +10971,11 @@ async function renderWorkOrdersView() {
     // ISSUE BREAKDOWN
     if (issues.length) {
       html += `<div style="${cardStyle}">
-        <div style="${mc}font-size:9px;letter-spacing:3px;color:#00e87a;text-transform:uppercase;margin-bottom:14px">Issue Type Breakdown</div>
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--green);text-transform:uppercase;margin-bottom:14px">Issue Type Breakdown</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px">`;
-      const maxCnt = Math.max(...issues.map(i => parseInt(i.cnt)));
       for (const i of issues) {
-        const pct = Math.round((parseInt(i.cnt) / maxCnt) * 100);
-        html += `<div style="background:#111;border:1px solid #1a1a1a;border-radius:5px;padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:6px">
-          <span style="color:#aaa">${esc(i.issue)}</span>
+        html += `<div style="background:var(--bg-3);border:1px solid var(--border);border-radius:5px;padding:5px 10px;font-size:11px;display:flex;align-items:center;gap:6px">
+          <span style="color:var(--text-2)">${esc(i.issue)}</span>
           <span style="${mc}font-size:10px;color:#00c8ff;font-weight:700">${i.cnt}</span>
         </div>`;
       }
@@ -10990,11 +10984,11 @@ async function renderWorkOrdersView() {
 
     // WO METER (reuse existing)
     html += `<div style="${cardStyle}">
-      <div style="${mc}font-size:9px;letter-spacing:3px;color:#ff8c00;text-transform:uppercase;margin-bottom:14px">Property Trend — Month Over Month</div>
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--amber);text-transform:uppercase;margin-bottom:14px">Property Trend — Month Over Month</div>
       <div id="wo-full-meter" style="min-height:40px"></div>
     </div>`;
 
-    html += `<div style="${mc}font-size:8px;color:#333;text-align:center;margin-top:16px;letter-spacing:2px;text-transform:uppercase">OKCREAL CONNECT · WORK ORDER MANAGEMENT · DAILY SYNC</div>`;
+    html += `<div style="${mc}font-size:8px;color:var(--text-3);text-align:center;margin-top:16px;letter-spacing:2px;text-transform:uppercase">OKCREAL CONNECT · WORK ORDER MANAGEMENT · DAILY SYNC</div>`;
 
     root.innerHTML = html;
 
@@ -11007,7 +11001,7 @@ async function renderWorkOrdersView() {
 
   } catch(e) {
     console.error('[WO View]', e);
-    root.innerHTML = `<div style="padding:40px;color:#e8003a">${e.message}</div>`;
+    root.innerHTML = `<div style="padding:40px;color:var(--red)">${e.message}</div>`;
   }
 }
 
