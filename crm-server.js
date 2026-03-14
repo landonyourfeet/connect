@@ -7193,38 +7193,14 @@ app.get('/api/jareih/tts-twiml/:token', (req, res) => {
 
 // ── Browser-friendly TTS (WAV) for voice chat ──────────────────────────────
 async function araTTSBrowser(text) {
-  // Try formats in order of browser compatibility: mp3 first, then wav
-  const formats = [
-    { codec: 'mp3', sample_rate: 24000, container: 'mp3' },
-    { codec: 'pcm', sample_rate: 24000, container: 'wav' },
-    { codec: 'mulaw', sample_rate: 8000, container: 'wav' },
-  ];
-  let lastErr = '';
-  for (const fmt of formats) {
-    try {
-      const resp = await fetch('https://api.x.ai/v1/tts', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${process.env.GROK_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice_id: 'ara', language: 'en', output_format: fmt })
-      });
-      if (resp.ok) {
-        const buf = Buffer.from(await resp.arrayBuffer());
-        console.log(`[Ara TTS Browser] ${fmt.codec}/${fmt.container} OK — ${buf.length} bytes`);
-        return { buffer: buf, mime: fmt.container === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
-      }
-      lastErr = `${fmt.codec}: HTTP ${resp.status}`;
-      console.warn(`[Ara TTS Browser] ${fmt.codec}/${fmt.container} failed: ${resp.status}`);
-    } catch(e) { lastErr = e.message; }
-  }
-  // Last resort: use the existing Twilio TTS (mulaw raw) and wrap in a basic WAV header
-  try {
-    const raw = await araTTS(text); // existing function returns raw mulaw bytes
-    const wavBuf = wrapMulawWav(raw, 8000);
-    console.log(`[Ara TTS Browser] Fallback mulaw→WAV wrapping — ${wavBuf.length} bytes`);
-    return { buffer: wavBuf, mime: 'audio/wav' };
-  } catch(e) {
-    throw new Error(`All TTS formats failed. Last: ${lastErr}`);
-  }
+  // Use the SAME araTTS function that works for phone calls,
+  // then wrap raw mulaw in a WAV header so browsers can decode it
+  console.log(`[Ara TTS Browser] Generating for: "${text.substring(0,60)}…"`);
+  const raw = await araTTS(text);
+  console.log(`[Ara TTS Browser] Got ${raw.length} raw mulaw bytes — wrapping in WAV`);
+  const wavBuf = wrapMulawWav(raw, 8000);
+  console.log(`[Ara TTS Browser] WAV ready: ${wavBuf.length} bytes`);
+  return { buffer: wavBuf, mime: 'audio/wav' };
 }
 
 // Wrap raw mulaw bytes in a valid WAV header so browsers can play it
@@ -7240,7 +7216,7 @@ function wrapMulawWav(rawData, sampleRate) {
   header.writeUInt16LE(7, 20);        // format = mulaw
   header.writeUInt16LE(1, 22);        // channels = 1
   header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(sampleRate, 28); // byte rate (1 byte per sample)
+  header.writeUInt32LE(sampleRate, 28); // byte rate
   header.writeUInt16LE(1, 32);        // block align
   header.writeUInt16LE(8, 34);        // bits per sample
   header.write('data', 36);
@@ -7249,12 +7225,15 @@ function wrapMulawWav(rawData, sampleRate) {
 }
 
 app.get('/api/jareih/voice-audio/:token', (req, res) => {
-  const key = 'voice-' + req.params.token.replace(/\.\w+$/, ''); // strip extension
+  const key = 'voice-' + req.params.token.replace(/\.\w+$/, '');
   const entry = ttsAudioCache.get(key);
-  if (!entry) return res.status(404).end();
+  if (!entry) { console.warn('[Voice Audio] 404 for token:', req.params.token); return res.status(404).end(); }
   const { buffer, mime } = (typeof entry === 'object' && entry.buffer) ? entry : { buffer: entry, mime: 'audio/wav' };
+  console.log(`[Voice Audio] Serving ${buffer.length} bytes as ${mime} for token ${req.params.token}`);
   res.setHeader('Content-Type', mime || 'audio/wav');
+  res.setHeader('Content-Length', buffer.length);
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Accept-Ranges', 'bytes');
   res.send(buffer);
   setTimeout(() => ttsAudioCache.delete(key), 60000);
 });
@@ -7263,6 +7242,7 @@ app.get('/api/jareih/voice-audio/:token', (req, res) => {
 app.post('/api/jareih/voice-chat', auth, async (req, res) => {
   try {
     const { text, history } = req.body;
+    console.log(`[Voice Chat] Request from ${req.agent?.name}: "${(text||'').substring(0,80)}"`);
     if (!text) return res.status(400).json({ error: 'No text' });
 
     const agentName = req.agent?.name || 'there';
