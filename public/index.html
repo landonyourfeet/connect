@@ -2544,6 +2544,82 @@
     }
     .call-contact-name.linked:hover { opacity: 0.8; }
 
+    /* ── Data Enrichment Module ──────────────────────────────── */
+    .enrich-fetch-btn {
+      background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text-2); font-family: var(--font-cond); font-size: 11px;
+      font-weight: 700; letter-spacing: 0.06em; padding: 7px 14px; cursor: pointer;
+      transition: all 0.15s; width: 100%; text-transform: uppercase;
+    }
+    .enrich-fetch-btn:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); }
+    [data-theme="dark"] .enrich-fetch-btn:hover { border-color: #00c8ff; color: #00c8ff; }
+
+    .enrich-card { display: flex; flex-direction: column; gap: 8px; }
+    .enrich-headline { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+    .enrich-avatar {
+      width: 36px; height: 36px; border-radius: 50%; display: flex;
+      align-items: center; justify-content: center; font-weight: 800;
+      font-size: 13px; color: #fff; flex-shrink: 0;
+      font-family: var(--font-cond); letter-spacing: 0.05em;
+    }
+    .enrich-name { font-family: var(--font-cond); font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 0.02em; }
+    .enrich-sub { font-size: 10px; color: var(--text-2); margin-top: 1px; }
+
+    .enrich-row {
+      display: flex; align-items: flex-start; gap: 6px; padding: 3px 0;
+      font-size: 10px; line-height: 1.4;
+    }
+    .enrich-row-icon { flex-shrink: 0; width: 14px; text-align: center; font-size: 11px; }
+    .enrich-row-label { color: var(--text-3); min-width: 48px; flex-shrink: 0; text-transform: uppercase; font-size: 9px; letter-spacing: 0.08em; padding-top: 1px; }
+    .enrich-row-value { color: var(--text); font-size: 11px; word-break: break-word; }
+    [data-theme="dark"] .enrich-row-value { color: #ceeedd; }
+
+    .enrich-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+    [data-theme="dark"] .enrich-divider { border-top-color: #031a0c; }
+
+    .enrich-section-label {
+      font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--text-3); margin: 4px 0 2px;
+    }
+    [data-theme="dark"] .enrich-section-label { color: rgba(0,200,80,0.4); }
+
+    .enrich-exp-item {
+      padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 10px;
+    }
+    .enrich-exp-item:last-child { border-bottom: none; }
+    .enrich-exp-title { font-weight: 600; color: var(--text); }
+    [data-theme="dark"] .enrich-exp-title { color: #ceeedd; }
+    .enrich-exp-co { color: var(--text-2); }
+    .enrich-exp-dates { color: var(--text-3); font-size: 9px; }
+    .enrich-exp-current { color: var(--green); font-weight: 700; font-size: 9px; }
+
+    .enrich-tag {
+      display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 3px;
+      background: var(--bg-4); border: 1px solid var(--border); color: var(--text-3);
+      margin: 1px 2px 1px 0;
+    }
+    [data-theme="dark"] .enrich-tag { background: rgba(0,200,80,0.04); border-color: #031a0c; color: rgba(0,200,80,0.5); }
+
+    .enrich-social-link {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 10px;
+      color: var(--blue); text-decoration: none; padding: 2px 0;
+    }
+    .enrich-social-link:hover { text-decoration: underline; }
+    [data-theme="dark"] .enrich-social-link { color: #00c8ff; }
+
+    .enrich-likelihood {
+      display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono);
+      font-size: 9px; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px;
+    }
+    .enrich-likelihood.high { background: var(--green-dim); color: var(--green); }
+    .enrich-likelihood.medium { background: var(--amber-dim); color: var(--amber); }
+    .enrich-likelihood.low { background: var(--red-dim); color: var(--red); }
+
+    .enrich-no-match {
+      text-align: center; padding: 10px 0; color: var(--text-3);
+      font-family: var(--font-cond); font-size: 11px;
+    }
+
     /* ── Call Reports ─────────────────────────────────────────── */
     #view-callreports { display: none; height: 100%; overflow: hidden; }
     #view-callreports.active { display: block; }
@@ -5323,6 +5399,20 @@ function renderContactRecord(person, activities, tasks) {
 
         </div>
       </div>
+
+      <!-- DATA ENRICHMENT MODULE -->
+      <div class="right-section" id="enrich-panel-${person.id}">
+        <div class="right-section-header">
+          <span class="right-section-title" style="color:var(--blue)">📊 Data Enrichment</span>
+          <button onclick="loadEnrichment('${person.id}', true)" class="add-btn" title="Fetch / refresh enrichment data" style="font-size:10px">↻</button>
+        </div>
+        <div id="enrich-body-${person.id}" style="font-size:11px;color:var(--text-3);font-family:var(--font-mono);letter-spacing:0.03em">
+          <div style="text-align:center;padding:8px 0">
+            <button onclick="loadEnrichment('${person.id}')" class="enrich-fetch-btn">🔍 Look Up Background</button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>`; /* end contact-scroll-wrap */
 }
@@ -12020,6 +12110,157 @@ setInterval(() => {
     if (_lccDetailCallId) renderLccDetail(_lccDetailCallId);
   }
 }, 1000);
+
+// ══════════════════════════════════════════════════════════════════
+// DATA ENRICHMENT MODULE (People Data Labs)
+// ══════════════════════════════════════════════════════════════════
+
+async function loadEnrichment(personId, forceRefresh = false) {
+  const body = document.getElementById('enrich-body-' + personId);
+  if (!body) return;
+
+  body.innerHTML = '<div style="text-align:center;padding:12px"><div class="spinner" style="width:18px;height:18px;border-width:2px;margin:0 auto"></div><div style="font-size:10px;color:var(--text-3);margin-top:6px">Looking up background data…</div></div>';
+
+  try {
+    const url = `/api/people/${personId}/enrich${forceRefresh ? '?refresh=1' : ''}`;
+    const data = await api(url);
+    const e = data.enrichment;
+
+    if (!e || e.status === 'no_match') {
+      body.innerHTML = `<div class="enrich-no-match">
+        <div style="font-size:20px;margin-bottom:4px">—</div>
+        <div>No matching records found</div>
+        <div style="font-size:9px;margin-top:4px;opacity:0.6">Try adding more contact info (email, full name) to improve matching</div>
+        <button onclick="loadEnrichment('${personId}', true)" class="enrich-fetch-btn" style="margin-top:8px;width:auto;padding:5px 12px">↻ Retry</button>
+      </div>`;
+      return;
+    }
+
+    renderEnrichmentCard(body, e, personId, data.cached);
+  } catch(err) {
+    body.innerHTML = `<div class="enrich-no-match">
+      <div style="color:var(--red);font-size:10px">⚠️ ${esc(err.message)}</div>
+      <button onclick="loadEnrichment('${personId}')" class="enrich-fetch-btn" style="margin-top:8px;width:auto;padding:5px 12px">↻ Retry</button>
+    </div>`;
+  }
+}
+
+function renderEnrichmentCard(container, e, personId, cached) {
+  const age = e.age || (e.birth_year ? (new Date().getFullYear() - e.birth_year) : null);
+  const likelihoodCls = e.likelihood >= 7 ? 'high' : e.likelihood >= 4 ? 'medium' : 'low';
+  const likelihoodLabel = e.likelihood >= 7 ? 'HIGH' : e.likelihood >= 4 ? 'MED' : 'LOW';
+  const initials = (e.full_name || '??').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+  const avatarColor = e.sex === 'male' ? '#3b82f6' : e.sex === 'female' ? '#ec4899' : '#8b5cf6';
+
+  let html = '<div class="enrich-card">';
+
+  // Header: avatar + name + quick stats
+  html += `<div class="enrich-headline">
+    <div class="enrich-avatar" style="background:${avatarColor}">${esc(initials)}</div>
+    <div style="flex:1;min-width:0">
+      <div class="enrich-name">${esc(e.full_name || '—')}</div>
+      <div class="enrich-sub">${[age ? age + ' yrs' : null, e.sex, e.location_name].filter(Boolean).join(' · ')}</div>
+    </div>
+    <span class="enrich-likelihood ${likelihoodCls}" title="Match confidence">${likelihoodLabel} ${e.likelihood || '?'}/10</span>
+  </div>`;
+
+  // Current employment
+  if (e.job_title || e.job_company_name) {
+    html += '<hr class="enrich-divider">';
+    html += `<div class="enrich-row"><span class="enrich-row-icon">💼</span><span class="enrich-row-label">Job</span><span class="enrich-row-value">${esc(e.job_title || '—')}</span></div>`;
+    if (e.job_company_name) {
+      html += `<div class="enrich-row"><span class="enrich-row-icon">🏢</span><span class="enrich-row-label">Company</span><span class="enrich-row-value">${esc(e.job_company_name)}${e.job_company_industry ? ' <span style="color:var(--text-3)">(' + esc(e.job_company_industry) + ')</span>' : ''}</span></div>`;
+    }
+    if (e.industry) {
+      html += `<div class="enrich-row"><span class="enrich-row-icon">🏷</span><span class="enrich-row-label">Industry</span><span class="enrich-row-value">${esc(e.industry)}</span></div>`;
+    }
+  }
+
+  // Location
+  if (e.location_name) {
+    html += `<div class="enrich-row"><span class="enrich-row-icon">📍</span><span class="enrich-row-label">Location</span><span class="enrich-row-value">${esc(e.location_name)}</span></div>`;
+  }
+
+  // Social links
+  const socials = [
+    e.linkedin_url ? `<a href="${e.linkedin_url}" target="_blank" class="enrich-social-link">🔗 LinkedIn</a>` : null,
+    e.facebook_url ? `<a href="${e.facebook_url}" target="_blank" class="enrich-social-link">📘 Facebook</a>` : null,
+    e.twitter_url ? `<a href="${e.twitter_url}" target="_blank" class="enrich-social-link">🐦 Twitter</a>` : null,
+  ].filter(Boolean);
+  if (socials.length) {
+    html += '<hr class="enrich-divider">';
+    html += `<div style="display:flex;flex-wrap:wrap;gap:6px">${socials.join('')}</div>`;
+  }
+
+  // Work history
+  if (e.experience?.length) {
+    html += '<hr class="enrich-divider">';
+    html += '<div class="enrich-section-label">Employment History</div>';
+    e.experience.forEach(exp => {
+      html += `<div class="enrich-exp-item">
+        <div class="enrich-exp-title">${esc(exp.title || '—')} ${exp.current ? '<span class="enrich-exp-current">● CURRENT</span>' : ''}</div>
+        <div class="enrich-exp-co">${esc(exp.company || '—')}${exp.industry ? ' · ' + esc(exp.industry) : ''}</div>
+        ${exp.start ? `<div class="enrich-exp-dates">${exp.start}${exp.end ? ' → ' + exp.end : ' → present'}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  // Education
+  if (e.education?.length && e.education.some(ed => ed.school)) {
+    html += '<hr class="enrich-divider">';
+    html += '<div class="enrich-section-label">Education</div>';
+    e.education.forEach(ed => {
+      if (!ed.school) return;
+      html += `<div class="enrich-exp-item">
+        <div class="enrich-exp-title">${esc(ed.school)}</div>
+        ${ed.degree || ed.major ? `<div class="enrich-exp-co">${[ed.degree, ed.major].filter(Boolean).join(' in ')}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  // Skills
+  if (e.skills?.length) {
+    html += '<hr class="enrich-divider">';
+    html += '<div class="enrich-section-label">Skills</div>';
+    html += `<div style="display:flex;flex-wrap:wrap;gap:2px">${e.skills.map(s => `<span class="enrich-tag">${esc(s)}</span>`).join('')}</div>`;
+  }
+
+  // Interests
+  if (e.interests?.length) {
+    html += '<div class="enrich-section-label" style="margin-top:4px">Interests</div>';
+    html += `<div style="display:flex;flex-wrap:wrap;gap:2px">${e.interests.map(s => `<span class="enrich-tag">${esc(s)}</span>`).join('')}</div>`;
+  }
+
+  // Summary (LinkedIn bio)
+  if (e.summary) {
+    html += '<hr class="enrich-divider">';
+    html += '<div class="enrich-section-label">Bio / Summary</div>';
+    html += `<div style="font-size:10px;color:var(--text-2);line-height:1.5;font-family:var(--font-body);max-height:80px;overflow-y:auto">${esc(e.summary.slice(0, 400))}</div>`;
+  }
+
+  // Additional contact info discovered
+  if (e.additional_emails?.length || e.additional_phones?.length) {
+    html += '<hr class="enrich-divider">';
+    html += '<div class="enrich-section-label">Additional Contact Info</div>';
+    if (e.additional_emails?.length) {
+      html += `<div class="enrich-row"><span class="enrich-row-icon">📧</span><span class="enrich-row-value">${e.additional_emails.map(em => esc(em)).join(', ')}</span></div>`;
+    }
+    if (e.additional_phones?.length) {
+      html += `<div class="enrich-row"><span class="enrich-row-icon">📱</span><span class="enrich-row-value">${e.additional_phones.map(p => esc(p)).join(', ')}</span></div>`;
+    }
+  }
+
+  // Footer: cache info + refresh
+  html += '<hr class="enrich-divider">';
+  const fetchedAt = e.fetched_at ? new Date(e.fetched_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  html += `<div style="display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:9px;color:var(--text-3)">${cached ? '📦 Cached' : '🔄 Fresh'} · ${fetchedAt}</span>
+    <button onclick="loadEnrichment('${personId}', true)" style="background:none;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:2px 6px;border-radius:3px;cursor:pointer;font-family:var(--font-mono)">↻ Refresh</button>
+  </div>`;
+
+  html += '</div>';
+  container.innerHTML = html;
+}
 
 // ══════════════════════════════════════════════════════════════════
 // CALL REPORTS — Agent Performance & Call Records
