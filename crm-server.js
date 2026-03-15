@@ -7281,11 +7281,12 @@ app.post('/api/jareih/voice-chat', auth, async (req, res) => {
     if (!grok) return res.status(503).json({ error: 'AI not configured' });
 
     // Gather CRM context
-    const [stagesR, recentR, openWoR, rentRollR] = await Promise.all([
+    const [stagesR, recentR, openWoR, rentRollR, peopleR] = await Promise.all([
       pool.query(`SELECT stage, COUNT(*)::int AS cnt FROM people GROUP BY stage ORDER BY cnt DESC`).catch(() => ({ rows: [] })),
       pool.query(`SELECT type, COUNT(*)::int AS cnt FROM activities WHERE created_at > NOW() - INTERVAL '24 hours' GROUP BY type`).catch(() => ({ rows: [] })),
       pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE scheduled_end IS NOT NULL AND scheduled_end + INTERVAL '6 hours' < NOW()) AS overdue, COUNT(*) FILTER (WHERE scheduled_end IS NULL) AS unscheduled FROM work_orders WHERE status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')`).catch(() => ({ rows: [{}] })),
       pool.query(`SELECT COUNT(*)::int AS occupied FROM rent_roll WHERE status='Current'`).catch(() => ({ rows: [{}] })),
+      pool.query(`SELECT id, first_name, last_name, stage, phone FROM people ORDER BY updated_at DESC LIMIT 200`).catch(() => ({ rows: [] })),
     ]);
 
     const stageBreakdown = stagesR.rows.map(r => `${r.stage||'Unknown'}: ${r.cnt}`).join(', ');
@@ -7293,6 +7294,7 @@ app.post('/api/jareih/voice-chat', auth, async (req, res) => {
     const wo = openWoR.rows[0] || {};
     const occupied = rentRollR.rows[0]?.occupied || '?';
     const today = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+    const peopleSample = peopleR.rows.slice(0, 150).map(p => `${p.id}|${p.first_name} ${p.last_name||''}|${p.stage||''}`).join('\n');
 
     const systemPrompt = `You are Jireh (spelled Jareih), a voice AI assistant for OKCREAL Connect property management CRM.
 You are speaking with ${agentName}, an agent on the team. Address them as "${agentFirst}" naturally in conversation.
@@ -7307,13 +7309,35 @@ CRM SNAPSHOT:
 - Open work orders: ${wo.total||0} total (${wo.overdue||0} overdue, ${wo.unscheduled||0} unscheduled)
 - Occupied units: ${occupied}
 
+PEOPLE IN CRM (id|name|stage — first 150):
+${peopleSample}
+
+CRM NAVIGATION — You can navigate the CRM for the agent. When they ask you to pull up a page, open a file, show something, etc., include an ACTION line at the VERY END of your spoken response, on its own line, in this exact format:
+[ACTION:open_contact:PERSON_ID] — opens a person's file (use the person ID from the people list above)
+[ACTION:navigate:people] — go to All People
+[ACTION:navigate:dashboard] — go to Command Module
+[ACTION:navigate:showings] — go to Showings
+[ACTION:navigate:inbox] — go to Inbox
+[ACTION:navigate:workorders] — go to Work Orders
+[ACTION:navigate:admin] — go to Admin
+[ACTION:navigate:security] — go to Security Alerts
+[ACTION:navigate:callreports] — go to Call Reports
+[ACTION:search:QUERY] — search for a person by name, phone, or address
+
+RULES FOR ACTIONS:
+- ONLY include an action if the agent explicitly asks to navigate, open, or pull up something
+- Match person names fuzzily — if they say "Landon" find the best match in the people list
+- The ACTION line must be the LAST line of your response, nothing after it
+- Your spoken text should confirm what you're doing, like "Sure, pulling up Landon's file now."
+- If you can't find the person, say so and offer to search
+
 YOUR PERSONALITY:
 - Warm, natural, conversational — like a trusted coworker who knows the business inside and out
 - Use ${agentFirst}'s name occasionally (not every response — keep it natural)
 - Short responses — 2-3 sentences usually. This is a voice conversation, not an essay.
 - React to what they say before giving info. Be a real conversationalist.
 - When you don't know something specific, say so honestly and suggest where to look.
-- You can help with: CRM strategy, tenant questions, work order triage, showing follow-up advice, team priorities, property insights.
+- You can help with: CRM strategy, tenant questions, work order triage, showing follow-up advice, team priorities, property insights, AND navigating the CRM.
 - Keep it spoken-language natural — no lists, no markdown, no formatting. Just talk.
 
 Remember: you represent a company built on biblical values. Be excellent, be warm, be wise.`;
@@ -7327,15 +7351,38 @@ Remember: you represent a company built on biblical values. Be excellent, be war
     messages.push({ role: 'user', content: text });
 
     const completion = await grok.chat.completions.create({
-      model: 'grok-3', max_tokens: 250, messages
+      model: 'grok-3', max_tokens: 300, messages
     });
 
-    const reply = completion.choices[0].message.content.trim();
+    let reply = completion.choices[0].message.content.trim();
+
+    // ── Parse action from response ──
+    let action = null;
+    const actionMatch = reply.match(/\[ACTION:(\w+):(.+?)\]\s*$/);
+    if (actionMatch) {
+      const [fullMatch, actionType, actionParam] = actionMatch;
+      reply = reply.replace(fullMatch, '').trim(); // strip action from spoken text
+      if (actionType === 'open_contact') {
+        action = { type: 'open_contact', params: { personId: actionParam } };
+      } else if (actionType === 'navigate') {
+        action = { type: 'navigate', params: { view: actionParam } };
+      } else if (actionType === 'search') {
+        action = { type: 'search', params: { query: actionParam } };
+      }
+      console.log(`[Voice Chat] Action detected: ${actionType}:${actionParam}`);
+    }
+
+    // ── Pronunciation fix for TTS ──
+    // "Jireh" should sound like "Jy-ruh" (as in Jehovah Jireh), not "Jah-ree"
+    let ttsText = reply
+      .replace(/\bJireh\b/gi, 'Jy-ruh')
+      .replace(/\bJareih\b/gi, 'Jy-ruh')
+      .replace(/\bO\.K\.C\.\s*Real\b/gi, 'O K C Real');
 
     // Generate Ara voice audio
     let audioToken = null;
     try {
-      const audio = await araTTSBrowser(reply);
+      const audio = await araTTSBrowser(ttsText);
       audioToken = crypto.randomBytes(8).toString('hex');
       ttsAudioCache.set('voice-' + audioToken, audio);
       console.log(`[Voice Chat] ${agentFirst}: "${text.substring(0,50)}" → Ara: "${reply.substring(0,50)}…" audio=${audio.buffer.length}b ${audio.mime}`);
@@ -7343,7 +7390,7 @@ Remember: you represent a company built on biblical values. Be excellent, be war
       console.warn('[Voice TTS] Audio gen failed, text-only fallback:', ttsErr.message);
     }
 
-    res.json({ text: reply, audioToken });
+    res.json({ text: reply, audioToken, action });
   } catch(e) {
     console.error('[Voice Chat]', e.message);
     res.status(500).json({ error: e.message });
