@@ -5468,6 +5468,108 @@ app.get('/api/showings/last-upload', auth, async (req, res) => {
 
 // Upcoming showings — next 90 minutes, used by alert poller
 // Also tries to match to a Connect person for "View Lead File" deep-link
+// ── Showings Dashboard — all data in one call ────────────────────────────────
+app.get('/api/showings/dashboard', auth, async (req, res) => {
+  try {
+    const [upcomingR, inProgressR, recentR, pendingFbR, kpiR] = await Promise.all([
+      // All scheduled showings from now through 14 days
+      pool.query(`
+        SELECT s.id, s.property, s.unit, s.guest_name, s.phone, s.email,
+               s.showing_time, s.status, s.showing_type, s.assigned_user,
+               s.connect_person_id, s.feedback_sent,
+               f.verdict AS feedback_verdict, f.source AS feedback_source
+        FROM showings s
+        LEFT JOIN showing_feedback f ON f.showing_id = s.id
+        WHERE s.status = 'Scheduled'
+          AND s.showing_time > NOW() - INTERVAL '30 minutes'
+          AND s.showing_time < NOW() + INTERVAL '14 days'
+        ORDER BY s.showing_time ASC
+      `),
+      // Active/in-progress (within 30 min of now)
+      pool.query(`
+        SELECT s.id, s.property, s.unit, s.guest_name, s.phone,
+               s.showing_time, s.showing_type, s.connect_person_id
+        FROM showings s
+        WHERE s.status = 'Scheduled'
+          AND s.showing_time BETWEEN NOW() - INTERVAL '30 minutes' AND NOW() + INTERVAL '5 minutes'
+        ORDER BY s.showing_time ASC
+      `),
+      // Completed in last 7 days needing feedback
+      pool.query(`
+        SELECT s.id, s.property, s.unit, s.guest_name, s.phone, s.email,
+               s.showing_time, s.connect_person_id, s.feedback_sent,
+               f.verdict, f.categories, f.notes, f.source AS feedback_source,
+               f.agent_name, f.created_at AS feedback_at
+        FROM showings s
+        LEFT JOIN showing_feedback f ON f.showing_id = s.id
+        WHERE s.showing_time < NOW()
+          AND s.showing_time > NOW() - INTERVAL '14 days'
+        ORDER BY s.showing_time DESC
+      `),
+      // Showings with no feedback at all (last 7 days)
+      pool.query(`
+        SELECT s.id, s.property, s.unit, s.guest_name, s.phone, s.email,
+               s.showing_time, s.connect_person_id, s.feedback_sent
+        FROM showings s
+        LEFT JOIN showing_feedback f ON f.showing_id = s.id
+        WHERE f.id IS NULL
+          AND s.showing_time < NOW()
+          AND s.showing_time > NOW() - INTERVAL '7 days'
+        ORDER BY s.showing_time DESC
+      `),
+      // KPI stats
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE s.status = 'Scheduled' AND s.showing_time > NOW()) AS upcoming_total,
+          COUNT(*) FILTER (WHERE s.showing_time::date = CURRENT_DATE AND s.status = 'Scheduled') AS today,
+          COUNT(*) FILTER (WHERE s.showing_time > NOW() - INTERVAL '7 days' AND s.showing_time < NOW()) AS completed_week,
+          COUNT(*) FILTER (WHERE s.showing_time < NOW() AND s.showing_time > NOW() - INTERVAL '7 days' AND NOT EXISTS(SELECT 1 FROM showing_feedback f2 WHERE f2.showing_id = s.id)) AS pending_feedback,
+          (SELECT MIN(showing_time) FROM showings WHERE status = 'Scheduled' AND showing_time > NOW()) AS next_showing
+        FROM showings s
+      `)
+    ]);
+
+    res.json({
+      upcoming: upcomingR.rows,
+      inProgress: inProgressR.rows,
+      recentWithFeedback: recentR.rows,
+      pendingFeedback: pendingFbR.rows,
+      kpi: kpiR.rows[0] || {},
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Send feedback link SMS to prospect ───────────────────────────────────────
+app.post('/api/showings/:id/send-feedback-link', auth, async (req, res) => {
+  try {
+    const showing = await pool.query('SELECT * FROM showings WHERE id = $1', [req.params.id]);
+    if (!showing.rows[0]) return res.status(404).json({ error: 'Showing not found' });
+    const s = showing.rows[0];
+    if (!s.phone) return res.status(400).json({ error: 'No phone number for this prospect' });
+
+    const twilio = initTwilio();
+    if (!twilio) return res.status(503).json({ error: 'Twilio not configured' });
+
+    const feedbackUrl = `${process.env.APP_URL}/api/showings/${s.id}/public-feedback`;
+    const propName = (s.property || '').split(' - ')[0];
+    const body = `Hi ${(s.guest_name||'').split(',')[0].split(' ')[0] || 'there'}! Thanks for touring ${propName} with O.K.C. Real. We'd love your feedback — it only takes 30 seconds: ${feedbackUrl}`;
+
+    const fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
+    await twilio.messages.create({ body, from: fromNumber, to: s.phone });
+    await pool.query('UPDATE showings SET feedback_sent = true WHERE id = $1', [s.id]);
+
+    // Log activity if person linked
+    if (s.connect_person_id) {
+      await pool.query(
+        `INSERT INTO activities (person_id, agent_id, type, body, direction) VALUES ($1, $2, 'sms', $3, 'outbound')`,
+        [s.connect_person_id, req.agent.id, body]
+      ).catch(() => {});
+    }
+
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/showings/upcoming', auth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
