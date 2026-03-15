@@ -5448,8 +5448,12 @@ function renderContactRecord(person, activities, tasks) {
           <div class="compose-body">
             <textarea class="compose-input" id="compose-input" placeholder="Add a note… (type @ to mention a teammate)" rows="2"
               oninput="handleComposeInput(event)" onkeydown="handleComposeKeydown(event)"></textarea>
+            <div id="mms-preview" style="display:none;padding:8px 12px;border-top:1px solid var(--tac-border);display:flex;flex-wrap:wrap;gap:6px"></div>
+            <input type="file" id="mms-file-input" multiple accept="image/*,video/mp4,video/3gpp,application/pdf" style="display:none" onchange="handleMmsFileSelect(this)">
           </div>
           <div class="compose-footer" style="display:flex;gap:6px;align-items:stretch">
+            <button class="compose-submit" id="compose-attach-btn" onclick="document.getElementById('mms-file-input').click()" title="Attach image/video"
+              style="display:none;width:40px;flex:none;padding:0;font-size:16px;letter-spacing:0">📎</button>
             <button class="compose-submit" id="compose-submit" onclick="submitCompose()" style="flex:1">Save Note</button>
             <button class="compose-submit" id="compose-schedule-btn" onclick="openScheduleModal()" title="Schedule for later"
               style="display:none;width:40px;flex:none;padding:0;font-size:16px;letter-spacing:0">🕐</button>
@@ -5741,9 +5745,29 @@ function renderTimelineItem(act, hasConnector) {
     const dir = act.direction || 'outbound';
     const isOutbound = dir !== 'inbound';
     const smsStatusHtml = isOutbound ? renderSmsStatus(act) : '';
+    // MMS media rendering
+    let mediaHtml = '';
+    const media = act.media_urls ? (typeof act.media_urls === 'string' ? JSON.parse(act.media_urls) : act.media_urls) : [];
+    if (media.length) {
+      mediaHtml = `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">`;
+      for (const m of media) {
+        const ct = (m.contentType || m.content_type || '').toLowerCase();
+        if (ct.startsWith('image/')) {
+          mediaHtml += `<a href="${esc(m.url)}" target="_blank" style="display:block;max-width:240px;border-radius:8px;overflow:hidden"><img src="${esc(m.url)}" style="width:100%;max-height:240px;object-fit:cover;border-radius:8px;cursor:pointer" loading="lazy" onerror="this.style.display='none'"></a>`;
+        } else if (ct.startsWith('video/')) {
+          mediaHtml += `<video src="${esc(m.url)}" controls playsinline preload="metadata" style="max-width:280px;max-height:200px;border-radius:8px;background:#000"></video>`;
+        } else if (ct === 'application/pdf') {
+          mediaHtml += `<a href="${esc(m.url)}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:11px;text-decoration:none">📄 PDF Attachment</a>`;
+        } else {
+          mediaHtml += `<a href="${esc(m.url)}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-4);border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:11px;text-decoration:none">📎 Attachment</a>`;
+        }
+      }
+      mediaHtml += `</div>`;
+    }
     bodyHtml = `<div class="text-thread">
       <div class="bubble-wrap ${isOutbound ? 'outbound' : ''}">
         <div>
+          ${mediaHtml}
           <div class="bubble ${isOutbound ? 'bubble-outbound' : 'bubble-inbound'}">${esc(act.body||act.content||'')}</div>
           ${smsStatusHtml}
         </div>
@@ -5910,10 +5934,46 @@ function setComposeTab(tab) {
   else if (tab === 'text') { input.placeholder = 'Type a message to send via SMS…'; btn.textContent = 'Send Text'; }
   else { input.placeholder = 'What happened on this call?'; btn.textContent = 'Log Call'; }
   if (schedBtn) schedBtn.style.display = tab === 'text' ? '' : 'none';
+  const attachBtn = document.getElementById('compose-attach-btn');
+  if (attachBtn) attachBtn.style.display = tab === 'text' ? '' : 'none';
+  // Clear MMS preview when switching tabs
+  if (tab !== 'text') { window._mmsFiles = []; const prev = document.getElementById('mms-preview'); if (prev) { prev.style.display = 'none'; prev.innerHTML = ''; } }
 }
 function openNoteCompose() { setComposeTab('note'); document.getElementById('compose-input')?.focus(); }
 function openTextCompose() {
   window._selectedTextPhone = window._selectedTextPhone || null; setComposeTab('text'); document.getElementById('compose-input')?.focus(); }
+
+// ── MMS File Handling ───────────────────────────────────────────────
+window._mmsFiles = [];
+
+function handleMmsFileSelect(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  window._mmsFiles = [...window._mmsFiles, ...files].slice(0, 10);
+  renderMmsPreview();
+  input.value = '';
+}
+
+function renderMmsPreview() {
+  const el = document.getElementById('mms-preview');
+  if (!window._mmsFiles.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  el.innerHTML = window._mmsFiles.map((f, i) => {
+    const isImg = f.type.startsWith('image/');
+    const isVid = f.type.startsWith('video/');
+    const thumb = isImg ? URL.createObjectURL(f) : '';
+    return `<div style="position:relative;width:64px;height:64px;border-radius:6px;overflow:hidden;background:var(--bg-4);border:1px solid var(--border);flex-shrink:0">
+      ${isImg ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : isVid ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:20px">🎬</div>` : `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:20px">📄</div>`}
+      <button onclick="removeMmsFile(${i})" style="position:absolute;top:2px;right:2px;width:18px;height:18px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:50%;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
+      <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);font-size:7px;color:#fff;padding:1px 3px;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(f.name.substring(0,12))}</div>
+    </div>`;
+  }).join('');
+}
+
+function removeMmsFile(idx) {
+  window._mmsFiles.splice(idx, 1);
+  renderMmsPreview();
+}
 
 // ── After-hours warning + scheduled text support ───────────────────────
 const _afterHoursWarned = new Map(); // personId → timestamp of last warning
@@ -5960,13 +6020,30 @@ async function _doSubmitCompose(content) {
         }
       }
       if (!toPhone) { toast('Contact has no valid phone number', 'error'); return; }
+
+      // Upload MMS attachments if any
+      let mediaUrls = null;
+      if (window._mmsFiles?.length) {
+        const formData = new FormData();
+        for (const f of window._mmsFiles) formData.append('media', f);
+        const uploadOpts = { method: 'POST', headers: {}, body: formData };
+        if (authToken) uploadOpts.headers['Authorization'] = `Bearer ${authToken}`;
+        const uploadR = await fetch('/api/mms/upload', uploadOpts);
+        if (!uploadR.ok) { const e = await uploadR.json().catch(()=>({})); toast('Upload failed: ' + (e.error||'unknown'), 'error'); return; }
+        const uploadData = await uploadR.json();
+        mediaUrls = uploadData.files?.map(f => f.url) || [];
+      }
+
       await api('/api/twilio/sms', 'POST', {
         to: toPhone,
-        body: content,
-        personId: currentPersonId
+        body: content || '',
+        personId: currentPersonId,
+        mediaUrls: mediaUrls || undefined
       });
-      toast('Text sent ✓', 'success');
+      toast(mediaUrls?.length ? `MMS sent ✓ (${mediaUrls.length} attachment${mediaUrls.length>1?'s':''})` : 'Text sent ✓', 'success');
       if (window.neonGlow) window.neonGlow.smsSent();
+      window._mmsFiles = [];
+      renderMmsPreview();
     } else {
       await api('/api/activities', 'POST', {
         personId: currentPersonId,
