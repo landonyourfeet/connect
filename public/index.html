@@ -12244,6 +12244,7 @@ function wxRenderWeatherTab(container) {
 // ── Tab 2: Property Map ──────────────────────────────────────────────────
 async function wxRenderMapTab(container) {
   const mc = 'font-family:var(--font-mono);';
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   container.innerHTML = `
     <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
       <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
@@ -12254,16 +12255,17 @@ async function wxRenderMapTab(container) {
           <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#00e87a"></span><span style="${mc}font-size:9px;color:var(--text-3)">Clear</span></span>
         </div>
       </div>
-      <div id="wx-leaflet-map" style="height:500px;background:#111"></div>
+      <div id="wx-leaflet-map" style="height:500px;background:${isDark?'#1a1a2e':'#e8e8e8'}"></div>
     </div>
+    <div id="wx-map-status" style="${mc}font-size:10px;color:var(--text-3);margin-bottom:8px">Loading properties…</div>
     <div id="wx-map-props-list"></div>`;
 
-  // Load property map data (with geocoded coordinates)
+  // Load property map data
   let mapData;
   try {
     mapData = await api('/api/weather/property-map');
   } catch(e) {
-    container.innerHTML += `<div style="color:var(--red);padding:12px">${e.message}</div>`;
+    document.getElementById('wx-map-status').textContent = 'Error: ' + e.message;
     return;
   }
 
@@ -12271,86 +12273,121 @@ async function wxRenderMapTab(container) {
   const center = mapData.center || { lat: 35.4676, lon: -97.5164 };
 
   // Initialize Leaflet map
-  if (_wxMap) { _wxMap.remove(); _wxMap = null; }
-  _wxMap = L.map('wx-leaflet-map', { zoomControl: true }).setView([center.lat, center.lon], 10);
+  if (_wxMap) { try { _wxMap.remove(); } catch(e) {} _wxMap = null; }
+  _wxMarkers = [];
 
-  // Theme-responsive tiles
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const mapEl = document.getElementById('wx-leaflet-map');
+  if (!mapEl) return;
+
+  _wxMap = L.map(mapEl, { zoomControl: true, scrollWheelZoom: true }).setView([center.lat, center.lon], 10);
+
+  // Theme-responsive tiles — OpenStreetMap is more reliable than CARTO
   const tileUrl = isDark
     ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-  L.tileLayer(tileUrl, {
-    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
-    maxZoom: 18
-  }).addTo(_wxMap);
+    : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const tileAttr = isDark
+    ? '&copy; <a href="https://carto.com/">CARTO</a>'
+    : '&copy; <a href="https://openstreetmap.org/">OSM</a>';
+  L.tileLayer(tileUrl, { attribution: tileAttr, maxZoom: 18 }).addTo(_wxMap);
 
-  // NWS Radar overlay
-  L.tileLayer.wms('https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows', {
-    layers: 'conus_bref_qcd',
-    format: 'image/png',
-    transparent: true,
-    opacity: 0.5,
-    attribution: 'NWS Radar'
-  }).addTo(_wxMap);
+  // Force map to recalculate size after rendering
+  setTimeout(() => { if (_wxMap) _wxMap.invalidateSize(); }, 200);
 
-  // Add property markers
-  _wxMarkers = [];
+  // Geocode properties client-side in batches (Nominatim: 1 req/sec)
   const colors = { danger: '#e8003a', warning: '#ff8c00', clear: '#00e87a' };
+  const statusEl = document.getElementById('wx-map-status');
   let geoCount = 0;
-  for (const p of props) {
-    if (!p.lat || !p.lon) continue;
-    geoCount++;
-    const color = colors[p.status] || colors.clear;
-    const pulseClass = p.status === 'danger' ? 'wx-marker-danger' : '';
-    const icon = L.divIcon({
-      className: '',
-      html: `<div class="${pulseClass}" style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 8px ${color};${p.status==='danger'?'animation:voicePulse 1.5s ease-in-out infinite':''}"></div>`,
-      iconSize: [16, 16],
-      iconAnchor: [8, 8]
-    });
-    const marker = L.marker([p.lat, p.lon], { icon }).addTo(_wxMap);
-    marker.bindPopup(`<div style="font-family:sans-serif"><strong>${esc(p.name)}</strong><br><span style="font-size:11px;color:#666">${p.units} units · ${p.tenants} tenants</span><br><span style="font-size:11px;color:${color};font-weight:700">${p.status.toUpperCase()}</span></div>`);
-    _wxMarkers.push(marker);
+  const geocoded = [];
+
+  for (let i = 0; i < props.length; i++) {
+    const p = props[i];
+    if (!p.address || p.address.includes('ACCOUNTING')) { geocoded.push({ ...p, lat: null, lon: null }); continue; }
+    if (statusEl) statusEl.textContent = `Geocoding ${i+1} of ${props.length}… ${p.name}`;
+
+    try {
+      const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(p.address)}&limit=1&countrycodes=us`, {
+        headers: { 'User-Agent': 'OKCREAL-Connect/1.0' }
+      });
+      const results = await resp.json();
+      if (results.length) {
+        const lat = parseFloat(results[0].lat);
+        const lon = parseFloat(results[0].lon);
+        geocoded.push({ ...p, lat, lon });
+
+        // Add marker immediately
+        const color = colors[p.status] || colors.clear;
+        const icon = L.divIcon({
+          className: '',
+          html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid ${isDark?'#fff':'#333'};box-shadow:0 0 6px ${color};${p.status==='danger'?'animation:voicePulse 1.5s ease-in-out infinite':''}"></div>`,
+          iconSize: [14, 14], iconAnchor: [7, 7]
+        });
+        const marker = L.marker([lat, lon], { icon }).addTo(_wxMap);
+        marker.bindPopup(`<div style="font-family:sans-serif;font-size:12px"><strong>${esc(p.name)}</strong><br>${p.units} units · ${p.tenants} tenants<br><span style="color:${color};font-weight:700">${p.status.toUpperCase()}</span></div>`);
+        _wxMarkers.push(marker);
+        geoCount++;
+
+        // Auto-fit bounds as markers appear
+        if (_wxMarkers.length > 1) {
+          _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.1));
+        } else {
+          _wxMap.setView([lat, lon], 11);
+        }
+      } else {
+        geocoded.push({ ...p, lat: null, lon: null });
+      }
+    } catch(e) {
+      geocoded.push({ ...p, lat: null, lon: null });
+    }
+
+    // Rate limit: Nominatim requires ~1 req/sec
+    if (i < props.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 
-  // Fit bounds to markers
+  if (statusEl) statusEl.textContent = `${geoCount} of ${props.length} properties mapped`;
+
+  // Final fit bounds
   if (_wxMarkers.length) {
-    const group = L.featureGroup(_wxMarkers);
-    _wxMap.fitBounds(group.getBounds().pad(0.1));
+    _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.15));
   }
 
   // Properties list below map
+  wxRenderMapPropsList(geocoded, mapData.alerts || []);
+}
+
+function wxRenderMapPropsList(props, alerts) {
   const listEl = document.getElementById('wx-map-props-list');
-  if (listEl) {
-    const damagingAlerts = (mapData.alerts||[]).filter(a => a.isDamaging);
-    let listHtml = `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--text-3);text-transform:uppercase">${geoCount} of ${props.length} properties mapped</div>
-        ${damagingAlerts.length?`<button onclick="wxDownloadReport()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 14px;${mc}font-size:9px;font-weight:700;cursor:pointer">Download Damage Assessment</button>`:''}
-      </div>
-      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
-        <tr>
-          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Property</th>
-          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Units</th>
-          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Tenants</th>
-          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Status</th>
-          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Address</th>
-        </tr>`;
-    for (const p of props) {
-      const sColor = p.status==='danger'?'var(--red)':p.status==='warning'?'var(--amber)':'var(--green)';
-      const sLabel = p.status==='danger'?'⚠ DANGER':p.status==='warning'?'⚡ CAUTION':'✓ CLEAR';
-      const mapped = p.lat ? '📍' : '—';
-      listHtml += `<tr style="border-bottom:1px solid var(--border);${p.status==='danger'?'background:rgba(232,0,58,0.05)':''}">
-        <td style="padding:5px 8px;font-weight:600;color:var(--text)">${mapped} ${esc(p.name)}</td>
-        <td style="padding:5px 8px;${mc}font-size:11px;color:var(--text-2)">${p.units}</td>
-        <td style="padding:5px 8px;${mc}font-size:11px;color:var(--text-2)">${p.tenants}</td>
-        <td style="padding:5px 8px"><span style="${mc}font-size:10px;font-weight:700;color:${sColor}">${sLabel}</span></td>
-        <td style="padding:5px 8px;font-size:10px;color:var(--text-3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.address||'')}</td>
+  if (!listEl) return;
+  const mc = 'font-family:var(--font-mono);';
+  const damagingAlerts = alerts.filter(a => a.isDamaging);
+  const mapped = props.filter(p => p.lat);
+
+  let html = `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--text-3);text-transform:uppercase">${mapped.length} of ${props.length} properties mapped</div>
+      ${damagingAlerts.length ? `<button onclick="wxDownloadReport()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 14px;${mc}font-size:9px;font-weight:700;cursor:pointer">Download Damage Assessment</button>` : ''}
+    </div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr>
+        <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Property</th>
+        <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Units</th>
+        <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Tenants</th>
+        <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Status</th>
+        <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Address</th>
       </tr>`;
-    }
-    listHtml += '</table></div></div>';
-    listEl.innerHTML = listHtml;
+  for (const p of props) {
+    const sColor = p.status==='danger'?'var(--red)':p.status==='warning'?'var(--amber)':'var(--green)';
+    const sLabel = p.status==='danger'?'⚠ DANGER':p.status==='warning'?'⚡ CAUTION':'✓ CLEAR';
+    const pin = p.lat ? '📍' : '—';
+    html += `<tr style="border-bottom:1px solid var(--border);${p.status==='danger'?'background:rgba(232,0,58,0.05)':''}">
+      <td style="padding:5px 8px;font-weight:600;color:var(--text)">${pin} ${esc(p.name)}</td>
+      <td style="padding:5px 8px;${mc}font-size:11px;color:var(--text-2)">${p.units}</td>
+      <td style="padding:5px 8px;${mc}font-size:11px;color:var(--text-2)">${p.tenants}</td>
+      <td style="padding:5px 8px"><span style="${mc}font-size:10px;font-weight:700;color:${sColor}">${sLabel}</span></td>
+      <td style="padding:5px 8px;font-size:10px;color:var(--text-3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.address||'')}</td>
+    </tr>`;
   }
+  html += '</table></div></div>';
+  listEl.innerHTML = html;
 }
 
 function wxRefreshRadar() {
