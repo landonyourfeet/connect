@@ -3111,6 +3111,12 @@ async function initDB() {
     unit_count INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`, 'create rent_roll_uploads');
+  await run(`CREATE TABLE IF NOT EXISTS geocode_cache (
+    address TEXT PRIMARY KEY,
+    lat DOUBLE PRECISION,
+    lon DOUBLE PRECISION,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`, 'create geocode_cache');
   await run(`CREATE TABLE IF NOT EXISTS work_orders (
     id SERIAL PRIMARY KEY,
     property TEXT NOT NULL,
@@ -6941,7 +6947,8 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
     const propsR = await pool.query(`
       SELECT combined.property,
              COALESCE(rr.units, 0)::int AS units,
-             COALESCE(rr.tenants, 0)::int AS tenants
+             COALESCE(rr.tenants, 0)::int AS tenants,
+             gc.lat, gc.lon
       FROM (
         SELECT DISTINCT property FROM rent_roll
         UNION
@@ -6952,6 +6959,7 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
                COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
         FROM rent_roll WHERE rent_roll.property = combined.property
       ) rr ON TRUE
+      LEFT JOIN geocode_cache gc ON gc.address = combined.property
       ORDER BY combined.property
     `);
 
@@ -6965,7 +6973,11 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
       let status = 'clear';
       if (damagingAlerts.length) status = 'danger';
       else if (severeAlerts.length) status = 'warning';
-      return { name, fullName: r.property, address, units: r.units, tenants: r.tenants, status };
+      return {
+        name, fullName: r.property, address, units: r.units, tenants: r.tenants, status,
+        lat: r.lat ? parseFloat(r.lat) : null,
+        lon: r.lon ? parseFloat(r.lon) : null,
+      };
     });
 
     res.json({
@@ -6974,6 +6986,23 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
       conditions: _weatherCache.conditions,
       center: WEATHER_CENTER,
     });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save geocoded coordinates for a property
+app.post('/api/weather/geocode-save', auth, async (req, res) => {
+  try {
+    const { entries } = req.body; // [{ address, lat, lon }]
+    if (!entries || !Array.isArray(entries)) return res.status(400).json({ error: 'entries required' });
+    for (const e of entries) {
+      if (!e.address || !e.lat || !e.lon) continue;
+      await pool.query(
+        `INSERT INTO geocode_cache (address, lat, lon, updated_at) VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (address) DO UPDATE SET lat=EXCLUDED.lat, lon=EXCLUDED.lon, updated_at=NOW()`,
+        [e.address, e.lat, e.lon]
+      );
+    }
+    res.json({ ok: true, saved: entries.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
