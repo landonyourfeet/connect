@@ -6743,6 +6743,161 @@ app.get('/jireh-toggle.js', (req, res) => {
 });
 
 // =============================================================================
+// WEATHER CONTROL CENTER — NWS Alerts + Property Impact
+// =============================================================================
+
+let _weatherCache = { alerts: [], conditions: null, lastFetch: 0 };
+const WEATHER_COUNTIES = ['Oklahoma','Cleveland','Pottawatomie','Canadian','Logan'];
+const WEATHER_CENTER = { lat: 35.4676, lon: -97.5164 }; // OKC
+const SEVERE_TYPES = ['Tornado Warning','Tornado Watch','Severe Thunderstorm Warning','Severe Thunderstorm Watch','Flash Flood Warning','Winter Storm Warning','Ice Storm Warning','Blizzard Warning','Wind Advisory','High Wind Warning','Freeze Warning','Hard Freeze Warning','Wind Chill Warning','Extreme Cold Warning'];
+
+async function fetchNWSAlerts() {
+  try {
+    const resp = await fetch('https://api.weather.gov/alerts/active?area=OK', {
+      headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)', 'Accept': 'application/geo+json' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!resp.ok) { console.warn('[Weather] NWS API:', resp.status); return []; }
+    const data = await resp.json();
+    const features = data.features || [];
+    // Filter to our counties + severe types
+    return features.filter(f => {
+      const props = f.properties || {};
+      const zones = (props.areaDesc || '').toLowerCase();
+      const isOurArea = WEATHER_COUNTIES.some(c => zones.includes(c.toLowerCase()));
+      return isOurArea;
+    }).map(f => {
+      const p = f.properties;
+      return {
+        id: p.id,
+        event: p.event,
+        severity: p.severity,
+        certainty: p.certainty,
+        urgency: p.urgency,
+        headline: p.headline,
+        description: (p.description || '').substring(0, 600),
+        instruction: (p.instruction || '').substring(0, 400),
+        areaDesc: p.areaDesc,
+        effective: p.effective,
+        expires: p.expires,
+        sender: p.senderName,
+        isSevere: SEVERE_TYPES.includes(p.event),
+        isDamaging: ['Tornado Warning','Severe Thunderstorm Warning','Flash Flood Warning','Winter Storm Warning','Ice Storm Warning','Blizzard Warning'].includes(p.event),
+      };
+    });
+  } catch(e) { console.warn('[Weather] Fetch error:', e.message); return []; }
+}
+
+async function fetchNWSConditions() {
+  try {
+    const resp = await fetch(`https://api.weather.gov/stations/KOKC/observations/latest`, {
+      headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const p = data.properties || {};
+    return {
+      temperature: p.temperature?.value != null ? Math.round(p.temperature.value * 9/5 + 32) : null,
+      windSpeed: p.windSpeed?.value != null ? Math.round(p.windSpeed.value * 0.621371) : null,
+      windGust: p.windGust?.value != null ? Math.round(p.windGust.value * 0.621371) : null,
+      windDirection: p.windDirection?.value,
+      humidity: p.relativeHumidity?.value != null ? Math.round(p.relativeHumidity.value) : null,
+      description: p.textDescription,
+      timestamp: p.timestamp,
+    };
+  } catch(e) { return null; }
+}
+
+async function refreshWeatherCache() {
+  const now = Date.now();
+  if (now - _weatherCache.lastFetch < 120000) return; // max every 2 min
+  _weatherCache.lastFetch = now;
+  const [alerts, conditions] = await Promise.all([fetchNWSAlerts(), fetchNWSConditions()]);
+  const prevSevere = _weatherCache.alerts.filter(a => a.isSevere).length;
+  _weatherCache.alerts = alerts;
+  _weatherCache.conditions = conditions;
+
+  // Broadcast if new severe alerts appeared
+  const nowSevere = alerts.filter(a => a.isSevere).length;
+  if (nowSevere > 0 && nowSevere !== prevSevere) {
+    console.log(`[Weather] ⚠ ${nowSevere} severe alert(s) — broadcasting to all agents`);
+    broadcastToAll({ type: 'weather_alert', alerts: alerts.filter(a => a.isSevere) });
+  }
+  if (nowSevere === 0 && prevSevere > 0) {
+    console.log('[Weather] ✓ All clear — no severe alerts');
+    broadcastToAll({ type: 'weather_clear' });
+  }
+}
+
+app.get('/api/weather/dashboard', auth, async (req, res) => {
+  try {
+    await refreshWeatherCache();
+
+    // Get all properties from rent roll + showings
+    const propsR = await pool.query(`
+      SELECT DISTINCT property FROM (
+        SELECT property FROM rent_roll WHERE status = 'Current'
+        UNION
+        SELECT DISTINCT property FROM showings WHERE showing_time > NOW() - INTERVAL '90 days'
+      ) combined ORDER BY property
+    `);
+
+    const properties = propsR.rows.map(r => {
+      const name = (r.property || '').split(' - ')[0];
+      return { name, fullName: r.property, affected: false };
+    });
+
+    // Mark properties as affected if any damaging alert is active
+    const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
+    if (damagingAlerts.length) {
+      properties.forEach(p => { p.affected = true; }); // All in our counties are affected
+    }
+
+    res.json({
+      alerts: _weatherCache.alerts,
+      conditions: _weatherCache.conditions,
+      properties,
+      severeCount: _weatherCache.alerts.filter(a => a.isSevere).length,
+      damagingCount: damagingAlerts.length,
+      center: WEATHER_CENTER,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/weather/alerts', auth, async (req, res) => {
+  await refreshWeatherCache();
+  res.json(_weatherCache.alerts);
+});
+
+app.get('/api/weather/report', auth, async (req, res) => {
+  try {
+    await refreshWeatherCache();
+    const propsR = await pool.query(`
+      SELECT DISTINCT rr.property, COUNT(DISTINCT rr.id)::int AS units, COUNT(DISTINCT rr.tenant_name)::int AS tenants
+      FROM rent_roll rr WHERE rr.status = 'Current' GROUP BY rr.property ORDER BY rr.property
+    `);
+    const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
+    const report = {
+      generated: new Date().toISOString(),
+      generatedBy: req.agent?.name || 'System',
+      alerts: damagingAlerts,
+      conditions: _weatherCache.conditions,
+      properties: propsR.rows.map(r => ({
+        name: (r.property || '').split(' - ')[0],
+        fullName: r.property,
+        units: r.units,
+        tenants: r.tenants,
+        affected: damagingAlerts.length > 0,
+      })),
+      totalUnits: propsR.rows.reduce((s,r) => s + r.units, 0),
+      totalTenants: propsR.rows.reduce((s,r) => s + r.tenants, 0),
+    };
+    res.json(report);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// =============================================================================
 // SPA CATCH-ALL — must be AFTER all API routes
 // Serves index.html for every frontend path: /dashboard, /showings, /inbox, etc.
 // =============================================================================
@@ -7742,6 +7897,10 @@ checkDB().then(() => initDB()).then(() => {
   // Showing followup text poller — runs every 2 minutes
   setInterval(pollShowingFollowups, 2 * 60 * 1000);
   setTimeout(pollShowingFollowups, 10000); // first check 10s after boot
+
+  // Weather alert poller — every 5 min
+  setInterval(refreshWeatherCache, 5 * 60 * 1000);
+  setTimeout(refreshWeatherCache, 15000); // first check 15s after boot
 
   // Attach Jareih call WebSocket server
   setupJareihCallWS(httpServer);
