@@ -2082,6 +2082,12 @@ app.post('/api/twilio/inbound-jireh-fallback', async (req, res) => {
       [String(personId || '')]
     ).catch(()=>({rows:[]}));
 
+    // Enrich context: listings, rent roll, work orders
+    const [listingsCtx, personCtx] = await Promise.all([
+      scrapeAppFolioListings().then(() => getListingsContextForCall()),
+      getPersonContextForCall(personId)
+    ]);
+
     const callId = `jc-inbound-${Date.now()}-${require('crypto').randomBytes(4).toString('hex')}`;
     const wsBase = process.env.APP_URL?.replace(/^http/, 'ws') || 'wss://localhost:3000';
 
@@ -2101,12 +2107,14 @@ app.post('/api/twilio/inbound-jireh-fallback', async (req, res) => {
     jareihCalls.set(callId, {
       personId: String(person?.id||''),
       agentId: null,
-      goal: 'Answer the inbound caller, identify their need, and assist them or take a message.',
+      goal: 'Answer the inbound caller, identify their need, and assist them or take a message. If they want a tour, qualify income and book it.',
       context: {
         name: person ? `${person.first_name} ${person.last_name||''}`.trim() : 'Unknown caller',
         phone: fromNum, stage: person?.stage||'Unknown',
         notes: person?.notes||'', email: person?.email||'',
-        recentActivity: actsR.rows
+        recentActivity: actsR.rows,
+        listingsContext: listingsCtx,
+        personContext: personCtx,
       },
       transcript: [],
       contactCallSid: callSid,
@@ -6781,6 +6789,168 @@ app.get('/jireh-toggle.js', (req, res) => {
 });
 
 // =============================================================================
+// APPFOLIO LIVE LISTINGS — Scraper + Tour Booking for Jireh
+// =============================================================================
+
+let _listingsCache = { listings: [], lastFetch: 0 };
+const APPFOLIO_URL = 'https://teamokcreal.appfolio.com/listings';
+const INCOME_MULTIPLIER = 2.5;
+
+async function scrapeAppFolioListings() {
+  const now = Date.now();
+  if (now - _listingsCache.lastFetch < 300000 && _listingsCache.listings.length) return _listingsCache.listings;
+  _listingsCache.lastFetch = now;
+  try {
+    const resp = await fetch(APPFOLIO_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OKCREAL-Connect/1.0)' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!resp.ok) { console.warn('[Listings] AppFolio:', resp.status); return _listingsCache.listings; }
+    const html = await resp.text();
+
+    const listings = [];
+    // Split by "View Details" links to find each card
+    const detailPattern = /\/listings\/detail\/([a-f0-9-]+)/g;
+    const uids = [];
+    let m;
+    while ((m = detailPattern.exec(html)) !== null) {
+      if (!uids.includes(m[1])) uids.push(m[1]);
+    }
+
+    for (const uid of uids) {
+      // Get a chunk of HTML around this listing
+      const idx = html.indexOf(`/listings/detail/${uid}`);
+      if (idx === -1) continue;
+      const start = Math.max(0, html.lastIndexOf('RENT', idx) - 200);
+      const end = Math.min(html.length, html.indexOf('View Details', idx) + 200);
+      const chunk = html.substring(start, end);
+
+      // Extract fields with regex
+      const rent = chunk.match(/\$[\d,]+/)?.[0] || '';
+      const rentNum = parseInt(rent.replace(/[$,]/g, '')) || 0;
+      const sqft = chunk.match(/Square Feet[:\s]*(\d[\d,]*)/i)?.[1]?.replace(',','') || chunk.match(/(\d,?\d{3})\s*(?:sq|SF)/)?.[1]?.replace(',','') || '';
+      const bedBath = chunk.match(/(\d+\s*bd\s*\/\s*\d+\s*ba|\d+\s*ba)/i)?.[0] || '';
+      const available = chunk.match(/Available\s*(NOW|[\w\s,]+\d{4})/i)?.[1] || 'NOW';
+      // Title: look for bold/heading text before the address
+      const titleMatch = chunk.match(/<(?:h[23]|b|strong)[^>]*>([^<]+)</i);
+      const title = titleMatch?.[1]?.trim() || '';
+      // Address
+      const addrMatch = chunk.match(/(\d+[^,]+,\s*(?:Oklahoma City|Edmond|Norman|Moore|Yukon|Midwest City|Del City|Harrah|Choctaw|Shawnee|Mustang)[^<]*(?:OK\s*\d{5}))/i);
+      const address = addrMatch?.[1]?.trim() || '';
+      // Pet policy
+      const petMatch = chunk.match(/Pet Policy:\s*([^<]+)/i);
+      const petPolicy = petMatch?.[1]?.trim() || '';
+      // Description snippet
+      const descMatch = chunk.match(/Available\s*(?:NOW|[\w\s,]+)\s*([A-Z][^<]{50,300})/);
+      const description = descMatch?.[1]?.trim()?.substring(0, 250) || '';
+
+      const minIncome = Math.ceil(rentNum * INCOME_MULTIPLIER);
+
+      listings.push({
+        uid, title, address, rent, rentNum, sqft: sqft ? parseInt(sqft) : null,
+        bedBath, available, petPolicy, description,
+        minIncome,
+        showingUrl: `https://teamokcreal.appfolio.com/listings/showings/new?listable_uid=${uid}&source=Website`,
+      });
+    }
+
+    _listingsCache.listings = listings;
+    console.log(`[Listings] Scraped ${listings.length} available listings from AppFolio`);
+    return listings;
+  } catch(e) { console.warn('[Listings] Scrape error:', e.message); return _listingsCache.listings; }
+}
+
+// API: Get current listings
+app.get('/api/listings', auth, async (req, res) => {
+  const listings = await scrapeAppFolioListings();
+  res.json(listings);
+});
+
+// API: Book a tour via AppFolio
+app.post('/api/listings/book-tour', auth, async (req, res) => {
+  try {
+    const { uid, firstName, lastName, email, phone } = req.body;
+    if (!uid || !firstName || !lastName || !email || !phone) {
+      return res.status(400).json({ error: 'All fields required: uid, firstName, lastName, email, phone' });
+    }
+
+    const listings = await scrapeAppFolioListings();
+    const listing = listings.find(l => l.uid === uid);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+
+    // Submit to AppFolio showing form
+    const formUrl = `https://teamokcreal.appfolio.com/listings/showings/new?listable_uid=${uid}&source=Website&firstName=${encodeURIComponent(firstName)}&lastName=${encodeURIComponent(lastName)}&email=${encodeURIComponent(email)}&phone=${encodeURIComponent(phone)}`;
+
+    const formResp = await fetch(formUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OKCREAL-Connect/1.0)' },
+      signal: AbortSignal.timeout(8000)
+    });
+
+    const success = formResp.ok;
+    console.log(`[Tour Booking] ${firstName} ${lastName} → ${listing.title || listing.address} (${listing.rent}) — ${success ? 'submitted' : 'failed ' + formResp.status}`);
+
+    // Log activity in CRM if person exists
+    const personR = await pool.query(
+      `SELECT id FROM people WHERE phone LIKE $1 OR LOWER(email) = $2 LIMIT 1`,
+      ['%' + phone.replace(/\D/g,'').slice(-10), (email||'').toLowerCase()]
+    ).catch(() => ({ rows: [] }));
+
+    if (personR.rows[0]) {
+      await pool.query(
+        `INSERT INTO activities (person_id, agent_id, type, body, direction) VALUES ($1, $2, 'note', $3, 'outbound')`,
+        [personR.rows[0].id, req.agent?.id || null,
+         `🏠 Tour booked via Jireh: ${listing.title || listing.address} (${listing.rent}). AppFolio will send confirmation text with access code 1hr before showing.`]
+      ).catch(() => {});
+    }
+
+    res.json({ ok: success, listing: { title: listing.title, address: listing.address, rent: listing.rent }, formUrl });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Build listings context string for Jireh call prompts
+function getListingsContextForCall() {
+  const listings = _listingsCache.listings;
+  if (!listings.length) return '\nAVAILABLE LISTINGS: None currently loaded. Tell caller to check teamokcreal.appfolio.com/listings\n';
+  let ctx = `\nAVAILABLE LISTINGS (${listings.length} properties — LIVE from AppFolio):\n`;
+  for (const l of listings) {
+    ctx += `• ${l.title || 'Listing'} — ${l.address || 'Address TBD'} | ${l.rent}/mo | ${l.bedBath} | ${l.sqft ? l.sqft + ' sqft | ' : ''}Available: ${l.available} | Min income: $${l.minIncome}/mo | Pets: ${l.petPolicy || 'Ask'} | UID: ${l.uid}\n`;
+  }
+  ctx += `\nINCOME REQUIREMENT: ALL properties require minimum ${INCOME_MULTIPLIER}x monthly rent as gross monthly income.\n`;
+  return ctx;
+}
+
+// Build person context for Jireh call (rent roll, work orders, showings)
+async function getPersonContextForCall(personId) {
+  if (!personId) return '';
+  let ctx = '';
+  try {
+    // Rent roll
+    const rrR = await pool.query(
+      `SELECT property, unit, status, rent, past_due, lease_from, lease_to FROM rent_roll rr
+       JOIN people p ON (rr.tenant_name ILIKE '%' || p.last_name || '%' AND rr.tenant_name ILIKE '%' || p.first_name || '%')
+       WHERE p.id = $1 LIMIT 3`, [personId]
+    ).catch(() => ({ rows: [] }));
+    if (rrR.rows.length) {
+      ctx += '\nTENANT INFO:\n';
+      for (const r of rrR.rows) {
+        ctx += `• Unit: ${r.unit} at ${(r.property||'').split(' - ')[0]} | Status: ${r.status} | Rent: $${r.rent} | Past Due: $${r.past_due||0} | Lease: ${r.lease_from ? new Date(r.lease_from).toLocaleDateString() : '?'} - ${r.lease_to ? new Date(r.lease_to).toLocaleDateString() : 'MTM'}\n`;
+      }
+    }
+    // Open work orders
+    const woR = await pool.query(
+      `SELECT wo_number, job_description, status, priority FROM work_orders
+       WHERE person_id = $1 AND status NOT IN ('Completed','Completed No Need To Bill','Canceled','Cancelled')
+       ORDER BY created_at DESC LIMIT 5`, [personId]
+    ).catch(() => ({ rows: [] }));
+    if (woR.rows.length) {
+      ctx += `\nOPEN WORK ORDERS (${woR.rows.length}):\n`;
+      for (const w of woR.rows) { ctx += `• WO#${w.wo_number||'?'}: ${(w.job_description||'').substring(0,80)} [${w.status}] ${w.priority||''}\n`; }
+    }
+  } catch(e) {}
+  return ctx;
+}
+
+// =============================================================================
 // WEATHER CONTROL CENTER — NWS Alerts + Property Impact
 // =============================================================================
 
@@ -7180,7 +7350,7 @@ async function speakToCall(callId, text) {
     const markLabel = `ara-done-${Date.now()}`;
     session.ws.send(JSON.stringify({ event: 'mark', streamSid: session.streamSid, mark: { name: markLabel } }));
 
-    const clean = text.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
+    const clean = text.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]|\[BOOK_TOUR:[^\]]+\]/g, '').trim();
     session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
     broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'ara_spoke', text: clean });
     broadcastToAll({ type: 'jareih_active_calls', calls: getActiveCallsPayload() });
@@ -7206,10 +7376,37 @@ ${guardrailBlock}
 
 CALLER: ${ctx.name !== 'Unknown caller' ? ctx.name + ' (stage: ' + (ctx.stage||'Unknown') + ')' : 'Unknown caller — not in our system'}
 ${ctx.notes ? 'Notes: ' + ctx.notes : ''}
+${ctx.personContext || ''}
 
+RECENT ACTIVITY WITH THIS PERSON:
+${actSummary || 'None on file'}
+${ctx.listingsContext || ''}
 YOUR ROLE: Answer this inbound call, understand what the caller needs, and either help them directly or take a detailed message.
 
-YOU CAN HELP WITH: leasing questions, scheduling tours, maintenance intake, payment questions, general O.K.C. Real info.
+YOU CAN HELP WITH: leasing questions, scheduling tours (with income qualification), maintenance intake, payment questions, general O.K.C. Real info.
+
+=== TOUR BOOKING PROTOCOL ===
+When a caller wants to schedule a tour or asks about available properties:
+
+1. MATCH THEIR NEEDS: Ask what they're looking for (beds, budget, area, pets). Use the AVAILABLE LISTINGS above to suggest matching properties. Share rent, bed/bath, address, pet policy, and a brief description.
+
+2. INCOME QUALIFICATION (REQUIRED BEFORE BOOKING): Before booking ANY tour, you MUST qualify income. Say something natural like:
+   "Great! So just so you know, this property does require that you make at least two and a half times the monthly rent. For this one at [rent] a month, that'd be about [rent × 2.5] per month. Do you make at least that much?"
+   - If YES → proceed to step 3
+   - If NO → kindly explain they wouldn't qualify for that one, but suggest a lower-priced option if available. Never be rude about it.
+   - If UNSURE → encourage them to check and call back, or suggest a property in their range
+
+3. COLLECT CONTACT INFO: Confirm or collect: first name, last name, email address, and phone number.
+
+4. BOOK THE TOUR: When you have all info and income is qualified, say:
+   [BOOK_TOUR:uid={listing UID}|fn={firstName}|ln={lastName}|em={email}|ph={phone}]
+   The system will submit this to AppFolio automatically.
+
+5. CONFIRM TO CALLER: After the booking action, tell them:
+   "You're all set! You'll receive a text message from AppFolio confirming your tour. About one hour before your showing, you'll get another text with an access code to view the property. If you have any issues at all, just give us a call back at this number and we'll get you taken care of."
+
+IMPORTANT: NEVER skip income qualification. Every prospect must confirm they make at least 2.5 times the rent before a tour is booked. This is company policy.
+=== END TOUR PROTOCOL ===
 
 HOW TO TALK:
 - Short, natural — 1-2 sentences. Let the conversation breathe.
@@ -7262,14 +7459,51 @@ If asked whether you are AI: "Yeah, I'm Jireh, an A.I. assistant with O.K.C. Rea
   }
 
   session.grokHistory.push({ role: 'user', content: contactSpeech || '[CALL_CONNECTED]' });
-  const r = await grok.chat.completions.create({ model: 'grok-3', max_tokens: 120, messages: session.grokHistory });
+  const maxTok = session.direction === 'inbound' ? 200 : 120; // Inbound needs more for tour booking actions
+  const r = await grok.chat.completions.create({ model: 'grok-3', max_tokens: maxTok, messages: session.grokHistory });
   const raw = r.choices[0].message.content.trim();
   session.grokHistory.push({ role: 'assistant', content: raw });
 
   if (raw.includes('[END_CALL]'))      session.shouldEnd    = true;
   if (raw.includes('[GOAL_ACHIEVED]')) session.goalAchieved = true;
 
-  const clean = raw.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]/g, '').trim();
+  // Handle tour booking action mid-call
+  const tourMatch = raw.match(/\[BOOK_TOUR:uid=([a-f0-9-]+)\|fn=([^|]+)\|ln=([^|]+)\|em=([^|]+)\|ph=([^\]]+)\]/);
+  if (tourMatch) {
+    const [, uid, fn, ln, em, ph] = tourMatch;
+    console.log(`[Jireh Tour] Booking: ${fn} ${ln} → UID ${uid}`);
+    // Submit to AppFolio in background — don't block the call
+    (async () => {
+      try {
+        const listings = await scrapeAppFolioListings();
+        const listing = listings.find(l => l.uid === uid);
+        const formUrl = `https://teamokcreal.appfolio.com/listings/showings/new?listable_uid=${uid}&source=JirehAI&firstName=${encodeURIComponent(fn.trim())}&lastName=${encodeURIComponent(ln.trim())}&email=${encodeURIComponent(em.trim())}&phone=${encodeURIComponent(ph.trim().replace(/\D/g,''))}`;
+        const resp = await fetch(formUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OKCREAL-Connect/1.0)' },
+          signal: AbortSignal.timeout(8000)
+        });
+        const propName = listing ? (listing.title || listing.address) : uid;
+        const rent = listing ? listing.rent : '?';
+        console.log(`[Jireh Tour] AppFolio submit ${resp.ok ? 'OK' : 'FAIL ' + resp.status}: ${fn} ${ln} → ${propName}`);
+
+        // Log activity in CRM
+        const personR = await pool.query(
+          `SELECT id FROM people WHERE regexp_replace(phone,'\\D','','g') LIKE $1 OR LOWER(email)=$2 LIMIT 1`,
+          ['%' + ph.replace(/\D/g,'').slice(-10), em.toLowerCase()]
+        ).catch(() => ({ rows: [] }));
+        const personId = personR.rows[0]?.id || session.personId;
+        if (personId) {
+          await pool.query(
+            `INSERT INTO activities (person_id, type, body, direction) VALUES ($1, 'note', $2, 'outbound')`,
+            [personId, `🏠 Tour booked by Jireh (live call): ${propName} (${rent}/mo). Prospect: ${fn} ${ln}, ${em}, ${ph}. Income qualified ✓. AppFolio will text confirmation + access code 1hr before showing.`]
+          ).catch(() => {});
+        }
+        broadcastToAll({ type: 'toast', message: `🏠 Jireh booked a tour: ${fn} ${ln} → ${propName}`, toastType: 'success' });
+      } catch(e) { console.error('[Jireh Tour] Error:', e.message); }
+    })();
+  }
+
+  const clean = raw.replace(/\[END_CALL\]|\[GOAL_ACHIEVED\]|\[BOOK_TOUR:[^\]]+\]/g, '').trim();
   session.transcript.push({ role: 'ara', ts: Date.now(), text: clean });
   broadcastToAll({ type: 'jareih_call_update', callId, personId: session.personId, event: 'ara_spoke', text: clean });
   return clean;
@@ -8073,6 +8307,10 @@ checkDB().then(() => initDB()).then(() => {
   // Weather alert poller — every 5 min
   setInterval(refreshWeatherCache, 5 * 60 * 1000);
   setTimeout(refreshWeatherCache, 5000); // first check 5s after boot
+
+  // AppFolio listings scraper — refresh every 5 minutes, pre-cache on boot
+  setInterval(scrapeAppFolioListings, 5 * 60 * 1000);
+  setTimeout(scrapeAppFolioListings, 3000); // pre-cache 3s after boot
 
   // Attach Jareih call WebSocket server
   setupJareihCallWS(httpServer);
