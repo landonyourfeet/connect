@@ -12371,7 +12371,6 @@ async function wxOpenEmergencyOps() {
   const statusText = damagingAlerts.length ? 'ACTIVE EMERGENCY' : severeAlerts.length ? 'SEVERE WEATHER' : 'MONITORING';
   const statusColor = damagingAlerts.length ? '#e8003a' : severeAlerts.length ? '#ff8c00' : '#00e87a';
 
-  // Get geocoded properties — use cached map data, or fetch fresh
   let props = _wxMapProps.filter(p => p.lat && p.lon);
   if (!props.length) {
     try {
@@ -12380,6 +12379,21 @@ async function wxOpenEmergencyOps() {
     } catch(e) { props = []; }
   }
 
+  const tickerItems = alerts.map(a => {
+    let txt = '\u26A0 ' + (a.event||'').toUpperCase();
+    if (a.headline) txt += ' \u2014 ' + a.headline;
+    if (a.instruction) txt += ' \u25B6 ' + a.instruction;
+    if (a.areaDesc) txt += ' [' + a.areaDesc.substring(0,80) + ']';
+    return txt;
+  });
+  const tickerText = tickerItems.length ? tickerItems.join('     \u25CF     ') : 'NO ACTIVE ALERTS \u2014 ALL CLEAR';
+  const tickerRepeat = tickerText + '     \u25CF     ' + tickerText + '     \u25CF     ' + tickerText;
+
+  const allProps = d.properties || props;
+  const totalUnits = allProps.reduce((s,p) => s + (p.units||0), 0);
+  const totalTenants = allProps.reduce((s,p) => s + (p.tenants||0), 0);
+  const tickerSpeed = Math.max(30, tickerText.length * 0.15);
+
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><title>OKCREAL Emergency Operations</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
@@ -12387,55 +12401,102 @@ async function wxOpenEmergencyOps() {
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0f;color:#eee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace;overflow:hidden}
-.top-bar{display:flex;align-items:center;padding:10px 20px;background:linear-gradient(90deg,#0a0a0f,#111);border-bottom:1px solid #222;gap:16px}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 4px currentColor}50%{opacity:0.5;box-shadow:0 0 16px currentColor}}
+@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.top-bar{display:flex;align-items:center;padding:8px 20px;background:linear-gradient(90deg,#0a0a0f,#111);border-bottom:1px solid #222;gap:16px}
 .logo{font-size:20px;font-weight:900;letter-spacing:0.12em}.logo span{color:#e8003a}
 .title{font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#888;flex:1}
-.status{display:flex;align-items:center;gap:8px}
 .status-dot{width:12px;height:12px;border-radius:50%;animation:pulse 2s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 4px currentColor}50%{opacity:0.5;box-shadow:0 0 16px currentColor}}
-.cond-strip{display:flex;gap:24px;padding:8px 20px;background:#111;border-bottom:1px solid #1a1a1a;font-size:12px}
-.cond-item{display:flex;flex-direction:column;gap:2px}
-.cond-label{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#666}
-.cond-val{font-size:18px;font-weight:700}
-#eops-map{flex:1;width:100%}
-.alerts-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,15,0.95);border-top:1px solid #222;padding:8px 20px;display:flex;gap:12px;overflow-x:auto;max-height:80px}
-.alert-chip{background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:6px;padding:6px 12px;white-space:nowrap;font-size:11px;flex-shrink:0}
-.alert-chip.severe{border-color:#ff8c00;color:#ff8c00}
-.alert-chip.damaging{border-color:#e8003a;color:#e8003a;animation:pulse 2s ease-in-out infinite}
+.cond-strip{display:flex;gap:20px;padding:6px 20px;background:#0d0d12;border-bottom:1px solid #1a1a1a;font-size:12px;align-items:center}
+.cond-item{display:flex;flex-direction:column;gap:1px}
+.cond-label{font-size:7px;letter-spacing:2px;text-transform:uppercase;color:#555}
+.cond-val{font-size:16px;font-weight:700}
+.ticker-wrap{background:${damagingAlerts.length?'rgba(232,0,58,0.12)':severeAlerts.length?'rgba(255,140,0,0.08)':'#111'};border-bottom:1px solid ${damagingAlerts.length?'rgba(232,0,58,0.3)':'#1a1a1a'};overflow:hidden;white-space:nowrap;padding:6px 0}
+.ticker-track{display:inline-block;animation:ticker ${tickerSpeed}s linear infinite}
+.ticker-text{font-size:12px;font-weight:600;letter-spacing:0.03em;color:${damagingAlerts.length?'#e8003a':severeAlerts.length?'#ff8c00':'#555'}}
+.map-area{flex:1;position:relative}
+#eops-map{width:100%;height:100%}
+.bottom-panel{background:#0d0d12;border-top:2px solid ${statusColor};display:flex;max-height:140px;overflow:hidden}
+.dmg-section{flex:1;padding:8px 16px;border-right:1px solid #1a1a1a;overflow-y:auto}
+.dmg-title{font-size:8px;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px}
+.dmg-text{font-size:11px;line-height:1.5;color:#bbb}
+.dmg-stat{font-size:18px;font-weight:800}
 </style></head><body style="display:flex;flex-direction:column;height:100vh">
 <div class="top-bar">
   <div class="logo">OKC<span>REAL</span></div>
   <div class="title">Emergency Operations Center</div>
-  <div style="font-size:10px;letter-spacing:2px;color:#666">${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} · ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
-  <div class="status">
+  <div id="eops-clock" style="font-size:10px;letter-spacing:2px;color:#555"></div>
+  <div style="display:flex;align-items:center;gap:8px">
     <div class="status-dot" style="background:${statusColor};color:${statusColor}"></div>
     <span style="font-size:11px;font-weight:700;letter-spacing:3px;color:${statusColor}">${statusText}</span>
   </div>
 </div>
 <div class="cond-strip">
-  <div class="cond-item"><span class="cond-label">Temp</span><span class="cond-val" style="color:${cond.temperature!=null&&cond.temperature<=32?'#00c8ff':'#eee'}">${cond.temperature!=null?cond.temperature+'°F':'—'}</span></div>
-  <div class="cond-item"><span class="cond-label">Wind</span><span class="cond-val">${cond.windSpeed!=null?cond.windSpeed+' mph':'—'}${cond.windGust?' ('+cond.windGust+')':''}</span></div>
-  <div class="cond-item"><span class="cond-label">Conditions</span><span class="cond-val">${cond.description||'—'}</span></div>
-  <div class="cond-item" style="margin-left:auto"><span class="cond-label">Properties</span><span class="cond-val">${props.length}</span></div>
-  <div class="cond-item"><span class="cond-label">Alerts</span><span class="cond-val" style="color:${statusColor}">${alerts.length}</span></div>
+  <div class="cond-item"><span class="cond-label">Temperature</span><span class="cond-val" style="color:${cond.temperature!=null&&cond.temperature<=32?'#00c8ff':'#eee'}">${cond.temperature!=null?cond.temperature+'\u00B0F':'\u2014'}</span></div>
+  <div class="cond-item"><span class="cond-label">Wind Speed</span><span class="cond-val" style="color:${(cond.windSpeed||0)>=40?'#e8003a':(cond.windSpeed||0)>=25?'#ff8c00':'#eee'}">${cond.windSpeed!=null?cond.windSpeed+' mph':'\u2014'}</span></div>
+  <div class="cond-item"><span class="cond-label">Wind Gusts</span><span class="cond-val" style="color:${(cond.windGust||0)>=50?'#e8003a':(cond.windGust||0)>=35?'#ff8c00':'#eee'}">${cond.windGust!=null?cond.windGust+' mph':'None'}</span></div>
+  <div class="cond-item"><span class="cond-label">Conditions</span><span class="cond-val">${esc(cond.description||'\u2014')}</span></div>
+  <div class="cond-item"><span class="cond-label">Humidity</span><span class="cond-val">${cond.humidity!=null?cond.humidity+'%':'\u2014'}</span></div>
+  <div style="flex:1"></div>
+  <div class="cond-item"><span class="cond-label">Properties</span><span class="dmg-stat" style="color:#00c8ff">${allProps.length}</span></div>
+  <div class="cond-item"><span class="cond-label">Units</span><span class="dmg-stat" style="color:#eee">${totalUnits}</span></div>
+  <div class="cond-item"><span class="cond-label">Tenants</span><span class="dmg-stat" style="color:#eee">${totalTenants}</span></div>
+  <div class="cond-item"><span class="cond-label">Active Alerts</span><span class="dmg-stat" style="color:${statusColor}">${alerts.length}</span></div>
 </div>
-<div id="eops-map"></div>
-${alerts.length ? `<div class="alerts-bar">${alerts.map(a => `<div class="alert-chip ${a.isDamaging?'damaging':a.isSevere?'severe':''}">${a.event}${a.expires?' · Until '+new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''}</div>`).join('')}</div>` : ''}
+<div class="ticker-wrap"><div class="ticker-track"><span class="ticker-text">${esc(tickerRepeat)}</span></div></div>
+<div class="map-area"><div id="eops-map"></div></div>
+<div class="bottom-panel">
+  <div class="dmg-section" style="max-width:200px">
+    <div class="dmg-title" style="color:${statusColor}">Threat Level</div>
+    <div class="dmg-stat" style="color:${statusColor};font-size:24px">${damagingAlerts.length?'HIGH':severeAlerts.length?'ELEVATED':'LOW'}</div>
+    <div style="font-size:10px;color:#666;margin-top:4px">${alerts.length} active alert${alerts.length!==1?'s':''}</div>
+  </div>
+  <div class="dmg-section" style="max-width:280px">
+    <div class="dmg-title" style="color:#ff8c00">Maintenance Priority</div>
+    <div class="dmg-text">${damagingAlerts.length
+      ? '\uD83D\uDD34 <b style="color:#e8003a">STAND DOWN</b> \u2014 Do NOT deploy crews during active warnings. Shelter in place. Wait for all-clear.'
+      : severeAlerts.length
+        ? '\uD83D\uDFE1 <b style="color:#ff8c00">PREPARE</b> \u2014 Secure loose items at properties. Stage vehicles. Be ready to deploy when warnings expire.'
+        : '\uD83D\uDFE2 <b style="color:#00e87a">NORMAL OPS</b> \u2014 No severe conditions. Resume standard maintenance operations.'
+    }</div>
+  </div>
+  <div class="dmg-section" style="flex:1">
+    <div class="dmg-title" style="color:#00c8ff">Post-Event Checklist (when clear)</div>
+    <div class="dmg-text" style="font-size:10px">
+      1. Drive ALL affected properties \u2014 photo document damage (roofs, siding, fences, windows, trees)<br>
+      2. Check for downed power lines \u2014 call OG&E if found, DO NOT approach<br>
+      3. Check vacant units for water intrusion, broken windows, roof leaks<br>
+      4. Report all damage to office within 2 hours for insurance filing<br>
+      5. Priority repairs: broken windows \u2192 roof leaks \u2192 water damage \u2192 fence/tree
+    </div>
+  </div>
+  <div class="dmg-section" style="max-width:200px">
+    <div class="dmg-title" style="color:#e8003a">Active Events</div>
+    <div style="overflow-y:auto;max-height:100px">
+      ${alerts.length ? alerts.map(a => {
+        const ac = a.isDamaging?'#e8003a':a.isSevere?'#ff8c00':'#555';
+        return '<div style="font-size:10px;margin-bottom:4px;padding:3px 6px;border-left:2px solid '+ac+';color:'+ac+'">'+esc(a.event)+(a.expires?'<br><span style=\\'color:#555;font-size:9px\\'>Until '+new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'</span>':'')+'</div>';
+      }).join('') : '<div style="font-size:10px;color:#555">None</div>'}
+    </div>
+  </div>
+</div>
 <script>
-const map = L.map('eops-map',{zoomControl:true}).setView([${center.lat||35.4676},${center.lon||-97.5164}],10);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18,attribution:'CARTO'}).addTo(map);
-const colors={danger:'#e8003a',warning:'#ff8c00',clear:'#00e87a'};
-const markers=[];
-const props=${JSON.stringify(props.filter(p=>p.lat&&p.lon).map(p=>({n:p.name,la:p.lat,lo:p.lon,s:p.status,u:p.units,t:p.tenants})))};
-props.forEach(p=>{
-  const c=colors[p.s]||colors.clear;
-  const icon=L.divIcon({className:'',html:'<div style="width:16px;height:16px;border-radius:50%;background:'+c+';border:2px solid #fff;box-shadow:0 0 10px '+c+';'+(p.s==='danger'?'animation:pulse 1.5s ease-in-out infinite':'')+'">'+'</div>',iconSize:[16,16],iconAnchor:[8,8]});
-  const m=L.marker([p.la,p.lo],{icon}).addTo(map);
-  m.bindPopup('<div style="font-family:sans-serif"><strong>'+p.n+'</strong><br>'+p.u+' units · '+p.t+' tenants<br><span style="color:'+c+';font-weight:700">'+p.s.toUpperCase()+'</span></div>');
+var map=L.map('eops-map',{zoomControl:true}).setView([${center.lat||35.4676},${center.lon||-97.5164}],10);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18}).addTo(map);
+var colors={danger:'#e8003a',warning:'#ff8c00',clear:'#00e87a'};
+var markers=[];
+var eprops=${JSON.stringify(props.map(p=>({n:p.name,la:p.lat,lo:p.lon,s:p.status,u:p.units,t:p.tenants})))};
+eprops.forEach(function(p){
+  var c=colors[p.s]||colors.clear;
+  var icon=L.divIcon({className:'',html:'<div style="width:16px;height:16px;border-radius:50%;background:'+c+';border:2px solid #fff;box-shadow:0 0 10px '+c+';'+(p.s==='danger'?'animation:pulse 1.5s ease-in-out infinite':'')+'">'+'<\/div>',iconSize:[16,16],iconAnchor:[8,8]});
+  var m=L.marker([p.la,p.lo],{icon:icon}).addTo(map);
+  m.bindPopup('<div style="font-family:sans-serif"><strong>'+p.n+'<\/strong><br>'+p.u+' units \u00B7 '+p.t+' tenants<br><span style="color:'+c+';font-weight:700">'+p.s.toUpperCase()+'<\/span><\/div>');
   markers.push(m);
 });
 if(markers.length)map.fitBounds(L.featureGroup(markers).getBounds().pad(0.12));
-setTimeout(()=>map.invalidateSize(),500);
+setTimeout(function(){map.invalidateSize()},500);
+function updateClock(){var el=document.getElementById('eops-clock');if(el)el.textContent=new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})+' \u00B7 '+new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit'});}
+updateClock();setInterval(updateClock,1000);
 <\/script></body></html>`);
   win.document.close();
 }
