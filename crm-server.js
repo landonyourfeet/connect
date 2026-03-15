@@ -7205,42 +7205,35 @@ async function araTTSBrowser(text) {
 
 // Decode mulaw to 16-bit PCM and wrap in a standard WAV that every browser supports
 function wrapMulawWav(rawMulaw, sampleRate) {
-  // mulaw → PCM16 lookup (ITU-T G.711)
-  const BIAS = 0x84, CLIP = 32635;
+  // ITU-T G.711 mulaw → linear PCM16 decoder (reference implementation)
   function mulawDecode(byte) {
     byte = ~byte & 0xFF;
     const sign = byte & 0x80;
     const exponent = (byte >> 4) & 0x07;
-    let mantissa = byte & 0x0F;
-    let sample = (mantissa << 4) + BIAS;
-    sample <<= exponent;
-    sample -= BIAS;
-    sample = sign ? -sample : sample;
-    // Clamp to 16-bit signed range
-    return Math.max(-32768, Math.min(32767, sample));
+    const mantissa = byte & 0x0F;
+    let sample = ((mantissa << 3) + 0x84) << exponent; // <<3 NOT <<4
+    return sign ? (0x84 - sample) : (sample - 0x84);   // max ±32124, fits int16
   }
 
   const numSamples = rawMulaw.length;
-  const pcmData = Buffer.alloc(numSamples * 2); // 16-bit = 2 bytes per sample
+  const pcmData = Buffer.alloc(numSamples * 2);
   for (let i = 0; i < numSamples; i++) {
-    const sample = mulawDecode(rawMulaw[i]);
-    pcmData.writeInt16LE(sample, i * 2);
+    pcmData.writeInt16LE(mulawDecode(rawMulaw[i]), i * 2);
   }
 
-  // Standard PCM WAV header (format code 1 — universally supported)
   const header = Buffer.alloc(44);
   const dataLen = pcmData.length;
   header.write('RIFF', 0);
   header.writeUInt32LE(36 + dataLen, 4);
   header.write('WAVE', 8);
   header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16);          // fmt chunk size
-  header.writeUInt16LE(1, 20);           // format = PCM (NOT mulaw)
-  header.writeUInt16LE(1, 22);           // channels = 1
-  header.writeUInt32LE(sampleRate, 24);  // sample rate
-  header.writeUInt32LE(sampleRate * 2, 28); // byte rate (16-bit mono)
-  header.writeUInt16LE(2, 32);           // block align (2 bytes per sample)
-  header.writeUInt16LE(16, 34);          // bits per sample
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);           // PCM format
+  header.writeUInt16LE(1, 22);           // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
   header.write('data', 36);
   header.writeUInt32LE(dataLen, 40);
   return Buffer.concat([header, pcmData]);
