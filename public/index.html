@@ -9845,13 +9845,10 @@ async function shOpenPropertyPerf(property) {
       html += '</div>';
     }
 
-    // AI Summary + Market Analysis — loads in background, doesn't block the view
+    // AI Summary + Market Analysis — auto-loads cached result or shows generate button
     html += `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px" id="sh-perf-ai">
-      <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Feedback Summary + Market Comparison (within 0.25mi)</div>
-      <div style="text-align:center;padding:16px">
-        <button onclick="shGenPerfRec(_shPerfProperty)" style="background:#00c8ff;color:#000;border:none;border-radius:6px;padding:8px 20px;${mc}font-size:10px;font-weight:700;cursor:pointer">Generate AI Analysis</button>
-        <div style="${mc}font-size:9px;color:var(--text-3);margin-top:6px">Uses Grok AI with live web search — may take 10-15 seconds</div>
-      </div>
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis</div>
+      <div style="text-align:center;padding:12px;color:var(--text-3)"><div class="spinner" style="margin:0 auto 6px"></div>Checking for cached analysis…</div>
     </div>`;
 
     // All tour feedback table
@@ -9888,52 +9885,153 @@ async function shOpenPropertyPerf(property) {
 
     html += `<div style="${mc}font-size:8px;color:var(--text-3);text-align:center;letter-spacing:2px;text-transform:uppercase;padding:8px 0">OKCREAL CONNECT · PROPERTY PERFORMANCE · ${esc(propShort.toUpperCase())}</div>`;
     content.innerHTML = html;
+    // Auto-check for cached AI report (non-blocking)
+    shGenPerfRec(property);
   } catch(e) { content.innerHTML = `<div style="padding:20px;color:var(--red)">${e.message}</div>`; }
 }
 
-async function shGenPerfRec(property) {
+async function shGenPerfRec(property, forceRefresh) {
   const el = document.getElementById('sh-perf-ai');
   if (!el) return;
   const mc = 'font-family:var(--font-mono);';
-  el.innerHTML = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis</div>
-    <div style="color:var(--text-3);padding:20px;text-align:center">
-      <div class="spinner" style="margin:0 auto 10px"></div>
-      Analyzing tour feedback, days on market, and searching nearby comps…<br>
-      <span style="${mc}font-size:9px">This uses Grok AI with live web search — typically 10-15 seconds</span>
-    </div>`;
+  const url = `/api/showings/property-ai-rec?property=${encodeURIComponent(property)}${forceRefresh ? '&refresh=1' : ''}`;
+
   try {
-    const r = await api(`/api/showings/property-ai-rec?property=${encodeURIComponent(property)}`);
-    let html = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Market Position + Feedback + Competitive Comps</div>`;
+    const r = await api(url);
 
-    // Days on market badge
-    if (r.daysOnMarket != null) {
-      const dom = r.daysOnMarket;
-      const domColor = dom <= 14 ? 'var(--green)' : dom <= 30 ? 'var(--amber)' : 'var(--red)';
-      const domLabel = dom <= 14 ? 'GOLD' : dom <= 30 ? 'CAUTION' : 'DANGER';
-      const lostRent = r.marketRent ? Math.round((dom / 30) * r.marketRent) : null;
-      html += `<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;padding:10px 14px;background:var(--bg-3);border-radius:6px;border-left:3px solid ${domColor}">
-        <div style="text-align:center"><div style="${mc}font-size:22px;font-weight:800;color:${domColor}">${dom}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">DAYS ON<br>MARKET</div></div>
-        <div style="flex:1">
-          <span style="${mc}font-size:10px;font-weight:700;color:${domColor};letter-spacing:2px">${domLabel}</span>
-          <span style="${mc}font-size:9px;color:var(--text-3);margin-left:8px">${dom <= 14 ? 'Performing well — under 14 day benchmark' : dom <= 30 ? 'Needs attention — approaching 30 day threshold' : 'Critical — every additional day is lost revenue'}</span>
-        </div>
-        ${lostRent ? `<div style="text-align:center"><div style="${mc}font-size:16px;font-weight:700;color:var(--red)">~$${lostRent.toLocaleString()}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">EST. LOST<br>REVENUE</div></div>` : ''}
-        ${r.marketRent ? `<div style="text-align:center"><div style="${mc}font-size:16px;font-weight:700;color:var(--text)">\$${r.marketRent}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">MARKET<br>RENT</div></div>` : ''}
+    if (r.status === 'done' && r.recommendation) {
+      shRenderAIReport(el, r);
+      return;
+    }
+
+    if (r.status === 'no_feedback') {
+      el.innerHTML = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis</div>
+        <div style="color:var(--text-3);padding:20px;text-align:center">No tour feedback yet — feedback is needed to generate analysis.</div>`;
+      return;
+    }
+
+    if (r.status === 'generating') {
+      shShowAIProgress(el, r.startedAt);
+      return;
+    }
+
+    if (r.status === 'failed') {
+      el.innerHTML = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis</div>
+        <div style="color:var(--red);padding:16px;text-align:center">${r.error || 'Analysis failed'}<br>
+        <button onclick="shGenPerfRec(_shPerfProperty,true)" style="margin-top:8px;background:var(--red);color:#fff;border:none;border-radius:4px;padding:6px 14px;${mc}font-size:9px;cursor:pointer">Retry</button></div>`;
+      return;
+    }
+
+    // No cached report — show generate button
+    el.innerHTML = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Feedback Summary + Market Comparison (within 0.5mi)</div>
+      <div style="text-align:center;padding:16px">
+        <button onclick="shGenPerfRec(_shPerfProperty,true)" style="background:#00c8ff;color:#000;border:none;border-radius:6px;padding:8px 20px;${mc}font-size:10px;font-weight:700;cursor:pointer">Generate AI Analysis</button>
+        <div style="${mc}font-size:9px;color:var(--text-3);margin-top:6px">Uses Grok AI with live web search — typically 30-60 seconds</div>
       </div>`;
-    }
-
-    if (r.recommendation) {
-      const paragraphs = r.recommendation.split('\n\n').filter(Boolean);
-      html += paragraphs.map(p => `<p style="font-size:12px;color:var(--text-2);line-height:1.7;margin:0 0 14px">${esc(p)}</p>`).join('');
-    } else {
-      html += `<div style="color:var(--text-3);padding:12px;text-align:center">No recommendation generated — this property may not have enough feedback yet.</div>`;
-    }
-
-    html += `<div style="text-align:right;margin-top:8px"><button onclick="shGenPerfRec(_shPerfProperty)" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 12px;${mc}font-size:8px;letter-spacing:1px;cursor:pointer;border-radius:4px">↺ REFRESH ANALYSIS</button></div>`;
-    el.innerHTML = html;
   } catch(e) {
-    el.innerHTML += `<div style="color:var(--red);padding:12px;text-align:center">${e.message}<br><button onclick="shGenPerfRec(_shPerfProperty)" style="margin-top:8px;background:var(--red);color:#fff;border:none;border-radius:4px;padding:6px 14px;${mc}font-size:9px;cursor:pointer">Retry</button></div>`;
+    el.innerHTML += `<div style="color:var(--red);padding:12px;text-align:center">${e.message}</div>`;
   }
+}
+
+function shShowAIProgress(el, startedAt) {
+  const mc = 'font-family:var(--font-mono);';
+  const started = new Date(startedAt).getTime();
+  const ESTIMATED_MS = 45000; // 45 second estimate
+
+  function update() {
+    const elapsed = Date.now() - started;
+    const pct = Math.min(95, Math.round((elapsed / ESTIMATED_MS) * 100));
+    const secs = Math.round(elapsed / 1000);
+    const remaining = Math.max(0, Math.round((ESTIMATED_MS - elapsed) / 1000));
+    const phase = secs < 5 ? 'Gathering tour feedback data…'
+      : secs < 15 ? 'Analyzing feedback patterns and days on market…'
+      : secs < 25 ? 'Searching Zillow, Apartments.com for nearby comps…'
+      : secs < 40 ? 'Comparing market position and pricing…'
+      : 'Finalizing recommendations…';
+
+    el.innerHTML = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Generating</div>
+      <div style="padding:16px">
+        <div style="background:var(--bg-3);border-radius:4px;height:8px;overflow:hidden;margin-bottom:10px">
+          <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#00c8ff,#6366f1);border-radius:4px;transition:width 1s ease"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="${mc}font-size:10px;color:var(--text-2)">${phase}</span>
+          <span style="${mc}font-size:10px;color:var(--text-3)">${pct}%</span>
+        </div>
+        <div style="${mc}font-size:9px;color:var(--text-3);text-align:center">
+          ${remaining > 0 ? `~${remaining}s remaining` : 'Almost done…'} · ${secs}s elapsed · Grok AI + live web search
+        </div>
+        <div style="${mc}font-size:8px;color:var(--text-3);text-align:center;margin-top:6px;opacity:0.6">
+          You can navigate away — results will be saved and waiting when you come back.
+        </div>
+      </div>`;
+  }
+
+  update();
+  const interval = setInterval(update, 1000);
+
+  // Poll for completion every 5 seconds
+  const pollId = setInterval(async () => {
+    try {
+      const r = await api(`/api/showings/property-ai-rec?property=${encodeURIComponent(_shPerfProperty)}`);
+      if (r.status === 'done' && r.recommendation) {
+        clearInterval(interval);
+        clearInterval(pollId);
+        shRenderAIReport(el, r);
+      } else if (r.status === 'failed') {
+        clearInterval(interval);
+        clearInterval(pollId);
+        el.innerHTML += `<div style="color:var(--red);padding:12px;text-align:center">${r.error || 'Failed'}<br>
+          <button onclick="shGenPerfRec(_shPerfProperty,true)" style="margin-top:8px;background:var(--red);color:#fff;border:none;border-radius:4px;padding:6px 14px;font-family:var(--font-mono);font-size:9px;cursor:pointer">Retry</button></div>`;
+      }
+    } catch(e) {}
+  }, 5000);
+
+  // Safety: stop polling after 2 minutes
+  setTimeout(() => { clearInterval(interval); clearInterval(pollId); }, 120000);
+}
+
+function shRenderAIReport(el, r) {
+  const mc = 'font-family:var(--font-mono);';
+  let html = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Market Position + Feedback + Competitive Comps</div>`;
+
+  // Days on market badge
+  if (r.daysOnMarket != null) {
+    const dom = r.daysOnMarket;
+    const domColor = dom <= 14 ? 'var(--green)' : dom <= 30 ? 'var(--amber)' : 'var(--red)';
+    const domLabel = r.domStatus || (dom <= 14 ? 'GOLD' : dom <= 30 ? 'CAUTION' : 'DANGER');
+    const lostRent = r.marketRent ? Math.round((dom / 30) * r.marketRent) : null;
+    html += `<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;padding:10px 14px;background:var(--bg-3);border-radius:6px;border-left:3px solid ${domColor}">
+      <div style="text-align:center"><div style="${mc}font-size:22px;font-weight:800;color:${domColor}">${dom}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">DAYS ON<br>MARKET</div></div>
+      <div style="flex:1">
+        <span style="${mc}font-size:10px;font-weight:700;color:${domColor};letter-spacing:2px">${domLabel}</span>
+        <span style="${mc}font-size:9px;color:var(--text-3);margin-left:8px">${dom <= 14 ? 'Performing well — under 14 day benchmark' : dom <= 30 ? 'Needs attention — approaching 30 day threshold' : 'Critical — every additional day is lost revenue'}</span>
+      </div>
+      ${lostRent ? `<div style="text-align:center"><div style="${mc}font-size:16px;font-weight:700;color:var(--red)">~$${lostRent.toLocaleString()}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">EST. LOST<br>REVENUE</div></div>` : ''}
+      ${r.marketRent ? `<div style="text-align:center"><div style="${mc}font-size:16px;font-weight:700;color:var(--text)">$${r.marketRent}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">MARKET<br>RENT</div></div>` : ''}
+    </div>`;
+  }
+
+  if (r.recommendation) {
+    const paragraphs = r.recommendation.split('\n\n').filter(Boolean);
+    html += paragraphs.map(p => `<p style="font-size:12px;color:var(--text-2);line-height:1.7;margin:0 0 14px">${esc(p)}</p>`).join('');
+  }
+
+  // Timestamp + refresh
+  const genAt = r.generatedAt ? new Date(r.generatedAt) : null;
+  const age = genAt ? Math.round((Date.now() - genAt.getTime()) / 3600000) : null;
+  const ageStr = age !== null ? (age < 1 ? 'just now' : age < 24 ? `${age}h ago` : `${Math.round(age/24)}d ago`) : '';
+  const stale = age !== null && age > 48;
+
+  html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+    <div style="${mc}font-size:8px;color:var(--text-3);letter-spacing:1px">
+      ${genAt ? `Generated ${genAt.toLocaleDateString('en-US',{month:'short',day:'numeric'})} at ${genAt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}` : ''}
+      ${stale ? ` <span style="color:var(--amber)">(${ageStr} — may be outdated)</span>` : ` (${ageStr})`}
+    </div>
+    <button onclick="shGenPerfRec(_shPerfProperty,true)" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 12px;${mc}font-size:8px;letter-spacing:1px;cursor:pointer;border-radius:4px">↺ REFRESH</button>
+  </div>`;
+
+  el.innerHTML = html;
 }
 
 // ── Printable/Downloadable Report ─────────────────────────────────────────
@@ -13306,6 +13404,14 @@ function connectAgentSse() {
         wxHideGlobalBanner();
         const badge = document.getElementById('wx-nav-badge');
         if (badge) badge.style.display = 'none';
+      } else if (payload.type === 'ai_report_ready') {
+        // Auto-refresh if viewing this property's performance report
+        if (_shPerfProperty === payload.property) {
+          const aiEl = document.getElementById('sh-perf-ai');
+          if (aiEl) shGenPerfRec(_shPerfProperty);
+        }
+      } else if (payload.type === 'toast') {
+        toast(payload.message, payload.toastType || 'success');
       }
     } catch(err) {}
   };
