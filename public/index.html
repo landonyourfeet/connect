@@ -9595,11 +9595,12 @@ async function shOpenPropertyPerf(property) {
   content.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:200px;color:var(--text-3)"><div class="spinner"></div></div>';
 
   try {
-    const [showings, trends, rec] = await Promise.all([
+    const [showings, trends] = await Promise.all([
       api(`/api/showings?property=${encodeURIComponent(property)}`),
       api(`/api/showings/trends?property=${encodeURIComponent(property)}`).catch(()=>null),
-      api(`/api/showings/property-ai-rec?property=${encodeURIComponent(property)}`).catch(()=>null),
     ]);
+    // AI rec loads in background — don't block the view
+    let rec = null;
 
     const withFb = showings.filter(s => s.verdict);
     const total = showings.length;
@@ -9650,18 +9651,14 @@ async function shOpenPropertyPerf(property) {
       html += '</div>';
     }
 
-    // AI Summary + Market Analysis
+    // AI Summary + Market Analysis — loads in background, doesn't block the view
     html += `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px" id="sh-perf-ai">
-      <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Feedback Summary + Market Comparison (within 0.25mi)</div>`;
-    if (rec && rec.recommendation) {
-      const paragraphs = rec.recommendation.split('\n\n').filter(Boolean);
-      html += paragraphs.map(p => `<p style="font-size:12px;color:var(--text-2);line-height:1.7;margin:0 0 12px">${esc(p)}</p>`).join('');
-    } else {
-      html += `<div style="text-align:center;padding:16px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Feedback Summary + Market Comparison (within 0.25mi)</div>
+      <div style="text-align:center;padding:16px">
         <button onclick="shGenPerfRec(_shPerfProperty)" style="background:#00c8ff;color:#000;border:none;border-radius:6px;padding:8px 20px;${mc}font-size:10px;font-weight:700;cursor:pointer">Generate AI Analysis</button>
-      </div>`;
-    }
-    html += '</div>';
+        <div style="${mc}font-size:9px;color:var(--text-3);margin-top:6px">Uses Grok AI with live web search — may take 10-15 seconds</div>
+      </div>
+    </div>`;
 
     // All tour feedback table
     html += `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px">
@@ -9703,15 +9700,46 @@ async function shOpenPropertyPerf(property) {
 async function shGenPerfRec(property) {
   const el = document.getElementById('sh-perf-ai');
   if (!el) return;
-  el.innerHTML = `<div style="font-family:var(--font-mono);font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis</div><div style="color:var(--text-3);padding:16px;text-align:center">Analyzing feedback and searching nearby market comps…</div>`;
+  const mc = 'font-family:var(--font-mono);';
+  el.innerHTML = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis</div>
+    <div style="color:var(--text-3);padding:20px;text-align:center">
+      <div class="spinner" style="margin:0 auto 10px"></div>
+      Analyzing tour feedback, days on market, and searching nearby comps…<br>
+      <span style="${mc}font-size:9px">This uses Grok AI with live web search — typically 10-15 seconds</span>
+    </div>`;
   try {
     const r = await api(`/api/showings/property-ai-rec?property=${encodeURIComponent(property)}`);
+    let html = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Market Position + Feedback + Competitive Comps</div>`;
+
+    // Days on market badge
+    if (r.daysOnMarket != null) {
+      const dom = r.daysOnMarket;
+      const domColor = dom <= 14 ? 'var(--green)' : dom <= 30 ? 'var(--amber)' : 'var(--red)';
+      const domLabel = dom <= 14 ? 'GOLD' : dom <= 30 ? 'CAUTION' : 'DANGER';
+      const lostRent = r.marketRent ? Math.round((dom / 30) * r.marketRent) : null;
+      html += `<div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;padding:10px 14px;background:var(--bg-3);border-radius:6px;border-left:3px solid ${domColor}">
+        <div style="text-align:center"><div style="${mc}font-size:22px;font-weight:800;color:${domColor}">${dom}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">DAYS ON<br>MARKET</div></div>
+        <div style="flex:1">
+          <span style="${mc}font-size:10px;font-weight:700;color:${domColor};letter-spacing:2px">${domLabel}</span>
+          <span style="${mc}font-size:9px;color:var(--text-3);margin-left:8px">${dom <= 14 ? 'Performing well — under 14 day benchmark' : dom <= 30 ? 'Needs attention — approaching 30 day threshold' : 'Critical — every additional day is lost revenue'}</span>
+        </div>
+        ${lostRent ? `<div style="text-align:center"><div style="${mc}font-size:16px;font-weight:700;color:var(--red)">~$${lostRent.toLocaleString()}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">EST. LOST<br>REVENUE</div></div>` : ''}
+        ${r.marketRent ? `<div style="text-align:center"><div style="${mc}font-size:16px;font-weight:700;color:var(--text)">\$${r.marketRent}</div><div style="${mc}font-size:7px;letter-spacing:2px;color:var(--text-3)">MARKET<br>RENT</div></div>` : ''}
+      </div>`;
+    }
+
     if (r.recommendation) {
       const paragraphs = r.recommendation.split('\n\n').filter(Boolean);
-      el.innerHTML = `<div style="font-family:var(--font-mono);font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:10px">AI Analysis — Feedback Summary + Market Comparison (within 0.25mi)</div>` +
-        paragraphs.map(p => `<p style="font-size:12px;color:var(--text-2);line-height:1.7;margin:0 0 12px">${esc(p)}</p>`).join('');
+      html += paragraphs.map(p => `<p style="font-size:12px;color:var(--text-2);line-height:1.7;margin:0 0 14px">${esc(p)}</p>`).join('');
+    } else {
+      html += `<div style="color:var(--text-3);padding:12px;text-align:center">No recommendation generated — this property may not have enough feedback yet.</div>`;
     }
-  } catch(e) { el.innerHTML += `<div style="color:var(--red)">${e.message}</div>`; }
+
+    html += `<div style="text-align:right;margin-top:8px"><button onclick="shGenPerfRec(_shPerfProperty)" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 12px;${mc}font-size:8px;letter-spacing:1px;cursor:pointer;border-radius:4px">↺ REFRESH ANALYSIS</button></div>`;
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML += `<div style="color:var(--red);padding:12px;text-align:center">${e.message}<br><button onclick="shGenPerfRec(_shPerfProperty)" style="margin-top:8px;background:var(--red);color:#fff;border:none;border-radius:4px;padding:6px 14px;${mc}font-size:9px;cursor:pointer">Retry</button></div>`;
+  }
 }
 
 // ── Printable/Downloadable Report ─────────────────────────────────────────
