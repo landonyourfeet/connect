@@ -1562,7 +1562,7 @@ async function fetchGrokWithSearch(prompt, maxTokens = 600) {
       'Authorization': `Bearer ${process.env.GROK_API_KEY}`
     },
     body: JSON.stringify({
-      model: 'grok-3',
+      model: 'grok-4-1-fast',
       input: [{ role: 'user', content: prompt }],
       tools: [{ type: 'web_search' }],
       max_output_tokens: maxTokens,
