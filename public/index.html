@@ -9549,12 +9549,13 @@ async function shRenderProperties(container) {
     if (!props.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-3)">No properties with showings</div>'; return; }
 
     let html = '';
-    for (const p of props) {
+    for (let idx = 0; idx < props.length; idx++) {
+      const p = props[idx];
       const propShort = (p.property||'').split(' - ')[0].substring(0,35);
       const hasFb = p.feedback_count > 0;
       const goRate = p.feedback_count ? Math.round((p.go_count / p.feedback_count) * 100) : 0;
       const goColor = goRate >= 60 ? 'var(--green)' : goRate >= 30 ? 'var(--amber)' : 'var(--red)';
-      html += `<div onclick="shOpenPropertyPerf('${esc(p.property)}')" style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:14px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='var(--bg-2)'">
+      html += `<div class="sh-prop-click" data-idx="${idx}" style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:14px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='var(--bg-2)'">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(propShort)}</div>
           <div style="${mc}font-size:10px;color:var(--text-3)">${p.total_showings} tours · ${p.feedback_count} rated</div>
@@ -9571,11 +9572,22 @@ async function shRenderProperties(container) {
       </div>`;
     }
     container.innerHTML = html;
+    // Attach click handlers safely via data attributes
+    window._shPropsCache = props;
+    container.querySelectorAll('.sh-prop-click').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = parseInt(el.dataset.idx);
+        if (window._shPropsCache[i]) shOpenPropertyPerf(window._shPropsCache[i].property);
+      });
+    });
   } catch(e) { container.innerHTML = `<div style="padding:20px;color:var(--red)">${e.message}</div>`; }
 }
 
 // ── Property Performance View ────────────────────────────────────────────
+let _shPerfProperty = null; // current property being viewed
+
 async function shOpenPropertyPerf(property) {
+  _shPerfProperty = property;
   const content = document.getElementById('sh-tab-content');
   if (!content) return;
   const mc = 'font-family:var(--font-mono);';
@@ -9610,7 +9622,7 @@ async function shOpenPropertyPerf(property) {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <button onclick="shSwitchTab('properties')" style="background:var(--bg-3);border:1px solid var(--border);color:var(--text-2);border-radius:4px;padding:5px 10px;${mc}font-size:10px;cursor:pointer">← Back</button>
       <div style="flex:1"><div style="font-size:20px;font-weight:800;color:var(--text)">${esc(propShort)}</div><div style="${mc}font-size:10px;color:var(--text-3);letter-spacing:1px;text-transform:uppercase">Property Performance Report</div></div>
-      <button onclick="shPrintReport('${esc(property)}')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:7px 16px;${mc}font-size:10px;font-weight:700;letter-spacing:0.08em;cursor:pointer">Download / Print Report</button>
+      <button onclick="shPrintReport(_shPerfProperty)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:7px 16px;${mc}font-size:10px;font-weight:700;letter-spacing:0.08em;cursor:pointer">Download / Print Report</button>
     </div>
 
     <!-- KPI -->
@@ -9646,7 +9658,7 @@ async function shOpenPropertyPerf(property) {
       html += paragraphs.map(p => `<p style="font-size:12px;color:var(--text-2);line-height:1.7;margin:0 0 12px">${esc(p)}</p>`).join('');
     } else {
       html += `<div style="text-align:center;padding:16px">
-        <button onclick="shGenPerfRec('${esc(property)}')" style="background:#00c8ff;color:#000;border:none;border-radius:6px;padding:8px 20px;${mc}font-size:10px;font-weight:700;cursor:pointer">Generate AI Analysis</button>
+        <button onclick="shGenPerfRec(_shPerfProperty)" style="background:#00c8ff;color:#000;border:none;border-radius:6px;padding:8px 20px;${mc}font-size:10px;font-weight:700;cursor:pointer">Generate AI Analysis</button>
       </div>`;
     }
     html += '</div>';
@@ -9751,15 +9763,23 @@ async function shRenderRecommendations(container) {
     if (!withFeedback.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-3)">No tour feedback yet — feedback is needed to generate recommendations</div>'; return; }
 
     let html = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:12px">Select a property for AI recommendations + market analysis</div>`;
-    for (const p of withFeedback) {
+    for (let idx = 0; idx < withFeedback.length; idx++) {
+      const p = withFeedback[idx];
       const propShort = (p.property||'').split(' - ')[0].substring(0,35);
       const goRate = p.feedback_count ? Math.round((p.go_count/p.feedback_count)*100) : 0;
-      html += `<div onclick="shOpenPropertyPerf('${esc(p.property)}')" style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:14px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='var(--bg-2)'">
+      html += `<div class="sh-rec-click" data-idx="${idx}" style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:14px;transition:background 0.15s" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='var(--bg-2)'">
         <div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--text)">${esc(propShort)}</div><div style="${mc}font-size:10px;color:var(--text-3)">${p.total_showings} tours · ${p.go_count} go · ${p.maybe_count} maybe · ${p.nogo_count} no-go · ${goRate}% go rate</div></div>
         <div style="color:var(--text-3)">View Report →</div>
       </div>`;
     }
     container.innerHTML = html;
+    window._shRecPropsCache = withFeedback;
+    container.querySelectorAll('.sh-rec-click').forEach(el => {
+      el.addEventListener('click', () => {
+        const i = parseInt(el.dataset.idx);
+        if (window._shRecPropsCache[i]) shOpenPropertyPerf(window._shRecPropsCache[i].property);
+      });
+    });
   } catch(e) { container.innerHTML = `<div style="color:var(--red)">${e.message}</div>`; }
 }
 function shRenderFeedback(container) {
