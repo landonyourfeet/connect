@@ -6811,29 +6811,39 @@ async function fetchNWSAlerts() {
 }
 
 async function fetchNWSConditions() {
-  try {
-    const resp = await fetch(`https://api.weather.gov/stations/KOKC/observations/latest`, {
-      headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)' },
-      signal: AbortSignal.timeout(8000)
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const p = data.properties || {};
-    return {
-      temperature: p.temperature?.value != null ? Math.round(p.temperature.value * 9/5 + 32) : null,
-      windSpeed: p.windSpeed?.value != null ? Math.round(p.windSpeed.value * 0.621371) : null,
-      windGust: p.windGust?.value != null ? Math.round(p.windGust.value * 0.621371) : null,
-      windDirection: p.windDirection?.value,
-      humidity: p.relativeHumidity?.value != null ? Math.round(p.relativeHumidity.value) : null,
-      description: p.textDescription,
-      timestamp: p.timestamp,
-    };
-  } catch(e) { return null; }
+  // Try multiple OKC-area stations for best data availability
+  const stations = ['KOKC', 'KPWA', 'KOUN'];
+  for (const station of stations) {
+    try {
+      const resp = await fetch(`https://api.weather.gov/stations/${station}/observations/latest`, {
+        headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)' },
+        signal: AbortSignal.timeout(6000)
+      });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const p = data.properties || {};
+      const temp = p.temperature?.value;
+      if (temp == null) continue; // Skip station if no temp data
+      return {
+        temperature: Math.round(temp * 9/5 + 32),
+        windSpeed: p.windSpeed?.value != null ? Math.round(p.windSpeed.value * 0.621371) : null,
+        windGust: p.windGust?.value != null ? Math.round(p.windGust.value * 0.621371) : null,
+        windDirection: p.windDirection?.value,
+        humidity: p.relativeHumidity?.value != null ? Math.round(p.relativeHumidity.value) : null,
+        description: p.textDescription,
+        timestamp: p.timestamp,
+        station,
+      };
+    } catch(e) { continue; }
+  }
+  return null;
 }
 
 async function refreshWeatherCache() {
   const now = Date.now();
-  if (now - _weatherCache.lastFetch < 120000) return; // max every 2 min
+  const hasData = _weatherCache.conditions && _weatherCache.conditions.temperature != null;
+  // Allow immediate refetch if we have no data yet, otherwise debounce to 2 min
+  if (hasData && now - _weatherCache.lastFetch < 120000) return;
   _weatherCache.lastFetch = now;
   const [alerts, conditions] = await Promise.all([fetchNWSAlerts(), fetchNWSConditions()]);
   const prevSevere = _weatherCache.alerts.filter(a => a.isSevere).length;
