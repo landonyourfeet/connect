@@ -5377,7 +5377,7 @@ app.get('/api/showings/property-ai-rec', auth, async (req, res) => {
     const grok = initGrok();
     if (!grok) return res.status(503).json({ error: 'Grok not configured' });
 
-    // Pull stats for this property
+    // Pull feedback stats
     const { rows } = await pool.query(`
       SELECT f.verdict, f.categories, f.notes
       FROM showing_feedback f
@@ -5404,30 +5404,61 @@ app.get('/api/showings/property-ai-rec', auth, async (req, res) => {
 
     const propName = property.split(' - ')[0];
 
-    const prompt = `You are a property management advisor for OKCREAL in Oklahoma City, OK.
+    // Pull rent from rent_roll
+    const rentR = await pool.query(
+      `SELECT market_rent, rent, status FROM rent_roll WHERE property=$1 AND status IN ('Vacant-Unrented','Vacant-Rented','Vacant') LIMIT 1`, [property]
+    ).catch(()=>({rows:[]}));
+    const rentInfo = rentR.rows[0];
+    const marketRent = rentInfo?.market_rent || rentInfo?.rent || null;
+    const rentStr = marketRent ? `$${marketRent}/month` : 'unknown';
+
+    // Days on market — time since first showing
+    const domR = await pool.query(
+      `SELECT MIN(showing_time) AS first_showing, MAX(showing_time) AS last_showing FROM showings WHERE property=$1`, [property]
+    ).catch(()=>({rows:[{}]}));
+    const firstShowing = domR.rows[0]?.first_showing;
+    const daysOnMarket = firstShowing ? Math.floor((Date.now() - new Date(firstShowing).getTime()) / 86400000) : null;
+    const domStr = daysOnMarket !== null ? `${daysOnMarket} days` : 'unknown';
+    const domStatus = daysOnMarket === null ? 'unknown' : daysOnMarket <= 14 ? 'GOLD (under 14 days)' : daysOnMarket <= 30 ? 'CAUTION (15-30 days)' : 'DANGER (30+ days — urgently needs action)';
+
+    const prompt = `You are a property management advisor for OKCREAL in Oklahoma City, OK. You give direct, actionable advice to property managers — not homeowners, not realtors.
 
 PROPERTY: "${propName}"
-TOUR FEEDBACK:
-- Totals: ${rows.length} tours | GO: ${go} | MAYBE: ${maybe} | NO-GO: ${nogo}
-- Top objections:
+ASKING RENT: ${rentStr}
+DAYS ON MARKET: ${domStr} — Status: ${domStatus}
+(Benchmark: ≤14 days = Gold/healthy. 15-30 = Caution/needs attention. 30+ = Danger/losing money every day)
+
+TOUR FEEDBACK (${rows.length} tours):
+- Verdicts: GO: ${go} | MAYBE: ${maybe} | NO-GO: ${nogo} | GO Rate: ${rows.length ? Math.round((go/rows.length)*100) : 0}%
+- Top objections from tour guests:
 ${issueList}
-- Sample agent notes:
+- Sample notes from agents:
 ${notesSample}
 
-Write exactly TWO paragraphs separated by a blank line:
+CRITICAL RULES:
+- NEVER recommend staging. Staging is not viable for rental properties under $2,500/month. Our units are shown vacant. Focus on actual condition, cleanliness, paint, flooring, appliances, lighting, and curb appeal instead.
+- Be specific with dollar estimates when possible (e.g. "new LVP flooring: ~$800-1200 for this unit size" not just "update the floors")
+- Rank recommendations by ROI — what gets us to a GO verdict fastest and cheapest?
 
-PARAGRAPH 1 — FEEDBACK ANALYSIS: Based on this feedback, what specific changes should the owner make to get a GO on the next tour? Be direct and actionable (pricing, cosmetic updates, appliances, cleaning, curb appeal, finishes).
+Write exactly THREE paragraphs separated by blank lines:
 
-PARAGRAPH 2 — COMPETITIVE MARKET ANALYSIS: Search Zillow, Apartments.com, and Realtor.com for rentals within 0.25 miles of "${propName}" in Oklahoma City, OK priced within 10% of this unit's market rent. What amenities or features are nearby competitors offering that this property lacks? Is a price adjustment warranted? What upgrades would close the gap fastest?
+PARAGRAPH 1 — DAYS ON MARKET & URGENCY: How is this property performing relative to the 14-day gold standard? If over 14 days, calculate approximately how much rent revenue has been lost (days × daily rent). Assess urgency: is this a pricing problem, a condition problem, or both? Be blunt.
 
-Write ONLY the two paragraphs. No headers, no bullets.`;
+PARAGRAPH 2 — FEEDBACK ANALYSIS: Based on tour feedback and objections, what specific changes should the property manager prioritize to convert the next tour to a GO? Rank by impact and cost. Be direct — paint colors, specific appliance upgrades, cleaning standards, curb appeal fixes, lighting, etc.
 
-    const completion = await fetchGrokWithSearch(prompt);
+PARAGRAPH 3 — COMPETITIVE MARKET POSITION: Search Zillow, Apartments.com, and Realtor.com for rentals within 0.5 miles of "${propName}" in Oklahoma City metro, priced within 15% of ${rentStr}. How many competing listings are active? What amenities do competitors offer at this price point that this property lacks? How long are THEIR listings sitting? Is a rent adjustment needed to compete, or can targeted upgrades close the gap? Give specific dollar amounts or ranges.
+
+Write ONLY the three paragraphs. No headers, no bullets, no markdown.`;
+
+    const completion = await Promise.race([
+      fetchGrokWithSearch(prompt),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('AI analysis timed out (20s)')), 20000))
+    ]);
     const text = completion || '';
-    res.json({ recommendation: text.trim(), total: rows.length, go, nogo, maybe, topIssues });
+    res.json({ recommendation: text.trim(), total: rows.length, go, nogo, maybe, topIssues, daysOnMarket, marketRent, domStatus });
   } catch(e) {
     console.error('property-ai-rec error:', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message || 'AI analysis failed' });
   }
 });
 
