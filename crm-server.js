@@ -6783,7 +6783,7 @@ async function fetchNWSAlerts() {
   try {
     const resp = await fetch('https://api.weather.gov/alerts/active?area=OK', {
       headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)', 'Accept': 'application/geo+json' },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(4000)
     });
     if (!resp.ok) { console.warn('[Weather] NWS API:', resp.status); return []; }
     const data = await resp.json();
@@ -6823,7 +6823,7 @@ async function fetchNWSConditions() {
     try {
       const resp = await fetch(`https://api.weather.gov/stations/${station}/observations/latest`, {
         headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)' },
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(3000)
       });
       if (!resp.ok) continue;
       const data = await resp.json();
@@ -6848,29 +6848,31 @@ async function fetchNWSConditions() {
 async function refreshWeatherCache() {
   const now = Date.now();
   const hasData = _weatherCache.conditions && _weatherCache.conditions.temperature != null;
-  // Allow immediate refetch if we have no data yet, otherwise debounce to 2 min
   if (hasData && now - _weatherCache.lastFetch < 120000) return;
   _weatherCache.lastFetch = now;
-  const [alerts, conditions] = await Promise.all([fetchNWSAlerts(), fetchNWSConditions()]);
-  const prevSevere = _weatherCache.alerts.filter(a => a.isSevere).length;
-  _weatherCache.alerts = alerts;
-  _weatherCache.conditions = conditions;
+  try {
+    const [alerts, conditions] = await Promise.all([fetchNWSAlerts(), fetchNWSConditions()]);
+    const prevSevere = _weatherCache.alerts.filter(a => a.isSevere).length;
+    if (alerts) _weatherCache.alerts = alerts;
+    if (conditions) _weatherCache.conditions = conditions;
 
-  // Broadcast if new severe alerts appeared
-  const nowSevere = alerts.filter(a => a.isSevere).length;
-  if (nowSevere > 0 && nowSevere !== prevSevere) {
-    console.log(`[Weather] ⚠ ${nowSevere} severe alert(s) — broadcasting to all agents`);
-    broadcastToAll({ type: 'weather_alert', alerts: alerts.filter(a => a.isSevere) });
-  }
-  if (nowSevere === 0 && prevSevere > 0) {
-    console.log('[Weather] ✓ All clear — no severe alerts');
-    broadcastToAll({ type: 'weather_clear' });
-  }
+    // Broadcast if new severe alerts appeared
+    const nowSevere = (alerts||[]).filter(a => a.isSevere).length;
+    if (nowSevere > 0 && nowSevere !== prevSevere) {
+      console.log(`[Weather] ⚠ ${nowSevere} severe alert(s) — broadcasting to all agents`);
+      broadcastToAll({ type: 'weather_alert', alerts: (alerts||[]).filter(a => a.isSevere) });
+    }
+    if (nowSevere === 0 && prevSevere > 0) {
+      console.log('[Weather] ✓ All clear — no severe alerts');
+      broadcastToAll({ type: 'weather_clear' });
+    }
+  } catch(e) { console.warn('[Weather] refresh error:', e.message); }
 }
 
 app.get('/api/weather/dashboard', auth, async (req, res) => {
   try {
-    await refreshWeatherCache();
+    // Non-blocking: kick off refresh in background, return cached data immediately
+    refreshWeatherCache().catch(() => {});
 
     // Get ALL properties from rent roll + showings combined
     const propsR = await pool.query(`
@@ -6942,7 +6944,7 @@ async function geocodeAddress(address) {
 
 app.get('/api/weather/property-map', auth, async (req, res) => {
   try {
-    await refreshWeatherCache();
+    refreshWeatherCache().catch(() => {});
 
     const propsR = await pool.query(`
       SELECT combined.property,
@@ -7014,13 +7016,13 @@ app.post('/api/weather/geocode-save', auth, async (req, res) => {
 });
 
 app.get('/api/weather/alerts', auth, async (req, res) => {
-  await refreshWeatherCache();
+  refreshWeatherCache().catch(() => {});
   res.json(_weatherCache.alerts);
 });
 
 app.get('/api/weather/report', auth, async (req, res) => {
   try {
-    await refreshWeatherCache();
+    refreshWeatherCache().catch(() => {});
     const propsR = await pool.query(`
       SELECT combined.property,
              COALESCE(rr.units, 0)::int AS units,
@@ -8060,7 +8062,7 @@ checkDB().then(() => initDB()).then(() => {
 
   // Weather alert poller — every 5 min
   setInterval(refreshWeatherCache, 5 * 60 * 1000);
-  setTimeout(refreshWeatherCache, 15000); // first check 15s after boot
+  setTimeout(refreshWeatherCache, 5000); // first check 5s after boot
 
   // Attach Jareih call WebSocket server
   setupJareihCallWS(httpServer);
