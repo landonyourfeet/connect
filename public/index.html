@@ -591,12 +591,51 @@
     }
     .login-card {
       position: relative; z-index: 1;
-      width: 400px;
+      width: 420px;
       background: var(--bg-2);
-      border: 1px solid var(--border);
+      border: 2px solid transparent;
       border-radius: var(--radius-lg);
       padding: 48px 40px;
       animation: fade-in 0.6s ease forwards;
+      overflow: hidden;
+    }
+    .login-card::before {
+      content: ''; position: absolute; inset: -2px; border-radius: var(--radius-lg);
+      background: conic-gradient(from var(--login-angle, 0deg), transparent 0%, rgba(0,232,122,0.5) 10%, transparent 20%, rgba(232,0,58,0.3) 40%, transparent 50%, rgba(0,200,255,0.4) 70%, transparent 80%, rgba(0,232,122,0.5) 100%);
+      z-index: -1; opacity: 0.6;
+      animation: loginGlow 4s linear infinite;
+    }
+    .login-card::after {
+      content: ''; position: absolute; inset: 2px; border-radius: calc(var(--radius-lg) - 2px);
+      background: var(--bg-2); z-index: -1;
+    }
+    [data-theme="light"] .login-card::after { background: #fff; }
+    @property --login-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+    @keyframes loginGlow { to { --login-angle: 360deg; } }
+
+    /* Success: green circling border */
+    .login-card.login-success::before {
+      background: conic-gradient(from var(--login-angle, 0deg), transparent 0%, rgba(0,232,122,0.9) 15%, transparent 30%, rgba(0,232,122,0.7) 50%, transparent 65%, rgba(0,232,122,0.9) 85%, transparent 100%);
+      opacity: 1;
+      animation: loginGlow 1s linear infinite;
+    }
+    .login-card.login-success { border-color: rgba(0,232,122,0.3); }
+
+    /* Error: pulsing red border */
+    .login-card.login-error::before {
+      background: conic-gradient(from var(--login-angle, 0deg), rgba(232,0,58,0.8) 0%, rgba(232,0,58,0.3) 25%, rgba(232,0,58,0.8) 50%, rgba(232,0,58,0.3) 75%, rgba(232,0,58,0.8) 100%);
+      opacity: 1;
+      animation: loginGlow 0.8s linear infinite, loginPulseRed 0.5s ease-in-out 3;
+    }
+    @keyframes loginPulseRed {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .login-card.login-error { border-color: rgba(232,0,58,0.4); animation: loginShake 0.4s ease; }
+    @keyframes loginShake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
     }
     .login-logo { text-align: center; margin-bottom: 36px; }
     .login-logo .wordmark {
@@ -605,6 +644,11 @@
       animation: logo-appear 0.8s ease forwards;
     }
     .login-logo .wordmark span { color: var(--red); text-shadow: 0 0 20px var(--red-glow); }
+    .login-logo .wordmark .connect-word {
+      color: var(--text); font-weight: 900; font-size: inherit;
+      text-shadow: none; opacity: 1;
+    }
+    [data-theme="light"] .login-logo .wordmark .connect-word { color: #1a1a1a; }
     .login-logo .sub {
       font-family: var(--font-cond);
       font-size: 11px; letter-spacing: 0.3em;
@@ -3189,7 +3233,7 @@
 <div id="login-screen">
   <div class="login-card">
     <div class="login-logo">
-      <div class="wordmark">OKC<span>REAL</span> <span style="color:#fff;font-size:0.75em;opacity:0.6">CONNECT</span></div>
+      <div class="wordmark">OKC<span>REAL</span> <span class="connect-word">CONNECT</span></div>
       <div class="sub">Property Management · Command Center</div>
     </div>
     <div class="login-field">
@@ -4267,7 +4311,9 @@ async function doLogin() {
   const password = document.getElementById('login-password').value;
   const btn = document.getElementById('login-btn');
   const errEl = document.getElementById('login-error');
+  const card = document.querySelector('.login-card');
   errEl.textContent = '';
+  card.classList.remove('login-success', 'login-error');
   if (!email || !password) { errEl.textContent = 'Please enter your email and password.'; return; }
   btn.disabled = true; btn.textContent = 'Signing in…';
   try {
@@ -4275,11 +4321,20 @@ async function doLogin() {
     authToken = data.token; currentUser = data.agent;
     localStorage.setItem('connect_token', authToken);
     localStorage.setItem('connect_user', JSON.stringify(currentUser));
+    // Success animation — green circling border
+    card.classList.add('login-success');
+    btn.textContent = 'Welcome, ' + (currentUser.name || '').split(' ')[0] + '!';
+    btn.style.background = '#00e87a'; btn.style.color = '#000';
+    await new Promise(r => setTimeout(r, 1200));
     launchApp();
   } catch(e) {
     errEl.textContent = e.message || 'Invalid email or password.';
+    // Error animation — pulsing red border + shake
+    card.classList.add('login-error');
+    setTimeout(() => card.classList.remove('login-error'), 2500);
   } finally {
     btn.disabled = false; btn.textContent = 'Sign In';
+    btn.style.background = ''; btn.style.color = '';
   }
 }
 
