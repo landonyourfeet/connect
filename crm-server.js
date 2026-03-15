@@ -6967,9 +6967,16 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
     const severeAlerts = _weatherCache.alerts.filter(a => a.isSevere && !a.isDamaging);
 
     const properties = propsR.rows.map(r => {
-      const name = (r.property || '').split(' - ')[0];
+      const name = (r.property || '').split(' - ')[0].trim();
       const addrMatch = (r.property || '').match(/ - (.+)/);
-      const address = addrMatch ? addrMatch[1].trim() : '';
+      // If has separator, use the part after it. Otherwise try the full name (may contain address)
+      let address = addrMatch ? addrMatch[1].trim() : '';
+      if (!address) {
+        // Try using the full property name stripped of parenthetical labels
+        address = (r.property || '').replace(/\([^)]*\)/g, '').replace(/DUPLEX|FOURPLEX|TRIPLEX/gi, '').trim();
+      }
+      // Clean address for geocoding: strip property names from front, keep street+city+state+zip
+      address = address.replace(/^(Unit|Apt|Suite|#)\s*\S+\s*/i, '').trim();
       let status = 'clear';
       if (damagingAlerts.length) status = 'danger';
       else if (severeAlerts.length) status = 'warning';
