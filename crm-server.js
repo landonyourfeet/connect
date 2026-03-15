@@ -7267,12 +7267,39 @@ async function fetchNWS7DayForecast() {
       const dt = new Date(p.startTime);
       const dayKey = dt.toISOString().split('T')[0];
       if (seen.has(dayKey) && !p.isDaytime) {
-        // Add night low to existing day
+        // Add night low to existing day and RE-EVALUATE threats with night data
         const existing = days.find(d => d.date === dayKey);
         if (existing) {
           existing.low = p.temperature;
           existing.nightForecast = p.shortForecast;
           existing.nightDetail = p.detailedForecast;
+
+          // Check night conditions for freeze/storm threats
+          const nightText = ((p.shortForecast||'') + ' ' + (p.detailedForecast||'')).toLowerCase();
+          const nightFreezing = p.temperature !== null && p.temperature <= 32;
+          const nightNearFreezing = p.temperature !== null && p.temperature <= 36;
+          const nightStorm = /thunderstorm|severe|tornado|hail|damaging wind/i.test(nightText);
+          const nightWintry = /ice|sleet|freezing rain|snow|winter|blizzard/i.test(nightText);
+          const nightHeavyRain = /heavy rain|flood|downpour/i.test(nightText);
+          const nightWindy = /high wind|wind advisory|damaging wind/i.test(nightText);
+
+          // Upgrade threat level if night is worse than day
+          if (nightStorm && existing.threat !== 'danger') {
+            existing.threat = 'danger'; existing.threatLabel = '⛈ STORMS'; existing.isStorm = true;
+          }
+          if ((nightFreezing || nightWintry) && existing.threat !== 'danger') {
+            existing.threat = 'freeze'; existing.threatLabel = '❄ FREEZE'; existing.isFreezing = true;
+          }
+          if (nightNearFreezing && !existing.isFreezing && existing.threat === 'clear') {
+            existing.threat = 'freeze-watch'; existing.threatLabel = '🥶 NEAR FREEZE'; existing.isNearFreezing = true;
+          }
+          if (nightHeavyRain && existing.threat === 'clear') {
+            existing.threat = 'warning'; existing.threatLabel = '🌧 HEAVY RAIN'; existing.isHeavyRain = true;
+          }
+          if (nightWindy && existing.threat === 'clear') {
+            existing.threat = 'warning'; existing.threatLabel = '💨 HIGH WIND'; existing.isWindy = true;
+          }
+          if (nightWintry) existing.isWintry = true;
         }
         continue;
       }
@@ -7283,7 +7310,7 @@ async function fetchNWS7DayForecast() {
       const detail = (p.detailedForecast || '').toLowerCase();
       const combined = forecast + ' ' + detail;
 
-      // Threat detection
+      // Threat detection — daytime period first
       const isFreezing = p.temperature !== null && p.temperature <= 32;
       const isNearFreezing = p.temperature !== null && p.temperature <= 36;
       const isStorm = /thunderstorm|severe|tornado|hail|damaging wind/i.test(combined);
