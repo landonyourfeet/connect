@@ -7583,30 +7583,46 @@ const JirehVoice = (() => {
         _speaking = true;
 
         const audioUrl = `/api/jareih/voice-audio/${resp.audioToken}`;
-        console.log('[JV] Playing audio:', audioUrl);
-        _audio = new Audio(audioUrl);
+        console.log('[JV] Fetching audio:', audioUrl);
 
-        _audio.oncanplaythrough = () => { console.log('[JV] Audio canplaythrough — ready to play'); };
-        _audio.onended = () => {
-          console.log('[JV] Audio ended');
-          _speaking = false;
-          _audio = null; _connectedAudio = null;
-          _analyser = null; _analyserData = null;
-          if (_overlay) { _listening = true; startListening(); }
-        };
-        _audio.onerror = (e) => {
-          console.error('[JV] Audio error:', _audio?.error?.code, _audio?.error?.message);
-          _speaking = false; _audio = null; _connectedAudio = null;
-          _analyser = null; _analyserData = null;
-          addBubble('ara', '(Audio failed to play — check console for details)');
-          if (_overlay) { _listening = true; startListening(); }
-        };
+        try {
+          // Fetch audio as raw bytes, decode via AudioContext (no autoplay restriction)
+          if (!_audioCtx) initAudioContext();
+          if (_audioCtx.state === 'suspended') await _audioCtx.resume();
 
-        try { await _audio.play(); console.log('[JV] audio.play() resolved'); }
-        catch(playErr) {
-          console.error('[JV] audio.play() rejected:', playErr.message);
+          const audioResp = await fetch(audioUrl);
+          if (!audioResp.ok) throw new Error(`Audio fetch ${audioResp.status}`);
+          const arrayBuf = await audioResp.arrayBuffer();
+          console.log('[JV] Audio fetched:', arrayBuf.byteLength, 'bytes — decoding…');
+
+          const audioBuffer = await _audioCtx.decodeAudioData(arrayBuf);
+          console.log('[JV] Decoded:', audioBuffer.duration.toFixed(1) + 's', audioBuffer.sampleRate + 'Hz');
+
+          // Play through AudioContext (bypasses autoplay policy)
+          const source = _audioCtx.createBufferSource();
+          source.buffer = audioBuffer;
+
+          // Connect to analyser for bioluminescence, then to speakers
+          _analyser = _audioCtx.createAnalyser();
+          _analyser.fftSize = 512;
+          _analyser.smoothingTimeConstant = 0.4;
+          _analyserData = new Uint8Array(_analyser.frequencyBinCount);
+          source.connect(_analyser);
+          _analyser.connect(_audioCtx.destination);
+
+          source.onended = () => {
+            console.log('[JV] Audio playback ended');
+            _speaking = false;
+            _analyser = null; _analyserData = null;
+            if (_overlay) { _listening = true; startListening(); }
+          };
+
+          source.start(0);
+          console.log('[JV] Audio playing via AudioContext ✓');
+        } catch(audioErr) {
+          console.error('[JV] Audio pipeline error:', audioErr.message);
           _speaking = false;
-          addBubble('ara', '(Couldn\'t play audio — browser may have blocked autoplay)');
+          _analyser = null; _analyserData = null;
           if (_overlay) { _listening = true; startListening(); }
         }
       } else {
