@@ -3330,12 +3330,19 @@
       </div>
       <div class="sidebar-bottom">
         <!-- Privacy blur shortcut hint -->
-        <div onclick="togglePrivacyBlur()" title="Press ` to toggle privacy blur"
-          style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0.04em;transition:background 0.15s;margin:0 4px 2px"
-          onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='transparent'">
-          <span>🔒</span>
-          <span>BLUR SCREEN</span>
-          <span style="margin-left:auto;background:var(--bg-4);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:10px">` </span>
+        <div style="display:flex;align-items:center;gap:0;margin:0 4px 2px">
+          <div onclick="togglePrivacyBlur()" title="Press ` to toggle privacy blur"
+            style="display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px 0 0 8px;cursor:pointer;color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0.04em;transition:background 0.15s;flex:1"
+            onmouseover="this.style.background='var(--bg-4)'" onmouseout="this.style.background='transparent'">
+            <span>🔒</span>
+            <span>BLUR SCREEN</span>
+            <span style="margin-left:auto;background:var(--bg-4);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-family:monospace;font-size:10px">` </span>
+          </div>
+          <div id="blur-disable-btn" onclick="toggleBlurDisable()" title="Disable auto-blur for this session (resets on reload)"
+            style="padding:7px 10px;border-radius:0 8px 8px 0;cursor:pointer;font-size:8px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.08em;transition:all 0.15s;border-left:1px solid var(--border);color:var(--text-3);background:transparent"
+            onmouseover="if(!_blurDisabled)this.style.background='var(--bg-4)'" onmouseout="if(!_blurDisabled)this.style.background='transparent'">
+            OFF
+          </div>
         </div>
         <!-- Jireh Auto-Answer toggle -->
         <div class="jireh-arm-wrap" id="jireh-arm-wrap" onclick="toggleJirehArm()" title="When ARMED: Jireh answers inbound calls after 4 rings if no human picks up. When DISARMED: calls go to voicemail.">
@@ -4824,8 +4831,31 @@ async function openContact(personId, fromNav=false) {
 
 // ── PRIVACY BLUR MODE ────────────────────────────────────────────────────────
 let _privacyActive = false;
+let _blurDisabled = false; // Session-only: disables auto-blur, resets on reload
+
+function toggleBlurDisable() {
+  _blurDisabled = !_blurDisabled;
+  const btn = document.getElementById('blur-disable-btn');
+  if (btn) {
+    btn.textContent = _blurDisabled ? 'ON' : 'OFF';
+    btn.style.background = _blurDisabled ? 'var(--green)' : 'transparent';
+    btn.style.color = _blurDisabled ? '#000' : 'var(--text-3)';
+    btn.title = _blurDisabled ? 'Auto-blur DISABLED for this session — click to re-enable' : 'Disable auto-blur for this session (resets on reload)';
+  }
+  if (_blurDisabled) {
+    // If blur is currently active, turn it off
+    if (_privacyActive) togglePrivacyBlur(false);
+    clearTimeout(_idleTimer);
+    toast('Auto-blur disabled for this session', 'success');
+  } else {
+    _idleReset();
+    toast('Auto-blur re-enabled', 'success');
+  }
+}
 
 function togglePrivacyBlur(force) {
+  // If blur is disabled, never activate it (allow manual deactivation though)
+  if (_blurDisabled && force === true) return;
   _privacyActive = (force !== undefined) ? force : !_privacyActive;
   const overlay   = document.getElementById('privacy-overlay');
   const indicator = document.getElementById('privacy-indicator');
@@ -4846,11 +4876,10 @@ let _idleTimer = null;
 
 function _idleReset() {
   clearTimeout(_idleTimer);
-  // Don't restart timer if a call is active
-  if (activeCall) return;
+  // Don't restart timer if blur is disabled or a call is active
+  if (_blurDisabled || activeCall) return;
   _idleTimer = setTimeout(() => {
-    // Double-check no call is active before triggering
-    if (!activeCall && !_privacyActive) {
+    if (!activeCall && !_privacyActive && !_blurDisabled) {
       togglePrivacyBlur(true);
     }
   }, IDLE_MS);
@@ -12475,7 +12504,7 @@ body{background:#0a0a0f;color:#eee;font-family:-apple-system,BlinkMacSystemFont,
     <div style="overflow-y:auto;max-height:100px">
       ${alerts.length ? alerts.map(a => {
         const ac = a.isDamaging?'#e8003a':a.isSevere?'#ff8c00':'#555';
-        return '<div style="font-size:10px;margin-bottom:4px;padding:3px 6px;border-left:2px solid '+ac+';color:'+ac+'">'+esc(a.event)+(a.expires?'<br><span style=\\'color:#555;font-size:9px\\'>Until '+new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'</span>':'')+'</div>';
+        return '<div style="font-size:10px;margin-bottom:4px;padding:3px 6px;border-left:2px solid '+ac+';color:'+ac+'">'+esc(a.event)+(a.expires?'<br><span style="color:#555;font-size:9px">Until '+new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'</span>':'')+'</div>';
       }).join('') : '<div style="font-size:10px;color:#555">None</div>'}
     </div>
   </div>
