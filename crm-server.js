@@ -6643,7 +6643,8 @@ app.get('/jireh-toggle.js', (req, res) => {
 // SPA CATCH-ALL — must be AFTER all API routes
 // Serves index.html for every frontend path: /dashboard, /showings, /inbox, etc.
 // =============================================================================
-app.get('*', (req, res) => {
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
