@@ -12246,112 +12246,174 @@ async function wxRenderMapTab(container) {
   const mc = 'font-family:var(--font-mono);';
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   container.innerHTML = `
-    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
-      <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
+      <div style="padding:8px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
         <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase">Property Locations — Live Weather Overlay</div>
         <div style="display:flex;gap:12px;align-items:center">
-          <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#e8003a"></span><span style="${mc}font-size:9px;color:var(--text-3)">Danger</span></span>
-          <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#ff8c00"></span><span style="${mc}font-size:9px;color:var(--text-3)">Caution</span></span>
-          <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#00e87a"></span><span style="${mc}font-size:9px;color:var(--text-3)">Clear</span></span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#e8003a"></span><span style="${mc}font-size:8px;color:var(--text-3)">Danger</span></span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#ff8c00"></span><span style="${mc}font-size:8px;color:var(--text-3)">Caution</span></span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#00e87a"></span><span style="${mc}font-size:8px;color:var(--text-3)">Clear</span></span>
+          <button onclick="wxOpenEmergencyOps()" style="background:var(--red);color:#fff;border:none;border-radius:4px;padding:4px 10px;${mc}font-size:8px;font-weight:700;letter-spacing:0.06em;cursor:pointer;margin-left:8px">EMERGENCY OPS</button>
         </div>
       </div>
-      <div id="wx-leaflet-map" style="height:500px;background:${isDark?'#1a1a2e':'#e8e8e8'}"></div>
+      <div id="wx-leaflet-map" style="height:calc(100vh - 320px);min-height:400px;background:${isDark?'#1a1a2e':'#e8e8e8'}"></div>
     </div>
     <div id="wx-map-status" style="${mc}font-size:10px;color:var(--text-3);margin-bottom:8px">Loading properties…</div>
     <div id="wx-map-props-list"></div>`;
 
-  // Load property map data
   let mapData;
-  try {
-    mapData = await api('/api/weather/property-map');
-  } catch(e) {
-    document.getElementById('wx-map-status').textContent = 'Error: ' + e.message;
-    return;
+  try { mapData = await api('/api/weather/property-map'); } catch(e) {
+    document.getElementById('wx-map-status').textContent = 'Error: ' + e.message; return;
   }
 
   const props = mapData.properties || [];
   const center = mapData.center || { lat: 35.4676, lon: -97.5164 };
 
-  // Initialize Leaflet map
   if (_wxMap) { try { _wxMap.remove(); } catch(e) {} _wxMap = null; }
   _wxMarkers = [];
 
   const mapEl = document.getElementById('wx-leaflet-map');
   if (!mapEl) return;
-
   _wxMap = L.map(mapEl, { zoomControl: true, scrollWheelZoom: true }).setView([center.lat, center.lon], 10);
 
-  // Theme-responsive tiles — OpenStreetMap is more reliable than CARTO
   const tileUrl = isDark
     ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
     : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const tileAttr = isDark
-    ? '&copy; <a href="https://carto.com/">CARTO</a>'
-    : '&copy; <a href="https://openstreetmap.org/">OSM</a>';
-  L.tileLayer(tileUrl, { attribution: tileAttr, maxZoom: 18 }).addTo(_wxMap);
+  L.tileLayer(tileUrl, { attribution: isDark ? 'CARTO' : 'OSM', maxZoom: 18 }).addTo(_wxMap);
+  setTimeout(() => { if (_wxMap) _wxMap.invalidateSize(); }, 300);
 
-  // Force map to recalculate size after rendering
-  setTimeout(() => { if (_wxMap) _wxMap.invalidateSize(); }, 200);
-
-  // Geocode properties client-side in batches (Nominatim: 1 req/sec)
   const colors = { danger: '#e8003a', warning: '#ff8c00', clear: '#00e87a' };
   const statusEl = document.getElementById('wx-map-status');
-  let geoCount = 0;
-  const geocoded = [];
 
-  for (let i = 0; i < props.length; i++) {
-    const p = props[i];
-    if (!p.address || p.address.includes('ACCOUNTING')) { geocoded.push({ ...p, lat: null, lon: null }); continue; }
-    if (statusEl) statusEl.textContent = `Geocoding ${i+1} of ${props.length}… ${p.name}`;
+  // Separate cached (have lat/lon) from uncached
+  const cached = props.filter(p => p.lat && p.lon);
+  const uncached = props.filter(p => !p.lat && !p.lon && p.address && !p.address.includes('ACCOUNTING'));
 
+  // Place all cached markers immediately
+  for (const p of cached) {
+    wxAddMarker(p, isDark, colors);
+  }
+  if (_wxMarkers.length) _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.15));
+  if (statusEl) statusEl.textContent = `${cached.length} properties loaded from cache${uncached.length ? `, geocoding ${uncached.length} new…` : ''}`;
+
+  // Geocode only uncached properties
+  const newEntries = [];
+  for (let i = 0; i < uncached.length; i++) {
+    const p = uncached[i];
+    if (statusEl) statusEl.textContent = `Geocoding ${i+1} of ${uncached.length}… ${p.name}`;
     try {
       const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(p.address)}&limit=1&countrycodes=us`, {
         headers: { 'User-Agent': 'OKCREAL-Connect/1.0' }
       });
       const results = await resp.json();
       if (results.length) {
-        const lat = parseFloat(results[0].lat);
-        const lon = parseFloat(results[0].lon);
-        geocoded.push({ ...p, lat, lon });
-
-        // Add marker immediately
-        const color = colors[p.status] || colors.clear;
-        const icon = L.divIcon({
-          className: '',
-          html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid ${isDark?'#fff':'#333'};box-shadow:0 0 6px ${color};${p.status==='danger'?'animation:voicePulse 1.5s ease-in-out infinite':''}"></div>`,
-          iconSize: [14, 14], iconAnchor: [7, 7]
-        });
-        const marker = L.marker([lat, lon], { icon }).addTo(_wxMap);
-        marker.bindPopup(`<div style="font-family:sans-serif;font-size:12px"><strong>${esc(p.name)}</strong><br>${p.units} units · ${p.tenants} tenants<br><span style="color:${color};font-weight:700">${p.status.toUpperCase()}</span></div>`);
-        _wxMarkers.push(marker);
-        geoCount++;
-
-        // Auto-fit bounds as markers appear
-        if (_wxMarkers.length > 1) {
-          _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.1));
-        } else {
-          _wxMap.setView([lat, lon], 11);
-        }
-      } else {
-        geocoded.push({ ...p, lat: null, lon: null });
+        p.lat = parseFloat(results[0].lat);
+        p.lon = parseFloat(results[0].lon);
+        wxAddMarker(p, isDark, colors);
+        newEntries.push({ address: p.fullName, lat: p.lat, lon: p.lon });
+        if (_wxMarkers.length > 1) _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.15));
+        else _wxMap.setView([p.lat, p.lon], 11);
       }
-    } catch(e) {
-      geocoded.push({ ...p, lat: null, lon: null });
-    }
-
-    // Rate limit: Nominatim requires ~1 req/sec
-    if (i < props.length - 1) await new Promise(r => setTimeout(r, 1100));
+    } catch(e) {}
+    if (i < uncached.length - 1) await new Promise(r => setTimeout(r, 1100));
   }
 
-  if (statusEl) statusEl.textContent = `${geoCount} of ${props.length} properties mapped`;
-
-  // Final fit bounds
-  if (_wxMarkers.length) {
-    _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.15));
+  // Save newly geocoded coords to DB for next time
+  if (newEntries.length) {
+    api('/api/weather/geocode-save', 'POST', { entries: newEntries }).catch(() => {});
   }
 
-  // Properties list below map
-  wxRenderMapPropsList(geocoded, mapData.alerts || []);
+  const totalMapped = _wxMarkers.length;
+  if (statusEl) statusEl.textContent = `${totalMapped} of ${props.length} properties mapped${newEntries.length ? ` (${newEntries.length} newly cached)` : ''}`;
+  if (_wxMarkers.length) _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.15));
+
+  wxRenderMapPropsList(props, mapData.alerts || []);
+}
+
+function wxAddMarker(p, isDark, colors) {
+  if (!p.lat || !p.lon || !_wxMap) return;
+  const color = colors[p.status] || colors.clear;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid ${isDark?'#fff':'#333'};box-shadow:0 0 6px ${color};${p.status==='danger'?'animation:voicePulse 1.5s ease-in-out infinite':''}"></div>`,
+    iconSize: [14, 14], iconAnchor: [7, 7]
+  });
+  const marker = L.marker([p.lat, p.lon], { icon }).addTo(_wxMap);
+  marker.bindPopup(`<div style="font-family:sans-serif;font-size:12px"><strong>${esc(p.name)}</strong><br>${p.units} units · ${p.tenants} tenants<br><span style="color:${color};font-weight:700">${p.status.toUpperCase()}</span></div>`);
+  _wxMarkers.push(marker);
+}
+
+// ── Emergency Operations Fullscreen ──────────────────────────────────────
+function wxOpenEmergencyOps() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const d = _wxData || {};
+  const cond = d.conditions || {};
+  const alerts = d.alerts || [];
+  const props = d.properties || [];
+  const center = d.center || { lat: 35.4676, lon: -97.5164 };
+  const severeAlerts = alerts.filter(a => a.isSevere);
+  const damagingAlerts = alerts.filter(a => a.isDamaging);
+  const statusText = damagingAlerts.length ? 'ACTIVE EMERGENCY' : severeAlerts.length ? 'SEVERE WEATHER' : 'MONITORING';
+  const statusColor = damagingAlerts.length ? '#e8003a' : severeAlerts.length ? '#ff8c00' : '#00e87a';
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>OKCREAL Emergency Operations</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0f;color:#eee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace;overflow:hidden}
+.top-bar{display:flex;align-items:center;padding:10px 20px;background:linear-gradient(90deg,#0a0a0f,#111);border-bottom:1px solid #222;gap:16px}
+.logo{font-size:20px;font-weight:900;letter-spacing:0.12em}.logo span{color:#e8003a}
+.title{font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#888;flex:1}
+.status{display:flex;align-items:center;gap:8px}
+.status-dot{width:12px;height:12px;border-radius:50%;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 4px currentColor}50%{opacity:0.5;box-shadow:0 0 16px currentColor}}
+.cond-strip{display:flex;gap:24px;padding:8px 20px;background:#111;border-bottom:1px solid #1a1a1a;font-size:12px}
+.cond-item{display:flex;flex-direction:column;gap:2px}
+.cond-label{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#666}
+.cond-val{font-size:18px;font-weight:700}
+#eops-map{flex:1;width:100%}
+.alerts-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,10,15,0.95);border-top:1px solid #222;padding:8px 20px;display:flex;gap:12px;overflow-x:auto;max-height:80px}
+.alert-chip{background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:6px;padding:6px 12px;white-space:nowrap;font-size:11px;flex-shrink:0}
+.alert-chip.severe{border-color:#ff8c00;color:#ff8c00}
+.alert-chip.damaging{border-color:#e8003a;color:#e8003a;animation:pulse 2s ease-in-out infinite}
+</style></head><body style="display:flex;flex-direction:column;height:100vh">
+<div class="top-bar">
+  <div class="logo">OKC<span>REAL</span></div>
+  <div class="title">Emergency Operations Center</div>
+  <div style="font-size:10px;letter-spacing:2px;color:#666">${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} · ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+  <div class="status">
+    <div class="status-dot" style="background:${statusColor};color:${statusColor}"></div>
+    <span style="font-size:11px;font-weight:700;letter-spacing:3px;color:${statusColor}">${statusText}</span>
+  </div>
+</div>
+<div class="cond-strip">
+  <div class="cond-item"><span class="cond-label">Temp</span><span class="cond-val" style="color:${cond.temperature!=null&&cond.temperature<=32?'#00c8ff':'#eee'}">${cond.temperature!=null?cond.temperature+'°F':'—'}</span></div>
+  <div class="cond-item"><span class="cond-label">Wind</span><span class="cond-val">${cond.windSpeed!=null?cond.windSpeed+' mph':'—'}${cond.windGust?' ('+cond.windGust+')':''}</span></div>
+  <div class="cond-item"><span class="cond-label">Conditions</span><span class="cond-val">${cond.description||'—'}</span></div>
+  <div class="cond-item" style="margin-left:auto"><span class="cond-label">Properties</span><span class="cond-val">${props.length}</span></div>
+  <div class="cond-item"><span class="cond-label">Alerts</span><span class="cond-val" style="color:${statusColor}">${alerts.length}</span></div>
+</div>
+<div id="eops-map"></div>
+${alerts.length ? `<div class="alerts-bar">${alerts.map(a => `<div class="alert-chip ${a.isDamaging?'damaging':a.isSevere?'severe':''}">${a.event}${a.expires?' · Until '+new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):''}</div>`).join('')}</div>` : ''}
+<script>
+const map = L.map('eops-map',{zoomControl:true}).setView([${center.lat||35.4676},${center.lon||-97.5164}],10);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18,attribution:'CARTO'}).addTo(map);
+const colors={danger:'#e8003a',warning:'#ff8c00',clear:'#00e87a'};
+const markers=[];
+const props=${JSON.stringify(props.filter(p=>p.lat&&p.lon).map(p=>({n:p.name,la:p.lat,lo:p.lon,s:p.status,u:p.units,t:p.tenants})))};
+props.forEach(p=>{
+  const c=colors[p.s]||colors.clear;
+  const icon=L.divIcon({className:'',html:'<div style="width:16px;height:16px;border-radius:50%;background:'+c+';border:2px solid #fff;box-shadow:0 0 10px '+c+';'+(p.s==='danger'?'animation:pulse 1.5s ease-in-out infinite':'')+'">'+'</div>',iconSize:[16,16],iconAnchor:[8,8]});
+  const m=L.marker([p.la,p.lo],{icon}).addTo(map);
+  m.bindPopup('<div style="font-family:sans-serif"><strong>'+p.n+'</strong><br>'+p.u+' units · '+p.t+' tenants<br><span style="color:'+c+';font-weight:700">'+p.s.toUpperCase()+'</span></div>');
+  markers.push(m);
+});
+if(markers.length)map.fitBounds(L.featureGroup(markers).getBounds().pad(0.12));
+setTimeout(()=>map.invalidateSize(),500);
+<\/script></body></html>`);
+  win.document.close();
 }
 
 function wxRenderMapPropsList(props, alerts) {
