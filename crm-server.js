@@ -1573,16 +1573,26 @@ async function fetchGrokWithSearch(prompt, maxTokens = 600) {
     throw new Error(`Grok search ${resp.status}: ${errText.substring(0, 200)}`);
   }
   const data = await resp.json();
+  console.log('[Grok Search] Response keys:', Object.keys(data), 'output_text?', !!data.output_text, 'output?', Array.isArray(data.output) ? data.output.length + ' blocks' : 'none');
   // Extract text from output_text or output blocks
   if (data.output_text) return data.output_text;
   if (Array.isArray(data.output)) {
-    return data.output
+    const text = data.output
       .filter(b => b.type === 'message' && b.content)
       .flatMap(b => b.content)
       .filter(c => c.type === 'output_text' || c.type === 'text')
       .map(c => c.text)
       .join('\n');
+    if (text) return text;
+    // Fallback: try any text content in any block
+    const fallback = data.output
+      .flatMap(b => b.content || [b])
+      .filter(c => c.text)
+      .map(c => c.text)
+      .join('\n');
+    if (fallback) { console.log('[Grok Search] Used fallback parser'); return fallback; }
   }
+  console.warn('[Grok Search] Could not extract text from response:', JSON.stringify(data).substring(0, 300));
   return '';
 }
 
