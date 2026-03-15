@@ -6856,24 +6856,29 @@ app.get('/api/weather/dashboard', auth, async (req, res) => {
   try {
     await refreshWeatherCache();
 
-    // Get all properties from rent roll + showings
+    // Get ALL properties from rent roll (every status) + showings
     const propsR = await pool.query(`
-      SELECT DISTINCT property FROM (
-        SELECT property FROM rent_roll WHERE status = 'Current'
-        UNION
-        SELECT DISTINCT property FROM showings WHERE showing_time > NOW() - INTERVAL '90 days'
-      ) combined ORDER BY property
+      SELECT property, COUNT(DISTINCT unit)::int AS units,
+             COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
+      FROM rent_roll
+      GROUP BY property
+      ORDER BY property
     `);
 
     const properties = propsR.rows.map(r => {
       const name = (r.property || '').split(' - ')[0];
-      return { name, fullName: r.property, affected: false };
+      const addrMatch = (r.property || '').match(/ - (.+)/);
+      const address = addrMatch ? addrMatch[1].trim() : '';
+      return { name, fullName: r.property, address, units: r.units, tenants: r.tenants, affected: false };
     });
 
-    // Mark properties as affected if any damaging alert is active
+    // Mark properties as affected based on alert severity
     const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
+    const severeAlerts = _weatherCache.alerts.filter(a => a.isSevere && !a.isDamaging);
     if (damagingAlerts.length) {
-      properties.forEach(p => { p.affected = true; }); // All in our counties are affected
+      properties.forEach(p => { p.affected = 'danger'; });
+    } else if (severeAlerts.length) {
+      properties.forEach(p => { p.affected = 'warning'; });
     }
 
     res.json({
@@ -6882,6 +6887,67 @@ app.get('/api/weather/dashboard', auth, async (req, res) => {
       properties,
       severeCount: _weatherCache.alerts.filter(a => a.isSevere).length,
       damagingCount: damagingAlerts.length,
+      center: WEATHER_CENTER,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Property geocoding cache ─────────────────────────────────────────────
+const _geocodeCache = new Map();
+
+async function geocodeAddress(address) {
+  if (!address) return null;
+  const cacheKey = address.toLowerCase().trim();
+  if (_geocodeCache.has(cacheKey)) return _geocodeCache.get(cacheKey);
+  try {
+    const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1&countrycodes=us`, {
+      headers: { 'User-Agent': 'OKCREAL-Connect/1.0 (admin@okcreal.com)' },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!resp.ok) return null;
+    const results = await resp.json();
+    if (results.length) {
+      const loc = { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
+      _geocodeCache.set(cacheKey, loc);
+      return loc;
+    }
+  } catch(e) { console.warn('[Geocode]', address.substring(0,30), e.message); }
+  return null;
+}
+
+app.get('/api/weather/property-map', auth, async (req, res) => {
+  try {
+    await refreshWeatherCache();
+
+    const propsR = await pool.query(`
+      SELECT property, COUNT(DISTINCT unit)::int AS units,
+             COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
+      FROM rent_roll GROUP BY property ORDER BY property
+    `);
+
+    const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
+    const severeAlerts = _weatherCache.alerts.filter(a => a.isSevere && !a.isDamaging);
+
+    // Geocode all properties (cached, so fast after first call)
+    const properties = [];
+    for (const r of propsR.rows) {
+      const name = (r.property || '').split(' - ')[0];
+      const addrMatch = (r.property || '').match(/ - (.+)/);
+      const address = addrMatch ? addrMatch[1].trim() : name;
+      const loc = await geocodeAddress(address);
+      let status = 'clear';
+      if (damagingAlerts.length) status = 'danger';
+      else if (severeAlerts.length) status = 'warning';
+      properties.push({
+        name, fullName: r.property, address, units: r.units, tenants: r.tenants,
+        lat: loc?.lat || null, lon: loc?.lon || null, status
+      });
+    }
+
+    res.json({
+      properties,
+      alerts: _weatherCache.alerts,
+      conditions: _weatherCache.conditions,
       center: WEATHER_CENTER,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -6896,8 +6962,9 @@ app.get('/api/weather/report', auth, async (req, res) => {
   try {
     await refreshWeatherCache();
     const propsR = await pool.query(`
-      SELECT DISTINCT rr.property, COUNT(DISTINCT rr.id)::int AS units, COUNT(DISTINCT rr.tenant_name)::int AS tenants
-      FROM rent_roll rr WHERE rr.status = 'Current' GROUP BY rr.property ORDER BY rr.property
+      SELECT property, COUNT(DISTINCT unit)::int AS units,
+             COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
+      FROM rent_roll GROUP BY property ORDER BY property
     `);
     const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
     const report = {
