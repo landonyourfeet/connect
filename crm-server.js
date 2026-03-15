@@ -3240,6 +3240,22 @@ async function initDB() {
     error TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`, 'create scheduled_texts');
+  await run(`CREATE TABLE IF NOT EXISTS property_ai_reports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    property TEXT NOT NULL UNIQUE,
+    recommendation TEXT,
+    days_on_market INTEGER,
+    market_rent NUMERIC,
+    dom_status TEXT,
+    total_tours INTEGER,
+    go_count INTEGER,
+    nogo_count INTEGER,
+    maybe_count INTEGER,
+    status TEXT DEFAULT 'pending',
+    error TEXT,
+    generated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`, 'create property_ai_reports');
   await run(`CREATE TABLE IF NOT EXISTS work_orders (
     id SERIAL PRIMARY KEY,
     property TEXT NOT NULL,
@@ -5473,58 +5489,90 @@ app.get('/api/showings/feedback-report', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Quick AI rec for a single property — used in the feedback form
+// Property AI Analysis — persistent, background-generated, survives navigation
+// GET returns cached result or kicks off background generation
+// GET ?refresh=1 forces regeneration
 app.get('/api/showings/property-ai-rec', auth, async (req, res) => {
   try {
-    const { property } = req.query;
+    const { property, refresh } = req.query;
     if (!property) return res.status(400).json({ error: 'property required' });
 
-    const grok = initGrok();
-    if (!grok) return res.status(503).json({ error: 'Grok not configured' });
+    // Check for cached report
+    const cached = await pool.query(`SELECT * FROM property_ai_reports WHERE property=$1`, [property]).catch(()=>({rows:[]}));
+    const report = cached.rows[0];
 
-    // Pull feedback stats
+    // If we have a completed report and no refresh requested, return it
+    if (report && report.status === 'done' && !refresh) {
+      return res.json({
+        recommendation: report.recommendation,
+        daysOnMarket: report.days_on_market,
+        marketRent: report.market_rent ? parseFloat(report.market_rent) : null,
+        domStatus: report.dom_status,
+        total: report.total_tours, go: report.go_count, nogo: report.nogo_count, maybe: report.maybe_count,
+        generatedAt: report.generated_at,
+        status: 'done'
+      });
+    }
+
+    // If already generating, return status
+    if (report && report.status === 'generating') {
+      return res.json({ status: 'generating', startedAt: report.created_at });
+    }
+
+    // Check if there's any feedback to analyze
+    const fbCount = await pool.query(`SELECT COUNT(*)::int AS c FROM showing_feedback f JOIN showings s ON s.id=f.showing_id WHERE s.property=$1`, [property]);
+    if (fbCount.rows[0].c === 0) return res.json({ recommendation: null, total: 0, status: 'no_feedback' });
+
+    // Kick off background generation
+    await pool.query(
+      `INSERT INTO property_ai_reports (property, status, created_at) VALUES ($1, 'generating', NOW())
+       ON CONFLICT (property) DO UPDATE SET status='generating', error=NULL, created_at=NOW()`,
+      [property]
+    );
+    generatePropertyAIReport(property).catch(e => console.error('[AI Report] bg error:', e.message));
+
+    res.json({ status: 'generating', startedAt: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Background AI report generator — runs independently of the HTTP request
+async function generatePropertyAIReport(property) {
+  try {
+    const grok = initGrok();
+    if (!grok) throw new Error('Grok not configured');
+
     const { rows } = await pool.query(`
       SELECT f.verdict, f.categories, f.notes
-      FROM showing_feedback f
-      JOIN showings s ON s.id = f.showing_id
-      WHERE s.property = $1
+      FROM showing_feedback f JOIN showings s ON s.id = f.showing_id WHERE s.property = $1
     `, [property]);
 
-    if (!rows.length) return res.json({ recommendation: null, total: 0 });
-
     let go=0, nogo=0, maybe=0;
-    const catCounts = {};
-    const notes = [];
+    const catCounts = {}, notes = [];
     for (const r of rows) {
-      if (r.verdict === 'go')    go++;
+      if (r.verdict === 'go') go++;
       if (r.verdict === 'no-go') nogo++;
       if (r.verdict === 'maybe') maybe++;
       for (const c of (r.categories||[])) catCounts[c] = (catCounts[c]||0)+1;
       if (r.notes) notes.push(r.notes);
     }
-    const topIssues = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).slice(0,8)
-      .map(([cat,count])=>({ cat, count }));
-    const issueList = topIssues.map(i=>`  - ${i.cat}: mentioned ${i.count}x`).join('\n') || '  - No issues tagged';
+    const issueList = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).slice(0,8)
+      .map(([cat,count])=>`  - ${cat}: mentioned ${count}x`).join('\n') || '  - No issues tagged';
     const notesSample = notes.slice(0,5).map((n,i)=>`  ${i+1}. "${n}"`).join('\n') || '  None recorded';
-
     const propName = property.split(' - ')[0];
 
-    // Pull rent from rent_roll
     const rentR = await pool.query(
-      `SELECT market_rent, rent, status FROM rent_roll WHERE property=$1 AND status IN ('Vacant-Unrented','Vacant-Rented','Vacant') LIMIT 1`, [property]
+      `SELECT market_rent, rent FROM rent_roll WHERE property=$1 AND status IN ('Vacant-Unrented','Vacant-Rented','Vacant') LIMIT 1`, [property]
     ).catch(()=>({rows:[]}));
-    const rentInfo = rentR.rows[0];
-    const marketRent = rentInfo?.market_rent || rentInfo?.rent || null;
+    const marketRent = rentR.rows[0]?.market_rent || rentR.rows[0]?.rent || null;
     const rentStr = marketRent ? `$${marketRent}/month` : 'unknown';
 
-    // Days on market — time since first showing
     const domR = await pool.query(
-      `SELECT MIN(showing_time) AS first_showing, MAX(showing_time) AS last_showing FROM showings WHERE property=$1`, [property]
+      `SELECT MIN(showing_time) AS first_showing FROM showings WHERE property=$1`, [property]
     ).catch(()=>({rows:[{}]}));
     const firstShowing = domR.rows[0]?.first_showing;
     const daysOnMarket = firstShowing ? Math.floor((Date.now() - new Date(firstShowing).getTime()) / 86400000) : null;
     const domStr = daysOnMarket !== null ? `${daysOnMarket} days` : 'unknown';
-    const domStatus = daysOnMarket === null ? 'unknown' : daysOnMarket <= 14 ? 'GOLD (under 14 days)' : daysOnMarket <= 30 ? 'CAUTION (15-30 days)' : 'DANGER (30+ days — urgently needs action)';
+    const domStatus = daysOnMarket === null ? 'unknown' : daysOnMarket <= 14 ? 'GOLD' : daysOnMarket <= 30 ? 'CAUTION' : 'DANGER';
 
     const prompt = `You are a property management advisor for OKCREAL in Oklahoma City, OK. You give direct, actionable advice to property managers — not homeowners, not realtors.
 
@@ -5555,17 +5603,30 @@ PARAGRAPH 3 — COMPETITIVE MARKET POSITION: Search Zillow, Apartments.com, and 
 
 Write ONLY the three paragraphs. No headers, no bullets, no markdown.`;
 
-    const completion = await Promise.race([
-      fetchGrokWithSearch(prompt),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('AI analysis timed out (20s)')), 20000))
-    ]);
-    const text = completion || '';
-    res.json({ recommendation: text.trim(), total: rows.length, go, nogo, maybe, topIssues, daysOnMarket, marketRent, domStatus });
+    console.log(`[AI Report] Generating for ${propName}...`);
+    const completion = await fetchGrokWithSearch(prompt);
+    const text = (completion || '').trim();
+
+    if (text) {
+      await pool.query(
+        `UPDATE property_ai_reports SET recommendation=$1, days_on_market=$2, market_rent=$3, dom_status=$4,
+         total_tours=$5, go_count=$6, nogo_count=$7, maybe_count=$8, status='done', generated_at=NOW(), error=NULL
+         WHERE property=$9`,
+        [text, daysOnMarket, marketRent, domStatus, rows.length, go, nogo, maybe, property]
+      );
+      console.log(`[AI Report] ✓ Done for ${propName} (${text.length} chars)`);
+      broadcastToAll({ type: 'ai_report_ready', property });
+    } else {
+      throw new Error('Empty response from Grok');
+    }
   } catch(e) {
-    console.error('property-ai-rec error:', e.message);
-    res.status(500).json({ error: e.message || 'AI analysis failed' });
+    console.error(`[AI Report] ✗ Failed for ${property}:`, e.message);
+    await pool.query(
+      `UPDATE property_ai_reports SET status='failed', error=$1 WHERE property=$2`,
+      [e.message, property]
+    ).catch(()=>{});
   }
-});
+}
 
 // AI property recommendation — feedback + live nearby listing search via Grok
 app.post('/api/showings/property-recommendation', auth, async (req, res) => {
