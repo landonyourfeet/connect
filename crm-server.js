@@ -7021,14 +7021,13 @@ async function scrapeAppFolioListings() {
     const html = await resp.text();
 
     const listings = [];
-    // AppFolio uses 'js-listing-item' class for each card
-    // Split HTML by these card boundaries
-    const cardParts = html.split(/class="[^"]*js-listing-item[^"]*"/);
+    // AppFolio uses 'listing-item result js-listing-item' for actual card divs
+    // Split on the full class string to avoid matching references in JS/CSS (which double the count)
+    const cardParts = html.split(/listing-item result js-listing-item/);
 
     for (let i = 1; i < cardParts.length; i++) {
       const card = cardParts[i];
-      // Get enough of the card HTML (up to next major section)
-      const cardHtml = card.substring(0, 5000);
+      const cardHtml = card.substring(0, 6000);
 
       // Extract UUID from detail link
       const uidMatch = cardHtml.match(/\/listings\/detail\/([a-f0-9-]+)/);
@@ -7037,10 +7036,18 @@ async function scrapeAppFolioListings() {
 
       // Helper: extract text content from an element with a specific class
       const getText = (cls) => {
-        const re = new RegExp(`class="[^"]*${cls}[^"]*"[^>]*>([\\s\\S]*?)(?:<\\/|<[a-z])`);
-        const m = cardHtml.match(re);
-        if (!m) return '';
-        return m[1].replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim();
+        // Find the class, then grab everything up to the next major closing div or section
+        const idx = cardHtml.indexOf(cls);
+        if (idx === -1) return '';
+        // Find the start of content (after the >)
+        const tagEnd = cardHtml.indexOf('>', idx);
+        if (tagEnd === -1) return '';
+        // Grab up to 500 chars and find a reasonable end boundary
+        const chunk = cardHtml.substring(tagEnd + 1, tagEnd + 500);
+        // Take content up to the closing tag of this element (usually </h2>, </div>, </p>, </span>)
+        const endMatch = chunk.match(/<\/(?:h[1-6]|div|p|span|a|li)>/);
+        const raw = endMatch ? chunk.substring(0, endMatch.index) : chunk.substring(0, 200);
+        return raw.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
       };
 
       const title = getText('js-listing-title');
@@ -7055,6 +7062,9 @@ async function scrapeAppFolioListings() {
       const rentNum = parseInt((rent || '').replace(/[$,]/g, '')) || 0;
       const sqft = sqftRaw ? parseInt(sqftRaw.replace(/\D/g, '')) || null : null;
       const minIncome = Math.ceil(rentNum * INCOME_MULTIPLIER);
+
+      // Skip if we couldn't extract meaningful data
+      if (!uid || (!title && !address && !rentNum)) continue;
 
       listings.push({
         uid, title, address, rent: rent || '', rentNum,
