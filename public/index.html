@@ -9989,18 +9989,25 @@ async function rrUpload(input) {
 
     for (let i = hi + 1; i < raw.length; i++) {
       const r = raw[i];
-      if (!r || !r[cols.unit]) continue;
+      if (!r) continue;
+      const unitVal = r[cols.unit] ? String(r[cols.unit]).trim() : '';
       const statusVal = String(r[cols.status] || '');
-      // Property header row: unit col has property name, rest empty
-      if (!r[cols.tenant] && !r[cols.status] && !r[cols.rent]) {
-        currentProperty = String(r[cols.unit]).trim(); continue;
+      const hasTenant = !!r[cols.tenant];
+      const hasStatus = !!r[cols.status];
+      const hasRent = !!r[cols.rent];
+      // Property header row: unit col has property name, no tenant/status/rent
+      if (unitVal && !hasTenant && !hasStatus && !hasRent) {
+        currentProperty = unitVal; continue;
       }
       // Summary rows (e.g. "4 Units ... 100.0% Occupied")
       if (SKIP_STATUSES.has(statusVal) || statusVal.includes('% Occupied')) continue;
-      if (!r[cols.status]) continue;
+      // Skip if no status at all
+      if (!hasStatus) continue;
+      // Single-unit property: no unit name but has tenant/status data
+      const finalUnit = unitVal || 'Main';
       rows.push({
         property:    currentProperty,
-        unit:        String(r[cols.unit]).trim(),
+        unit:        finalUnit,
         tenant_name: r[cols.tenant] ? String(r[cols.tenant]).trim() : null,
         status:      statusVal || null,
         bedrooms:    r[cols.bdba] || null,
@@ -12267,8 +12274,12 @@ async function wxRenderMapTab(container) {
   if (_wxMap) { _wxMap.remove(); _wxMap = null; }
   _wxMap = L.map('wx-leaflet-map', { zoomControl: true }).setView([center.lat, center.lon], 10);
 
-  // Dark-themed tiles
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  // Theme-responsive tiles
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const tileUrl = isDark
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+  L.tileLayer(tileUrl, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
     maxZoom: 18
   }).addTo(_wxMap);
