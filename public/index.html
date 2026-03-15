@@ -3322,6 +3322,11 @@
           <span class="nav-label">Work Orders</span>
           <span id="wo-nav-badge" style="display:none;margin-left:auto;background:#ff8c00;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.05em"></span>
         </div>
+        <div class="nav-item" data-view="weather" onclick="navigate('weather')" id="nav-weather">
+          <span class="nav-icon">⛈</span>
+          <span class="nav-label">Weather</span>
+          <span id="wx-nav-badge" style="display:none;margin-left:auto;background:#e8003a;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.05em;animation:voicePulse 1.5s ease-in-out infinite"></span>
+        </div>
       </div>
       <div class="sidebar-bottom">
         <!-- Privacy blur shortcut hint -->
@@ -3647,6 +3652,9 @@
       </div>
       <div class="view" id="view-workorders" style="overflow-y:auto;background:var(--bg-3)">
         <div id="workorders-root" style="max-width:1100px;margin:0 auto;padding:24px"></div>
+      </div>
+      <div class="view" id="view-weather" style="overflow-y:auto;background:var(--bg-3)">
+        <div id="weather-root" style="max-width:1200px;margin:0 auto;padding:24px"></div>
       </div>
       <div class="view" id="view-dashboard"></div>
       <div class="view" id="view-security">
@@ -4413,6 +4421,7 @@ function navigate(view, listId = null) {
   else if (view === 'security') { loadSecurityAlertHistory(); document.getElementById('header-title').textContent = 'Security Alerts'; }
   else if (view === 'showings') { document.getElementById('header-title').textContent = 'Showings'; setTimeout(renderShowingsView, 0); }
   else if (view === 'workorders') { document.getElementById('header-title').textContent = 'Work Orders'; setTimeout(renderWorkOrdersView, 0); }
+  else if (view === 'weather') { document.getElementById('header-title').textContent = 'Weather Control Center'; setTimeout(renderWeatherView, 0); }
   else if (view === 'callreports') { document.getElementById('header-title').textContent = 'Call Reports'; setTimeout(loadCallReports, 0); }
   else if (view === 'dashboard') { document.getElementById('header-title').textContent = 'Command Module'; setTimeout(renderDashboard, 0); }
   // Cancel galaxy animation when leaving dashboard
@@ -12065,6 +12074,286 @@ window.startShowingAlertPoller = function() {
 };
 </script>
 
+<!-- WEATHER CONTROL CENTER -->
+<script>
+let _wxData = null;
+let _wxPollTimer = null;
+
+// ── Global Weather Banner (shows at top of CRM during severe events) ─────
+function wxShowGlobalBanner(alerts) {
+  let banner = document.getElementById('wx-global-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'wx-global-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 20px;display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:11px;cursor:pointer;animation:voicePulse 2s ease-in-out infinite';
+    banner.onclick = () => navigate('weather');
+    const main = document.querySelector('.main-content') || document.body;
+    main.prepend(banner);
+  }
+  const worst = alerts.find(a => a.isDamaging) || alerts[0];
+  const isTornado = worst?.event?.includes('Tornado');
+  const bg = isTornado ? 'linear-gradient(90deg,rgba(232,0,58,0.95),rgba(180,0,40,0.95))' : 'linear-gradient(90deg,rgba(255,140,0,0.9),rgba(200,100,0,0.9))';
+  banner.style.background = bg;
+  banner.innerHTML = `
+    <span style="font-size:16px">${isTornado ? '🌪' : '⚠'}</span>
+    <span style="color:#fff;font-weight:800;letter-spacing:0.1em;text-transform:uppercase">${esc(worst?.event || 'SEVERE WEATHER')}</span>
+    <span style="color:rgba(255,255,255,0.8);flex:1">${esc((worst?.headline||'').substring(0,100))}</span>
+    <span style="color:#fff;font-weight:700;letter-spacing:0.08em;text-decoration:underline">VIEW WEATHER CENTER →</span>
+  `;
+  banner.style.display = 'flex';
+}
+
+function wxHideGlobalBanner() {
+  const banner = document.getElementById('wx-global-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+// ── Main Weather View ────────────────────────────────────────────────────
+async function renderWeatherView() {
+  const root = document.getElementById('weather-root');
+  if (!root) return;
+  root.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:200px;color:var(--text-3)"><div class="spinner"></div></div>';
+
+  try {
+    _wxData = await api('/api/weather/dashboard');
+  } catch(e) {
+    root.innerHTML = `<div style="padding:40px;color:var(--red)">${e.message}</div>`;
+    return;
+  }
+
+  const d = _wxData;
+  const mc = 'font-family:var(--font-mono);';
+  const cardStyle = 'background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px;';
+  const cond = d.conditions || {};
+  const alerts = d.alerts || [];
+  const severeAlerts = alerts.filter(a => a.isSevere);
+  const damagingAlerts = alerts.filter(a => a.isDamaging);
+  const statusColor = damagingAlerts.length ? 'var(--red)' : severeAlerts.length ? 'var(--amber)' : 'var(--green)';
+  const statusText = damagingAlerts.length ? `${damagingAlerts.length} DAMAGING EVENT${damagingAlerts.length>1?'S':''}` : severeAlerts.length ? `${severeAlerts.length} SEVERE ALERT${severeAlerts.length>1?'S':''}` : 'ALL CLEAR';
+
+  // Update nav badge
+  const badge = document.getElementById('wx-nav-badge');
+  if (badge) {
+    if (severeAlerts.length) { badge.style.display = 'inline'; badge.textContent = severeAlerts.length; }
+    else badge.style.display = 'none';
+  }
+
+  // Show/hide global banner
+  if (damagingAlerts.length) wxShowGlobalBanner(damagingAlerts);
+  else wxHideGlobalBanner();
+
+  let html = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="width:10px;height:10px;border-radius:50%;background:${damagingAlerts.length?'var(--red)':severeAlerts.length?'var(--amber)':'var(--green)'};box-shadow:0 0 8px ${damagingAlerts.length?'var(--red)':severeAlerts.length?'var(--amber)':'var(--green)'};${severeAlerts.length?'animation:voicePulse 1.5s ease-in-out infinite':''}"></div>
+      <span style="${mc}font-size:10px;letter-spacing:3px;color:${statusColor};text-transform:uppercase">${statusText}</span>
+    </div>
+    <div style="font-size:28px;font-weight:800;color:var(--text);letter-spacing:0.02em;margin-bottom:2px">Weather Control Center</div>
+    <div style="${mc}font-size:10px;letter-spacing:2px;color:var(--text-3);margin-bottom:20px;text-transform:uppercase">NWS · Central Oklahoma · Property Safety Monitoring</div>`;
+
+  // ── Conditions Strip ──────────────────────────────────────────────────
+  html += `<div style="${cardStyle}display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+    <div>
+      <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">Temperature</div>
+      <div style="${mc}font-size:28px;font-weight:800;color:${cond.temperature!=null && cond.temperature<=32?'#00c8ff':cond.temperature>=90?'var(--red)':'var(--text)'}">${cond.temperature != null ? cond.temperature + '°F' : '—'}</div>
+    </div>
+    <div>
+      <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">Wind</div>
+      <div style="${mc}font-size:20px;color:${(cond.windSpeed||0)>=40?'var(--red)':(cond.windSpeed||0)>=25?'var(--amber)':'var(--text)'}">${cond.windSpeed != null ? cond.windSpeed + ' mph' : '—'}${cond.windGust ? ` (gusts ${cond.windGust})` : ''}</div>
+    </div>
+    <div>
+      <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">Humidity</div>
+      <div style="${mc}font-size:20px;color:var(--text)">${cond.humidity != null ? cond.humidity + '%' : '—'}</div>
+    </div>
+    <div>
+      <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">Conditions</div>
+      <div style="${mc}font-size:14px;color:var(--text)">${esc(cond.description || '—')}</div>
+    </div>
+    <div style="margin-left:auto;text-align:right">
+      <div style="${mc}font-size:8px;color:var(--text-3)">Last updated</div>
+      <div style="${mc}font-size:10px;color:var(--text-3)">${cond.timestamp ? new Date(cond.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : '—'}</div>
+    </div>
+  </div>`;
+
+  // ── Active Alerts ─────────────────────────────────────────────────────
+  if (alerts.length) {
+    html += `<div style="${cardStyle}">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:${statusColor};text-transform:uppercase;margin-bottom:12px">Active NWS Alerts (${alerts.length})</div>`;
+    for (const a of alerts) {
+      const bgColor = a.isDamaging ? 'rgba(232,0,58,0.08)' : a.isSevere ? 'rgba(255,140,0,0.06)' : 'rgba(0,200,255,0.04)';
+      const borderColor = a.isDamaging ? 'rgba(232,0,58,0.3)' : a.isSevere ? 'rgba(255,140,0,0.2)' : 'var(--border)';
+      const sevBadge = a.isDamaging ? '<span style="background:var(--red);color:#fff;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em;margin-left:6px">DAMAGING</span>'
+        : a.isSevere ? '<span style="background:var(--amber);color:#000;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;letter-spacing:0.05em;margin-left:6px">SEVERE</span>' : '';
+      html += `<div style="background:${bgColor};border:1px solid ${borderColor};border-radius:6px;padding:10px 14px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="${mc}font-size:12px;font-weight:700;color:var(--text)">${esc(a.event)}</span>${sevBadge}
+          <span style="${mc}font-size:9px;color:var(--text-3);margin-left:auto">${a.expires ? 'Until ' + new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : ''}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-2);line-height:1.5;margin-bottom:4px">${esc((a.headline||'').substring(0,200))}</div>
+        ${a.instruction ? `<div style="font-size:11px;color:var(--amber);line-height:1.4;margin-top:4px">${esc(a.instruction.substring(0,200))}</div>` : ''}
+        <div style="${mc}font-size:9px;color:var(--text-3);margin-top:4px">${esc((a.areaDesc||'').substring(0,120))}</div>
+      </div>`;
+    }
+    html += '</div>';
+  } else {
+    html += `<div style="${cardStyle}">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--green);text-transform:uppercase;margin-bottom:8px">No Active Alerts</div>
+      <div style="font-size:12px;color:var(--text-3)">No NWS weather alerts for central Oklahoma counties at this time.</div>
+    </div>`;
+  }
+
+  // ── Radar Map ─────────────────────────────────────────────────────────
+  html += `<div style="${cardStyle}">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase">Live Radar — Central Oklahoma</div>
+      <button onclick="wxRefreshRadar()" style="background:var(--bg-3);border:1px solid var(--border);color:var(--text-2);border-radius:4px;padding:3px 10px;${mc}font-size:9px;cursor:pointer">Refresh</button>
+    </div>
+    <div id="wx-radar-container" style="position:relative;width:100%;height:420px;border-radius:6px;overflow:hidden;background:#0a0a0a">
+      <img id="wx-radar-img" src="https://radar.weather.gov/ridge/standard/KTLX_loop.gif" alt="OKC Radar" style="width:100%;height:100%;object-fit:contain;opacity:0.85" onerror="this.src='https://radar.weather.gov/ridge/standard/KTLX_0.gif'" />
+      <div id="wx-radar-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></div>
+      <div style="position:absolute;bottom:8px;left:8px;${mc}font-size:9px;color:rgba(255,255,255,0.5);background:rgba(0,0,0,0.6);padding:2px 8px;border-radius:4px">NWS KTLX (OKC) Radar</div>
+    </div>
+  </div>`;
+
+  // ── Properties — Affected Status ──────────────────────────────────────
+  const props = d.properties || [];
+  const affected = props.filter(p => p.affected);
+
+  html += `<div style="${cardStyle}">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div>
+        <div style="${mc}font-size:9px;letter-spacing:3px;color:${affected.length?'var(--red)':'var(--green)'};text-transform:uppercase">Properties — ${affected.length ? affected.length + ' potentially affected' : 'All Clear'}</div>
+        <div style="${mc}font-size:8px;color:var(--text-3);margin-top:2px">${props.length} properties monitored</div>
+      </div>
+      ${damagingAlerts.length ? `<button onclick="wxDownloadReport()" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:7px 16px;${mc}font-size:10px;font-weight:700;letter-spacing:0.08em;cursor:pointer">Download Damage Assessment</button>` : ''}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px" id="wx-props-grid">`;
+
+  for (const p of props) {
+    const isAffected = p.affected && damagingAlerts.length;
+    html += `<div style="background:${isAffected?'rgba(232,0,58,0.08)':'var(--bg-3)'};border:1px solid ${isAffected?'rgba(232,0,58,0.3)':'var(--border)'};border-radius:6px;padding:8px 12px;${isAffected?'animation:voicePulse 2s ease-in-out infinite':''}">
+      <div style="font-size:12px;font-weight:600;color:${isAffected?'var(--red)':'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isAffected?'⚠ ':''}${esc(p.name)}</div>
+      <div style="${mc}font-size:9px;color:var(--text-3)">${isAffected?'IN AFFECTED ZONE':'Monitoring'}</div>
+    </div>`;
+  }
+  html += '</div></div>';
+
+  // ── Freezing Conditions Alert ─────────────────────────────────────────
+  if (cond.temperature != null && cond.temperature <= 32) {
+    html += `<div style="background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:8px;padding:14px 18px;margin-bottom:16px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:6px">❄ Freezing Conditions</div>
+      <div style="font-size:12px;color:var(--text-2);line-height:1.6">Current temperature is ${cond.temperature}°F — below freezing. Staff should monitor for pipe freezing risk, ice on walkways, and advise tenants to keep faucets dripping. Check vacant units for heat.</div>
+    </div>`;
+  }
+
+  // ── High Wind Alert ───────────────────────────────────────────────────
+  if ((cond.windSpeed || 0) >= 30 || (cond.windGust || 0) >= 45) {
+    html += `<div style="background:rgba(255,140,0,0.06);border:1px solid rgba(255,140,0,0.2);border-radius:8px;padding:14px 18px;margin-bottom:16px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--amber);text-transform:uppercase;margin-bottom:6px">💨 Damaging Wind Risk</div>
+      <div style="font-size:12px;color:var(--text-2);line-height:1.6">Wind speeds ${cond.windSpeed} mph${cond.windGust ? ` with gusts to ${cond.windGust} mph` : ''}. Staff should secure loose items, check for roof/fence damage after event passes, and note any downed trees or power lines for maintenance.</div>
+    </div>`;
+  }
+
+  html += `<div style="${mc}font-size:8px;color:var(--text-3);text-align:center;margin-top:16px;letter-spacing:2px;text-transform:uppercase">OKCREAL CONNECT · WEATHER CONTROL CENTER · NWS DATA · AUTO-UPDATES EVERY 5 MIN</div>`;
+
+  root.innerHTML = html;
+
+  // Auto-refresh every 2 min
+  if (_wxPollTimer) clearInterval(_wxPollTimer);
+  _wxPollTimer = setInterval(async () => {
+    try {
+      _wxData = await api('/api/weather/dashboard');
+      // Just update badge + banner without full re-render
+      const sa = (_wxData.alerts||[]).filter(a=>a.isSevere);
+      const da = (_wxData.alerts||[]).filter(a=>a.isDamaging);
+      const b = document.getElementById('wx-nav-badge');
+      if (b) { if (sa.length) { b.style.display='inline'; b.textContent=sa.length; } else b.style.display='none'; }
+      if (da.length) wxShowGlobalBanner(da); else wxHideGlobalBanner();
+    } catch(e) {}
+  }, 120000);
+}
+
+function wxRefreshRadar() {
+  const img = document.getElementById('wx-radar-img');
+  if (img) img.src = `https://radar.weather.gov/ridge/standard/KTLX_loop.gif?t=${Date.now()}`;
+}
+
+async function wxDownloadReport() {
+  let report;
+  try {
+    report = await api('/api/weather/report');
+  } catch(e) { toast('Failed to generate report: ' + e.message, 'error'); return; }
+
+  const mc = 'font-family:-apple-system,sans-serif;';
+  const alerts = report.alerts || [];
+  const props = report.properties || [];
+  const cond = report.conditions || {};
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>OKCREAL Damage Assessment Report</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;padding:32px;max-width:900px;margin:0 auto}
+.hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:3px solid #e8003a;padding-bottom:14px}
+.logo{font-size:22px;font-weight:900;letter-spacing:0.1em}.logo span{color:#e8003a}
+h1{font-size:18px;font-weight:800;color:#e8003a;margin-bottom:4px}h2{font-size:14px;font-weight:700;margin:16px 0 8px;color:#444;border-bottom:1px solid #ddd;padding-bottom:4px}
+.alert-box{background:#fff5f5;border:2px solid #e8003a;border-radius:6px;padding:10px 14px;margin-bottom:8px}
+.alert-title{font-size:13px;font-weight:700;color:#e8003a;margin-bottom:2px}
+.alert-desc{font-size:11px;color:#555;line-height:1.5}
+.cond-row{display:flex;gap:20px;margin-bottom:12px;font-size:12px}.cond-label{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px}
+table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px}th{text-align:left;font-size:9px;color:#888;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid #ddd;padding:4px 6px}
+td{padding:4px 6px;border-bottom:1px solid #f0f0f0}
+.affected{background:#fff5f5;color:#e8003a;font-weight:700}
+.footer{text-align:center;font-size:9px;color:#aaa;margin-top:20px;letter-spacing:1px;text-transform:uppercase;border-top:1px solid #eee;padding-top:12px}
+@media print{body{padding:16px}}
+</style></head><body>
+<div class="hdr"><div><div class="logo">OKC<span>REAL</span></div><div style="font-size:11px;color:#888;letter-spacing:0.1em">PROPERTY MANAGEMENT</div></div><div style="text-align:right"><div style="font-size:11px;color:#888">${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div><div style="font-size:10px;color:#888">${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div><div style="font-size:10px;color:#888">Generated by ${esc(report.generatedBy||'System')}</div></div></div>
+<h1>⚠ Weather Damage Assessment Report</h1>
+<p style="font-size:12px;color:#555;margin-bottom:16px">Central Oklahoma — Active severe weather event assessment for OKCREAL managed properties.</p>
+
+<h2>Current Conditions</h2>
+<div class="cond-row">
+  <div><div class="cond-label">Temperature</div><div style="font-size:16px;font-weight:700">${cond.temperature != null ? cond.temperature + '°F' : '—'}</div></div>
+  <div><div class="cond-label">Wind</div><div style="font-size:16px;font-weight:700">${cond.windSpeed != null ? cond.windSpeed + ' mph' : '—'}${cond.windGust ? ' (gusts ' + cond.windGust + ')' : ''}</div></div>
+  <div><div class="cond-label">Conditions</div><div style="font-size:14px">${esc(cond.description||'—')}</div></div>
+</div>
+
+<h2>Active NWS Alerts (${alerts.length})</h2>
+${alerts.length ? alerts.map(a => `<div class="alert-box"><div class="alert-title">${esc(a.event)}</div><div class="alert-desc">${esc((a.headline||'').substring(0,300))}</div>${a.instruction ? `<div style="margin-top:4px;font-size:10px;color:#c00">${esc(a.instruction.substring(0,200))}</div>` : ''}</div>`).join('') : '<p style="font-size:12px;color:#888">No active alerts at time of report generation.</p>'}
+
+<h2>Property Impact Assessment</h2>
+<p style="font-size:11px;color:#555;margin-bottom:8px">${report.totalUnits||0} units across ${props.length} properties · ${report.totalTenants||0} tenants</p>
+<table>
+  <tr><th>Property</th><th>Units</th><th>Tenants</th><th>Status</th><th>Notes</th></tr>
+  ${props.map(p => `<tr class="${p.affected?'affected':''}"><td>${esc(p.name)}</td><td>${p.units}</td><td>${p.tenants}</td><td>${p.affected?'⚠ IN AFFECTED ZONE':'✓ Monitoring'}</td><td></td></tr>`).join('')}
+</table>
+
+<h2>Recommended Actions</h2>
+<table style="font-size:11px">
+  <tr><td style="width:30%;font-weight:600;color:#e8003a">During Event</td><td>Monitor NWS alerts. Staff should shelter in place. Do not send maintenance crews during active warnings.</td></tr>
+  <tr><td style="font-weight:600;color:#d97706">Immediately After</td><td>Drive all affected properties. Photo-document any visible damage (roof, siding, windows, fencing, trees, vehicles). Check for downed power lines. File insurance claims within 24h.</td></tr>
+  <tr><td style="font-weight:600;color:#0284c7">Within 24 Hours</td><td>Contact all tenants at affected properties. Check HVAC, water heaters, and plumbing. Board up broken windows. Arrange emergency repairs. Send mass update to property owners.</td></tr>
+  <tr><td style="font-weight:600;color:#059669">Within 72 Hours</td><td>Complete full damage assessment per property. Get contractor bids. Submit insurance documentation. Send written notices to tenants on repair timelines.</td></tr>
+</table>
+
+<div class="footer">OKCREAL CONNECT · WEATHER DAMAGE ASSESSMENT · CONFIDENTIAL · ${new Date().toISOString().split('T')[0]}</div>
+</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+// Check for severe weather on page load
+(async function wxInitCheck() {
+  try {
+    const alerts = await api('/api/weather/alerts');
+    const severe = alerts.filter(a => a.isDamaging);
+    if (severe.length) {
+      wxShowGlobalBanner(severe);
+      const badge = document.getElementById('wx-nav-badge');
+      if (badge) { badge.style.display = 'inline'; badge.textContent = severe.length; }
+    }
+  } catch(e) {}
+})();
+</script>
+
 <!-- AUDIO CONTEXT RESUME ON FIRST INTERACTION -->
 <script>
 (function() {
@@ -12461,6 +12750,14 @@ function connectAgentSse() {
       } else if (payload.type === 'rent_roll_updated') {
         // Rent roll changed — re-run auto-link in background
         api('/api/work-orders/auto-link', 'POST').catch(()=>{});
+      } else if (payload.type === 'weather_alert') {
+        wxShowGlobalBanner(payload.alerts);
+        const badge = document.getElementById('wx-nav-badge');
+        if (badge) { badge.style.display = 'inline'; badge.textContent = payload.alerts.length; }
+      } else if (payload.type === 'weather_clear') {
+        wxHideGlobalBanner();
+        const badge = document.getElementById('wx-nav-badge');
+        if (badge) badge.style.display = 'none';
       }
     } catch(err) {}
   };
