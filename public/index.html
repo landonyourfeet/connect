@@ -7345,6 +7345,7 @@ const JirehVoice = (() => {
   let _recognition = null;
   let _history = [];
   let _audio = null;
+  let _source = null; // AudioContext BufferSource — tracked for stop/close
   let _audioCtx = null;
   let _analyser = null;
   let _analyserData = null;
@@ -7454,7 +7455,9 @@ const JirehVoice = (() => {
     _speaking = false;
     _speechActive = false;
     if (_recognition) { try { _recognition.abort(); } catch(e) {} _recognition = null; }
+    if (_source) { try { _source.stop(); } catch(e) {} _source = null; }
     if (_audio) { _audio.pause(); _audio.src = ''; _audio = null; }
+    _analyser = null; _analyserData = null;
     updateMicBtn('idle');
   }
 
@@ -7641,26 +7644,33 @@ const JirehVoice = (() => {
           console.log('[JV] Decoded:', audioBuffer.duration.toFixed(1) + 's', audioBuffer.sampleRate + 'Hz');
 
           // Play through AudioContext (bypasses autoplay policy)
-          const source = _audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
+          _source = _audioCtx.createBufferSource();
+          _source.buffer = audioBuffer;
 
           // Connect to analyser for bioluminescence, then to speakers
           _analyser = _audioCtx.createAnalyser();
           _analyser.fftSize = 512;
           _analyser.smoothingTimeConstant = 0.4;
           _analyserData = new Uint8Array(_analyser.frequencyBinCount);
-          source.connect(_analyser);
+          _source.connect(_analyser);
           _analyser.connect(_audioCtx.destination);
 
-          source.onended = () => {
+          _source.onended = () => {
             console.log('[JV] Audio playback ended');
             _speaking = false;
+            _source = null;
             _analyser = null; _analyserData = null;
             if (_overlay) { _listening = true; startListening(); }
           };
 
-          source.start(0);
+          _source.start(0);
           console.log('[JV] Audio playing via AudioContext ✓');
+
+          // Execute any CRM action returned by Jireh
+          if (resp.action) {
+            console.log('[JV] Executing action:', resp.action);
+            executeVoiceAction(resp.action);
+          }
         } catch(audioErr) {
           console.error('[JV] Audio pipeline error:', audioErr.message);
           _speaking = false;
@@ -7668,7 +7678,8 @@ const JirehVoice = (() => {
           if (_overlay) { _listening = true; startListening(); }
         }
       } else {
-        // No audio — resume listening (text-only response)
+        // No audio — still execute actions, then resume listening
+        if (resp.action) executeVoiceAction(resp.action);
         if (_overlay) { _listening = true; startListening(); }
       }
     } catch(e) {
@@ -7676,6 +7687,30 @@ const JirehVoice = (() => {
       console.error('[JV]', e);
       if (_overlay) { _listening = true; startListening(); }
     }
+  }
+
+  // ── Execute CRM actions from voice commands ──────────────────────────────
+  function executeVoiceAction(action) {
+    if (!action || !action.type) return;
+    console.log('[JV] executeVoiceAction:', action.type, action.params);
+    try {
+      switch (action.type) {
+        case 'open_contact':
+          if (action.params?.personId) openContact(action.params.personId);
+          break;
+        case 'navigate':
+          if (action.params?.view) navigate(action.params.view);
+          break;
+        case 'search':
+          if (action.params?.query) {
+            const searchInput = document.getElementById('global-search');
+            if (searchInput) { searchInput.value = action.params.query; handleSearch(action.params.query); searchInput.focus(); }
+          }
+          break;
+        default:
+          console.log('[JV] Unknown action type:', action.type);
+      }
+    } catch(e) { console.warn('[JV] Action execution error:', e.message); }
   }
 
   function clearHistory() {
