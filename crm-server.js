@@ -5375,13 +5375,28 @@ app.get('/api/showings/properties', auth, async (req, res) => {
         COUNT(*) FILTER (WHERE f.verdict='go')::int             AS go_count,
         COUNT(*) FILTER (WHERE f.verdict='no-go')::int          AS nogo_count,
         COUNT(*) FILTER (WHERE f.verdict='maybe')::int          AS maybe_count,
-        MAX(s.showing_time)                                      AS last_showing
+        MAX(s.showing_time)                                      AS last_showing,
+        MIN(s.showing_time)                                      AS first_showing
       FROM showings s
       LEFT JOIN showing_feedback f ON f.showing_id = s.id
       GROUP BY s.property
       ORDER BY last_showing DESC NULLS LAST
     `);
-    res.json(rows);
+    // Calculate days on market and attach AI report status
+    const aiR = await pool.query(`SELECT property, status, generated_at FROM property_ai_reports`).catch(()=>({rows:[]}));
+    const aiMap = {};
+    for (const a of aiR.rows) aiMap[a.property] = { status: a.status, generatedAt: a.generated_at };
+
+    const enriched = rows.map(r => {
+      const dom = r.first_showing ? Math.floor((Date.now() - new Date(r.first_showing).getTime()) / 86400000) : null;
+      return {
+        ...r,
+        days_on_market: dom,
+        dom_status: dom === null ? null : dom <= 14 ? 'gold' : dom <= 30 ? 'caution' : 'danger',
+        ai_report: aiMap[r.property] || null,
+      };
+    });
+    res.json(enriched);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -6999,60 +7014,59 @@ async function scrapeAppFolioListings() {
   _listingsCache.lastFetch = now;
   try {
     const resp = await fetch(APPFOLIO_URL, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OKCREAL-Connect/1.0)' },
-      signal: AbortSignal.timeout(8000)
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(10000)
     });
     if (!resp.ok) { console.warn('[Listings] AppFolio:', resp.status); return _listingsCache.listings; }
     const html = await resp.text();
 
     const listings = [];
-    // Split by "View Details" links to find each card
-    const detailPattern = /\/listings\/detail\/([a-f0-9-]+)/g;
-    const uids = [];
-    let m;
-    while ((m = detailPattern.exec(html)) !== null) {
-      if (!uids.includes(m[1])) uids.push(m[1]);
-    }
+    // AppFolio uses 'js-listing-item' class for each card
+    // Split HTML by these card boundaries
+    const cardParts = html.split(/class="[^"]*js-listing-item[^"]*"/);
 
-    for (const uid of uids) {
-      // Get a chunk of HTML around this listing
-      const idx = html.indexOf(`/listings/detail/${uid}`);
-      if (idx === -1) continue;
-      const start = Math.max(0, html.lastIndexOf('RENT', idx) - 200);
-      const end = Math.min(html.length, html.indexOf('View Details', idx) + 200);
-      const chunk = html.substring(start, end);
+    for (let i = 1; i < cardParts.length; i++) {
+      const card = cardParts[i];
+      // Get enough of the card HTML (up to next major section)
+      const cardHtml = card.substring(0, 5000);
 
-      // Extract fields with regex
-      const rent = chunk.match(/\$[\d,]+/)?.[0] || '';
-      const rentNum = parseInt(rent.replace(/[$,]/g, '')) || 0;
-      const sqft = chunk.match(/Square Feet[:\s]*(\d[\d,]*)/i)?.[1]?.replace(',','') || chunk.match(/(\d,?\d{3})\s*(?:sq|SF)/)?.[1]?.replace(',','') || '';
-      const bedBath = chunk.match(/(\d+\s*bd\s*\/\s*\d+\s*ba|\d+\s*ba)/i)?.[0] || '';
-      const available = chunk.match(/Available\s*(NOW|[\w\s,]+\d{4})/i)?.[1] || 'NOW';
-      // Title: look for bold/heading text before the address
-      const titleMatch = chunk.match(/<(?:h[23]|b|strong)[^>]*>([^<]+)</i);
-      const title = titleMatch?.[1]?.trim() || '';
-      // Address
-      const addrMatch = chunk.match(/(\d+[^,]+,\s*(?:Oklahoma City|Edmond|Norman|Moore|Yukon|Midwest City|Del City|Harrah|Choctaw|Shawnee|Mustang)[^<]*(?:OK\s*\d{5}))/i);
-      const address = addrMatch?.[1]?.trim() || '';
-      // Pet policy
-      const petMatch = chunk.match(/Pet Policy:\s*([^<]+)/i);
-      const petPolicy = petMatch?.[1]?.trim() || '';
-      // Description snippet
-      const descMatch = chunk.match(/Available\s*(?:NOW|[\w\s,]+)\s*([A-Z][^<]{50,300})/);
-      const description = descMatch?.[1]?.trim()?.substring(0, 250) || '';
+      // Extract UUID from detail link
+      const uidMatch = cardHtml.match(/\/listings\/detail\/([a-f0-9-]+)/);
+      if (!uidMatch) continue;
+      const uid = uidMatch[1];
 
+      // Helper: extract text content from an element with a specific class
+      const getText = (cls) => {
+        const re = new RegExp(`class="[^"]*${cls}[^"]*"[^>]*>([\\s\\S]*?)(?:<\\/|<[a-z])`);
+        const m = cardHtml.match(re);
+        if (!m) return '';
+        return m[1].replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim();
+      };
+
+      const title = getText('js-listing-title');
+      const address = getText('js-listing-address');
+      const rent = getText('js-listing-blurb-rent');
+      const bedBath = getText('js-listing-blurb-bed-bath');
+      const sqftRaw = getText('js-listing-square-feet');
+      const available = getText('js-listing-available');
+      const description = getText('js-listing-description').substring(0, 250);
+      const petPolicy = getText('js-listing-pet-policy');
+
+      const rentNum = parseInt((rent || '').replace(/[$,]/g, '')) || 0;
+      const sqft = sqftRaw ? parseInt(sqftRaw.replace(/\D/g, '')) || null : null;
       const minIncome = Math.ceil(rentNum * INCOME_MULTIPLIER);
 
       listings.push({
-        uid, title, address, rent, rentNum, sqft: sqft ? parseInt(sqft) : null,
-        bedBath, available, petPolicy, description,
-        minIncome,
+        uid, title, address, rent: rent || '', rentNum,
+        sqft, bedBath, available: available || 'NOW',
+        petPolicy, description, minIncome,
         showingUrl: `https://teamokcreal.appfolio.com/listings/showings/new?listable_uid=${uid}&source=Website`,
       });
     }
 
     _listingsCache.listings = listings;
-    console.log(`[Listings] Scraped ${listings.length} available listings from AppFolio`);
+    console.log(`[Listings] Scraped ${listings.length} listings from AppFolio`);
+    if (listings.length) console.log(`[Listings] First: "${listings[0].title}" at ${listings[0].rent} — ${listings[0].address}`);
     return listings;
   } catch(e) { console.warn('[Listings] Scrape error:', e.message); return _listingsCache.listings; }
 }
@@ -7151,7 +7165,7 @@ async function getPersonContextForCall(personId) {
 // WEATHER CONTROL CENTER — NWS Alerts + Property Impact
 // =============================================================================
 
-let _weatherCache = { alerts: [], conditions: null, lastFetch: 0 };
+let _weatherCache = { alerts: [], conditions: null, forecast: null, lastFetch: 0 };
 const WEATHER_COUNTIES = ['Oklahoma','Cleveland','Pottawatomie','Canadian','Logan'];
 const WEATHER_CENTER = { lat: 35.4676, lon: -97.5164 }; // OKC
 const SEVERE_TYPES = ['Tornado Warning','Tornado Watch','Severe Thunderstorm Warning','Severe Thunderstorm Watch','Flash Flood Warning','Winter Storm Warning','Ice Storm Warning','Blizzard Warning','Wind Advisory','High Wind Warning','Freeze Warning','Hard Freeze Warning','Wind Chill Warning','Extreme Cold Warning'];
@@ -7222,16 +7236,102 @@ async function fetchNWSConditions() {
   return null;
 }
 
+// 7-day forecast — highlights freezing and severe storm conditions
+let _forecastGridUrl = null; // cached after first /points lookup
+async function fetchNWS7DayForecast() {
+  try {
+    // Get gridpoint URL if we don't have it cached
+    if (!_forecastGridUrl) {
+      const ptResp = await fetch(`https://api.weather.gov/points/${WEATHER_CENTER.lat},${WEATHER_CENTER.lon}`, {
+        headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)' },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!ptResp.ok) { console.warn('[Weather] Points API:', ptResp.status); return null; }
+      const ptData = await ptResp.json();
+      _forecastGridUrl = ptData.properties?.forecast;
+      if (!_forecastGridUrl) return null;
+    }
+
+    const resp = await fetch(_forecastGridUrl, {
+      headers: { 'User-Agent': '(OKCREAL Connect, admin@okcreal.com)' },
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!resp.ok) { console.warn('[Weather] Forecast API:', resp.status); return null; }
+    const data = await resp.json();
+    const periods = data.properties?.periods || [];
+
+    // Process into daily summaries (combine day + night periods)
+    const days = [];
+    const seen = new Set();
+    for (const p of periods) {
+      const dt = new Date(p.startTime);
+      const dayKey = dt.toISOString().split('T')[0];
+      if (seen.has(dayKey) && !p.isDaytime) {
+        // Add night low to existing day
+        const existing = days.find(d => d.date === dayKey);
+        if (existing) {
+          existing.low = p.temperature;
+          existing.nightForecast = p.shortForecast;
+          existing.nightDetail = p.detailedForecast;
+        }
+        continue;
+      }
+      if (seen.has(dayKey)) continue;
+      seen.add(dayKey);
+
+      const forecast = (p.shortForecast || '').toLowerCase();
+      const detail = (p.detailedForecast || '').toLowerCase();
+      const combined = forecast + ' ' + detail;
+
+      // Threat detection
+      const isFreezing = p.temperature !== null && p.temperature <= 32;
+      const isNearFreezing = p.temperature !== null && p.temperature <= 36;
+      const isStorm = /thunderstorm|severe|tornado|hail|damaging wind/i.test(combined);
+      const isHeavyRain = /heavy rain|flood|downpour/i.test(combined);
+      const isWintry = /ice|sleet|freezing rain|snow|winter|blizzard/i.test(combined);
+      const isWindy = /high wind|wind advisory|damaging wind/i.test(combined) || (p.windSpeed && parseInt(p.windSpeed) >= 30);
+      const precipChance = p.probabilityOfPrecipitation?.value || 0;
+
+      let threat = 'clear';
+      let threatLabel = '';
+      if (isStorm) { threat = 'danger'; threatLabel = '⛈ STORMS'; }
+      else if (isFreezing || isWintry) { threat = 'freeze'; threatLabel = '❄ FREEZE'; }
+      else if (isNearFreezing) { threat = 'freeze-watch'; threatLabel = '🥶 NEAR FREEZE'; }
+      else if (isHeavyRain) { threat = 'warning'; threatLabel = '🌧 HEAVY RAIN'; }
+      else if (isWindy) { threat = 'warning'; threatLabel = '💨 HIGH WIND'; }
+      else if (precipChance >= 50) { threat = 'caution'; threatLabel = '🌧 RAIN LIKELY'; }
+
+      days.push({
+        date: dayKey,
+        name: p.name || dt.toLocaleDateString('en-US', { weekday: 'short' }),
+        dayOfWeek: dt.toLocaleDateString('en-US', { weekday: 'short' }),
+        high: p.isDaytime ? p.temperature : null,
+        low: null,
+        forecast: p.shortForecast,
+        detail: p.detailedForecast,
+        nightForecast: null, nightDetail: null,
+        windSpeed: p.windSpeed,
+        precipChance,
+        threat, threatLabel,
+        isFreezing, isNearFreezing, isStorm, isHeavyRain, isWintry, isWindy,
+      });
+      if (days.length >= 7) break;
+    }
+    return days;
+  } catch(e) { console.warn('[Weather] 7-day error:', e.message); return null; }
+}
+
 async function refreshWeatherCache() {
   const now = Date.now();
   const hasData = _weatherCache.conditions && _weatherCache.conditions.temperature != null;
   if (hasData && now - _weatherCache.lastFetch < 120000) return;
   _weatherCache.lastFetch = now;
   try {
-    const [alerts, conditions] = await Promise.all([fetchNWSAlerts(), fetchNWSConditions()]);
+    const [alerts, conditions, forecast] = await Promise.all([fetchNWSAlerts(), fetchNWSConditions(), fetchNWS7DayForecast()]);
     const prevSevere = _weatherCache.alerts.filter(a => a.isSevere).length;
     if (alerts) _weatherCache.alerts = alerts;
     if (conditions) _weatherCache.conditions = conditions;
+    if (forecast) _weatherCache.forecast = forecast;
 
     // Broadcast if new severe alerts appeared
     const nowSevere = (alerts||[]).filter(a => a.isSevere).length;
@@ -7288,6 +7388,7 @@ app.get('/api/weather/dashboard', auth, async (req, res) => {
     res.json({
       alerts: _weatherCache.alerts,
       conditions: _weatherCache.conditions,
+      forecast: _weatherCache.forecast,
       properties,
       severeCount: _weatherCache.alerts.filter(a => a.isSevere).length,
       damagingCount: damagingAlerts.length,
@@ -7438,6 +7539,14 @@ app.get('/api/weather/report', auth, async (req, res) => {
 
 // =============================================================================
 // SPA CATCH-ALL — must be AFTER all API routes
+// Mobile PWA route
+app.get('/m', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'mobile.html'));
+});
+app.get('/m/*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'mobile.html'));
+});
+
 // Serves index.html for every frontend path: /dashboard, /showings, /inbox, etc.
 // =============================================================================
 app.get('*', (req, res, next) => {
