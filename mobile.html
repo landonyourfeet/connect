@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="manifest" href="/manifest.json">
+<title>OKCREAL Connect</title>
+<script src="/twilio-voice.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --red: #e8003a; --green: #00e87a; --amber: #ff8c00; --cyan: #00c8ff;
+  --bg: #0a0a0f; --bg2: #12121a; --bg3: #1a1a26; --bg4: #22222e;
+  --text: #f0f0f5; --text2: #a0a0b0; --text3: #606070;
+  --border: #2a2a36; --font: 'DM Sans', sans-serif; --mono: 'JetBrains Mono', monospace;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100dvh; overflow: hidden; }
+input, button, textarea { font-family: inherit; border: none; outline: none; }
+
+/* ── Status Bar + Header ── */
+.m-header {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  padding: calc(var(--safe-top) + 8px) 16px 8px;
+  background: linear-gradient(180deg, var(--bg) 60%, transparent);
+  display: flex; align-items: center; gap: 10px;
+}
+.m-logo { font-size: 18px; font-weight: 900; letter-spacing: 0.08em; }
+.m-logo span { color: var(--red); }
+.m-header-right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+.m-header-badge { background: var(--red); color: #fff; font-family: var(--mono); font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 8px; }
+.m-user-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--bg3); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--text2); }
+
+/* ── Bottom Nav ── */
+.m-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  padding: 6px 8px calc(var(--safe-bottom) + 6px);
+  background: var(--bg2); border-top: 1px solid var(--border);
+  display: flex; justify-content: space-around;
+}
+.m-nav-item {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 4px 12px; border-radius: 8px; cursor: pointer; position: relative;
+  transition: all 0.15s; font-size: 18px; background: none; color: var(--text3);
+}
+.m-nav-item.active { color: var(--red); }
+.m-nav-item span { font-family: var(--mono); font-size: 8px; letter-spacing: 0.06em; font-weight: 600; }
+.m-nav-badge {
+  position: absolute; top: -2px; right: 4px;
+  background: var(--red); color: #fff; font-family: var(--mono); font-size: 8px; font-weight: 700;
+  padding: 1px 4px; border-radius: 6px; min-width: 14px; text-align: center;
+}
+
+/* ── Views ── */
+.m-views { position: fixed; top: 0; left: 0; right: 0; bottom: 0; overflow: hidden; }
+.m-view {
+  position: absolute; inset: 0;
+  padding: calc(var(--safe-top) + 50px) 16px calc(var(--safe-bottom) + 64px);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: none; opacity: 0; transition: opacity 0.2s;
+}
+.m-view.active { display: block; opacity: 1; }
+
+/* ── Cards ── */
+.m-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px; margin-bottom: 10px; transition: transform 0.1s;
+}
+.m-card:active { transform: scale(0.98); }
+.m-card-title { font-family: var(--mono); font-size: 8px; letter-spacing: 2px; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
+.m-card-title.red { color: var(--red); }
+.m-card-title.green { color: var(--green); }
+.m-card-title.cyan { color: var(--cyan); }
+.m-card-title.amber { color: var(--amber); }
+
+/* ── Alert Banner ── */
+.m-alert-banner {
+  background: rgba(232,0,58,0.1); border: 1px solid rgba(232,0,58,0.3); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 10px; display: none;
+  animation: mPulse 2s ease-in-out infinite;
+}
+@keyframes mPulse { 0%,100% { opacity:1 } 50% { opacity:0.7 } }
+
+/* ── Search ── */
+.m-search-bar {
+  position: sticky; top: 0; z-index: 10; padding: 0 0 10px;
+}
+.m-search-input {
+  width: 100%; height: 44px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0 14px 0 38px; color: var(--text); font-size: 14px;
+}
+.m-search-input::placeholder { color: var(--text3); }
+.m-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 16px; color: var(--text3); pointer-events: none; }
+
+/* ── Showing cards ── */
+.m-showing-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; margin-bottom: 8px; display: flex; gap: 12px; align-items: center;
+}
+.m-showing-card.imminent { border-color: var(--amber); background: rgba(255,140,0,0.05); }
+.m-showing-card.in-progress { border-color: var(--red); background: rgba(232,0,58,0.05); animation: mPulse 2s ease-in-out infinite; }
+
+/* ── Contact card ── */
+.m-contact-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px; margin-bottom: 8px; cursor: pointer; transition: all 0.15s;
+}
+.m-contact-card:active { transform: scale(0.98); background: var(--bg3); }
+
+/* ── Login ── */
+.m-login {
+  position: fixed; inset: 0; z-index: 200; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.m-login-card {
+  width: 100%; max-width: 340px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 16px;
+  padding: 32px 24px;
+}
+.m-login input {
+  width: 100%; height: 44px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0 14px; color: var(--text); font-size: 14px; margin-bottom: 12px;
+}
+.m-login input:focus { border-color: var(--red); }
+.m-login-btn {
+  width: 100%; height: 46px; background: var(--red); color: #fff;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.08em; border-radius: 8px;
+  cursor: pointer; transition: opacity 0.15s;
+}
+.m-login-btn:active { opacity: 0.8; }
+.m-login-err { color: var(--red); font-size: 12px; text-align: center; margin-top: 8px; min-height: 16px; }
+
+/* ── Person detail ── */
+.m-person-view { display: none; }
+.m-person-view.active { display: block; }
+.m-person-header { text-align: center; padding: 16px 0; }
+.m-person-avatar {
+  width: 56px; height: 56px; border-radius: 50%; background: var(--bg3);
+  border: 2px solid var(--red); display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 800; color: var(--red); margin: 0 auto 8px;
+}
+.m-person-actions { display: flex; gap: 8px; justify-content: center; margin: 12px 0; }
+.m-person-action {
+  width: 44px; height: 44px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer;
+}
+.m-person-action:active { background: var(--bg4); }
+
+/* ── Utilities ── */
+.m-stat { text-align: center; }
+.m-stat-val { font-family: var(--mono); font-weight: 800; }
+.m-stat-label { font-family: var(--mono); font-size: 7px; letter-spacing: 1.5px; color: var(--text3); text-transform: uppercase; }
+.m-spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--red); border-radius: 50%; animation: mSpin 0.6s linear infinite; margin: 20px auto; }
+@keyframes mSpin { to { transform: rotate(360deg) } }
+.m-empty { text-align: center; padding: 40px 0; color: var(--text3); font-size: 13px; }
+.m-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-family: var(--mono); font-size: 9px; font-weight: 600; }
+.m-divider { height: 1px; background: var(--border); margin: 12px 0; }
+
+/* ── Call Screen ── */
+.m-call-overlay {
+  position: fixed; inset: 0; z-index: 500; background: var(--bg);
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  padding: calc(var(--safe-top) + 20px) 24px calc(var(--safe-bottom) + 20px);
+}
+.m-call-overlay.active { display: flex; }
+.m-call-overlay.ringing { background: linear-gradient(180deg, #1a0010 0%, var(--bg) 100%); }
+.m-call-status { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text3); margin-bottom: 16px; }
+.m-call-name { font-size: 28px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+.m-call-number { font-family: var(--mono); font-size: 13px; color: var(--text3); margin-bottom: 8px; }
+.m-call-timer { font-family: var(--mono); font-size: 16px; color: var(--text2); margin-bottom: 40px; }
+.m-call-actions { display: flex; gap: 20px; align-items: center; }
+.m-call-btn {
+  width: 64px; height: 64px; border-radius: 50%; border: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; cursor: pointer; transition: all 0.15s;
+}
+.m-call-btn:active { transform: scale(0.9); }
+.m-call-btn.end { background: var(--red); color: #fff; }
+.m-call-btn.answer { background: var(--green); color: #fff; animation: mPulse 1s ease-in-out infinite; }
+.m-call-btn.mute { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); }
+.m-call-btn.mute.active { background: var(--amber); color: #000; }
+.m-call-via { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 2px; margin-top: 30px; }
+
+/* ── SMS Compose Modal ── */
+.m-sms-modal {
+  position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,0.7);
+  display: none; align-items: flex-end; justify-content: center;
+}
+.m-sms-modal.active { display: flex; }
+.m-sms-sheet {
+  width: 100%; max-width: 500px; background: var(--bg2);
+  border-radius: 16px 16px 0 0; padding: 16px 16px calc(var(--safe-bottom) + 16px);
+  animation: mSlideUp 0.25s ease;
+}
+@keyframes mSlideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+.m-sms-to { font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+.m-sms-input {
+  width: 100%; min-height: 80px; max-height: 150px; background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+  color: var(--text); font-size: 14px; resize: none;
+}
+.m-sms-input:focus { border-color: var(--red); }
+.m-sms-footer { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.m-sms-send {
+  margin-left: auto; padding: 10px 24px; background: var(--red); color: #fff;
+  font-weight: 700; font-size: 13px; border-radius: 8px; cursor: pointer;
+}
+.m-sms-send:active { opacity: 0.8; }
+.m-sms-cancel { padding: 10px 16px; background: var(--bg3); color: var(--text3); border-radius: 8px; cursor: pointer; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN ── -->
+<div class="m-login" id="m-login">
+  <div style="text-align:center;margin-bottom:24px">
+    <div class="m-logo" style="font-size:28px">OKC<span>REAL</span> CONNECT</div>
+    <div style="font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--text3);margin-top:4px">FIELD AGENT MOBILE</div>
+  </div>
+  <div class="m-login-card">
+    <input type="email" id="m-email" placeholder="Email" autocapitalize="off">
+    <input type="password" id="m-pass" placeholder="Password">
+    <button class="m-login-btn" onclick="mLogin()">SIGN IN</button>
+    <div class="m-login-err" id="m-login-err"></div>
+  </div>
+</div>
+
+<!-- ── HEADER ── -->
+<div class="m-header" id="m-header" style="display:none">
+  <div class="m-logo">OKC<span>REAL</span></div>
+  <div class="m-header-right">
+    <div id="m-wx-badge" style="display:none" onclick="mNav('weather')"></div>
+    <div class="m-user-avatar" id="m-avatar">?</div>
+  </div>
+</div>
+
+<!-- ── VIEWS ── -->
+<div class="m-views" id="m-views" style="display:none">
+
+  <!-- Dashboard -->
+  <div class="m-view active" id="mv-dash">
+    <div id="m-alert-area"></div>
+    <div class="m-card">
+      <div class="m-card-title cyan">Quick Stats</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px" id="m-dash-stats">
+        <div class="m-stat"><div class="m-stat-val" style="font-size:20px;color:var(--cyan)" id="ms-today">—</div><div class="m-stat-label">Today</div></div>
+        <div class="m-stat"><div class="m-stat-val" style="font-size:20px;color:var(--text)" id="ms-week">—</div><div class="m-stat-label">This Wk</div></div>
+        <div class="m-stat"><div class="m-stat-val" style="font-size:20px;color:var(--green)" id="ms-upcoming">—</div><div class="m-stat-label">Upcoming</div></div>
+        <div class="m-stat"><div class="m-stat-val" style="font-size:20px;color:var(--amber)" id="ms-feedback">—</div><div class="m-stat-label">Need FB</div></div>
+      </div>
+    </div>
+    <div class="m-card" id="m-next-showing" style="display:none">
+      <div class="m-card-title red">Next Showing</div>
+      <div id="m-next-showing-body"></div>
+    </div>
+    <div class="m-card" id="m-active-showing" style="display:none">
+      <div class="m-card-title red" style="display:flex;align-items:center;gap:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--red);animation:mPulse 1s ease-in-out infinite"></span>
+        Tour In Progress
+      </div>
+      <div id="m-active-showing-body"></div>
+    </div>
+    <div class="m-card">
+      <div class="m-card-title">Weather — Central Oklahoma</div>
+      <div id="m-dash-weather" style="font-size:13px;color:var(--text2)">Loading…</div>
+    </div>
+    <div class="m-card">
+      <div class="m-card-title">Available Listings</div>
+      <div id="m-dash-listings" style="font-size:13px;color:var(--text2)">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <div class="m-view" id="mv-search">
+    <div class="m-search-bar" style="position:relative">
+      <span class="m-search-icon">🔍</span>
+      <input class="m-search-input" id="m-search-input" type="text" placeholder="Search name, phone, email…" oninput="mSearchDebounce()">
+    </div>
+    <div id="m-search-results"></div>
+    <div class="m-person-view" id="m-person-view"></div>
+  </div>
+
+  <!-- Showings -->
+  <div class="m-view" id="mv-showings">
+    <div class="m-card-title cyan" style="margin-bottom:10px">Upcoming Showings</div>
+    <div id="m-showings-list"><div class="m-spinner"></div></div>
+  </div>
+
+  <!-- Weather -->
+  <div class="m-view" id="mv-weather">
+    <div id="m-weather-content"><div class="m-spinner"></div></div>
+  </div>
+
+  <!-- More -->
+  <div class="m-view" id="mv-more">
+    <div class="m-card" onclick="window.location.href='/'">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:20px">🖥</span>
+        <div><div style="font-weight:700">Desktop CRM</div><div style="font-size:11px;color:var(--text3)">Open full Connect interface</div></div>
+      </div>
+    </div>
+    <div class="m-card" onclick="mToggleJireh()">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:20px">🤖</span>
+        <div><div style="font-weight:700">Jireh Auto-Answer</div><div style="font-size:11px;color:var(--text3)" id="m-jireh-status">Loading…</div></div>
+        <div style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:700" id="m-jireh-label">—</div>
+      </div>
+    </div>
+    <div class="m-card" id="m-listings-card">
+      <div class="m-card-title cyan">Available Listings (Live)</div>
+      <div id="m-listings-full"><div class="m-spinner"></div></div>
+    </div>
+    <div class="m-divider"></div>
+    <div class="m-card" onclick="mLogout()" style="border-color:rgba(232,0,58,0.3)">
+      <div style="text-align:center;color:var(--red);font-weight:700">Sign Out</div>
+    </div>
+    <div style="text-align:center;padding:16px;font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:2px">OKCREAL CONNECT · MOBILE v1.0</div>
+  </div>
+</div>
+
+<!-- ── CALL SCREEN OVERLAY ── -->
+<div class="m-call-overlay" id="m-call-overlay">
+  <div class="m-call-status" id="m-call-status">Calling…</div>
+  <div class="m-call-name" id="m-call-name">—</div>
+  <div class="m-call-number" id="m-call-number">—</div>
+  <div class="m-call-timer" id="m-call-timer">00:00</div>
+  <div class="m-call-actions" id="m-call-actions">
+    <button class="m-call-btn mute" id="m-mute-btn" onclick="mToggleMute()">🎙</button>
+    <button class="m-call-btn end" onclick="mEndCall()">✕</button>
+  </div>
+  <div class="m-call-via">via OKCREAL Resident Support Line</div>
+</div>
+
+<!-- ── INCOMING CALL BANNER ── -->
+<div class="m-call-overlay ringing" id="m-call-incoming" style="display:none">
+  <div class="m-call-status" style="color:var(--green)">Incoming Call</div>
+  <div class="m-call-name" id="m-incoming-name">—</div>
+  <div class="m-call-number" id="m-incoming-number">—</div>
+  <div style="height:40px"></div>
+  <div class="m-call-actions">
+    <button class="m-call-btn end" onclick="mDeclineCall()">✕</button>
+    <button class="m-call-btn answer" onclick="mAnswerCall()">📞</button>
+  </div>
+  <div class="m-call-via">via OKCREAL Resident Support Line</div>
+</div>
+
+<!-- ── SMS COMPOSE MODAL ── -->
+<div class="m-sms-modal" id="m-sms-modal" onclick="if(event.target===this)mCloseSms()">
+  <div class="m-sms-sheet">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-weight:700;font-size:15px">Send Text</div>
+      <button onclick="mCloseSms()" style="background:none;color:var(--text3);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div class="m-sms-to" id="m-sms-to">To: —</div>
+    <textarea class="m-sms-input" id="m-sms-input" placeholder="Type a message…" rows="3"></textarea>
+    <div class="m-sms-footer">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--text3)">Sent from OKCREAL line</span>
+      <button class="m-sms-cancel" onclick="mCloseSms()">Cancel</button>
+      <button class="m-sms-send" id="m-sms-send" onclick="mSendText()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── BOTTOM NAV ── -->
+<div class="m-nav" id="m-nav" style="display:none">
+  <button class="m-nav-item active" data-view="dash" onclick="mNav('dash')">
+    🏠<span>Home</span>
+  </button>
+  <button class="m-nav-item" data-view="search" onclick="mNav('search')">
+    🔍<span>Search</span>
+  </button>
+  <button class="m-nav-item" data-view="showings" onclick="mNav('showings')">
+    🏘<span>Showings</span>
+    <div class="m-nav-badge" id="mnb-showings" style="display:none"></div>
+  </button>
+  <button class="m-nav-item" data-view="weather" onclick="mNav('weather')">
+    ⛈<span>Weather</span>
+    <div class="m-nav-badge" id="mnb-weather" style="display:none"></div>
+  </button>
+  <button class="m-nav-item" data-view="more" onclick="mNav('more')">
+    ⋯<span>More</span>
+  </button>
+</div>
+
+<script>
+// ── Auth ──────────────────────────────────────────────────────────────
+let _token = localStorage.getItem('connect_token');
+let _user = null;
+try { _user = JSON.parse(localStorage.getItem('connect_user')); } catch(e) {}
+
+async function mApi(url, method, body) {
+  const opts = { method: method || 'GET', headers: {} };
+  if (_token) opts.headers['Authorization'] = 'Bearer ' + _token;
+  if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+async function mLogin() {
+  const email = document.getElementById('m-email').value.trim();
+  const pass = document.getElementById('m-pass').value;
+  const err = document.getElementById('m-login-err');
+  err.textContent = '';
+  if (!email || !pass) { err.textContent = 'Enter email and password'; return; }
+  try {
+    const d = await mApi('/api/auth/login', 'POST', { email, password: pass });
+    _token = d.token; _user = d.agent;
+    localStorage.setItem('connect_token', _token);
+    localStorage.setItem('connect_user', JSON.stringify(_user));
+    mLaunch();
+  } catch(e) { err.textContent = 'Invalid credentials'; }
+}
+document.getElementById('m-pass').addEventListener('keydown', e => { if (e.key === 'Enter') mLogin(); });
+
+function mLogout() {
+  _token = null; _user = null;
+  localStorage.removeItem('connect_token'); localStorage.removeItem('connect_user');
+  location.reload();
+}
+
+// ── Launch ────────────────────────────────────────────────────────────
+function mLaunch() {
+  document.getElementById('m-login').style.display = 'none';
+  document.getElementById('m-header').style.display = '';
+  document.getElementById('m-views').style.display = '';
+  document.getElementById('m-nav').style.display = '';
+  const initials = _user ? (_user.name || '').split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2) : '?';
+  document.getElementById('m-avatar').textContent = initials;
+  mLoadDashboard();
+  mStartSSE();
+  mInitTwilio(); // Initialize Twilio Voice for CRM calls
+  setInterval(mLoadDashboard, 60000); // refresh every minute
+}
+
+if (_token && _user) mLaunch();
+
+// ── Navigation ───────────────────────────────────────────────────────
+let _currentView = 'dash';
+function mNav(view) {
+  _currentView = view;
+  document.querySelectorAll('.m-view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.m-nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('mv-' + view)?.classList.add('active');
+  document.querySelector(`.m-nav-item[data-view="${view}"]`)?.classList.add('active');
+  // Hide person detail when leaving search
+  if (view !== 'search') {
+    const pv = document.getElementById('m-person-view');
+    if (pv) { pv.classList.remove('active'); pv.innerHTML = ''; }
+    const sr = document.getElementById('m-search-results');
+    if (sr) sr.style.display = '';
+  }
+  // Lazy load views
+  if (view === 'showings') mLoadShowings();
+  if (view === 'weather') mLoadWeather();
+  if (view === 'more') mLoadMore();
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────
+async function mLoadDashboard() {
+  try {
+    const [dash, wx, listings] = await Promise.all([
+      mApi('/api/showings/dashboard').catch(()=>null),
+      mApi('/api/weather/dashboard').catch(()=>null),
+      mApi('/api/listings').catch(()=>[]),
+    ]);
+    // Stats
+    if (dash) {
+      document.getElementById('ms-today').textContent = dash.kpis?.today || 0;
+      document.getElementById('ms-week').textContent = dash.kpis?.this_week || 0;
+      document.getElementById('ms-upcoming').textContent = dash.kpis?.upcoming || 0;
+      document.getElementById('ms-feedback').textContent = dash.kpis?.pending_feedback || 0;
+      // Badge
+      const badge = document.getElementById('mnb-showings');
+      if (dash.kpis?.today > 0) { badge.style.display = ''; badge.textContent = dash.kpis.today; }
+      else badge.style.display = 'none';
+    }
+    // Next showing
+    if (dash?.upcoming?.length) {
+      const s = dash.upcoming[0];
+      const dt = new Date(s.showing_time);
+      const diff = dt - Date.now();
+      const hrs = Math.floor(diff / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      const card = document.getElementById('m-next-showing');
+      card.style.display = '';
+      document.getElementById('m-next-showing-body').innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-family:var(--mono);font-size:22px;font-weight:800;color:${diff < 3600000 ? 'var(--amber)' : 'var(--green)'}">${hrs}h ${mins}m</div>
+          <div>
+            <div style="font-weight:700;font-size:13px">${esc(s.guest_name || 'Guest')}</div>
+            <div style="font-size:11px;color:var(--text3)">${esc((s.property||'').split(' - ')[0])}</div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text3)">${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+          </div>
+        </div>`;
+    }
+    // In-progress
+    if (dash?.inProgress?.length) {
+      const card = document.getElementById('m-active-showing');
+      card.style.display = '';
+      const s = dash.inProgress[0];
+      document.getElementById('m-active-showing-body').innerHTML = `
+        <div style="font-weight:700;font-size:14px;color:var(--red)">${esc(s.guest_name || 'Guest')}</div>
+        <div style="font-size:12px;color:var(--text2)">${esc((s.property||'').split(' - ')[0])}</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:4px">Tour started ${new Date(s.showing_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>`;
+    }
+    // Weather
+    if (wx) {
+      const c = wx.conditions || {};
+      const alerts = wx.alerts || [];
+      let wxHtml = `<div style="display:flex;gap:16px;align-items:center">`;
+      wxHtml += `<div style="font-family:var(--mono);font-size:24px;font-weight:800;color:var(--text)">${c.temperature != null ? c.temperature + '°F' : '—'}</div>`;
+      wxHtml += `<div><div style="font-size:12px;color:var(--text2)">${esc(c.description||'—')}</div>`;
+      wxHtml += `<div style="font-family:var(--mono);font-size:10px;color:var(--text3)">Wind: ${c.windSpeed||'—'} mph${c.windGust ? ' (gusts '+c.windGust+')' : ''}</div></div>`;
+      wxHtml += `</div>`;
+      if (alerts.length) {
+        const severe = alerts.filter(a => a.isSevere);
+        wxHtml += `<div style="margin-top:8px;padding:6px 8px;background:rgba(255,140,0,0.1);border-radius:6px;font-size:11px;color:var(--amber)">⚠ ${alerts.length} alert${alerts.length>1?'s':''}: ${alerts.map(a=>a.event).join(', ')}</div>`;
+        const wxBadge = document.getElementById('mnb-weather');
+        if (severe.length) { wxBadge.style.display = ''; wxBadge.textContent = severe.length; }
+      }
+      document.getElementById('m-dash-weather').innerHTML = wxHtml;
+    }
+    // Listings
+    if (listings.length) {
+      document.getElementById('m-dash-listings').innerHTML = `
+        <div style="font-family:var(--mono);font-size:11px;color:var(--green);margin-bottom:4px">${listings.length} properties available</div>
+        ${listings.slice(0,3).map(l => `<div style="font-size:11px;color:var(--text2);padding:2px 0">${esc(l.title||l.address)} — ${l.rent} · ${l.bedBath}</div>`).join('')}
+        ${listings.length > 3 ? `<div style="font-size:10px;color:var(--text3);margin-top:4px">+${listings.length-3} more — see More tab</div>` : ''}`;
+    }
+  } catch(e) { console.error('Dash error:', e); }
+}
+
+// ── Search ───────────────────────────────────────────────────────────
+let _searchTimer = null;
+function mSearchDebounce() {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(mSearch, 300);
+}
+async function mSearch() {
+  const q = document.getElementById('m-search-input').value.trim();
+  const el = document.getElementById('m-search-results');
+  if (!q || q.length < 2) { el.innerHTML = '<div class="m-empty">Type at least 2 characters to search</div>'; return; }
+  el.innerHTML = '<div class="m-spinner"></div>';
+  try {
+    const results = await mApi(`/api/people?q=${encodeURIComponent(q)}&limit=20`);
+    if (!results.length) { el.innerHTML = '<div class="m-empty">No contacts found</div>'; return; }
+    el.innerHTML = results.map(p => `
+      <div class="m-contact-card" onclick="mOpenPerson('${p.id}')">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--text2);flex-shrink:0">${esc(((p.first_name||'')[0]||'') + ((p.last_name||'')[0]||''))}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.first_name||'')} ${esc(p.last_name||'')}</div>
+            <div style="font-size:11px;color:var(--text3)">${esc(p.phone||'')} ${p.stage ? '· ' + esc(p.stage) : ''}</div>
+          </div>
+          <div style="color:var(--text3);font-size:14px">→</div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { el.innerHTML = `<div class="m-empty" style="color:var(--red)">${e.message}</div>`; }
+}
+
+async function mOpenPerson(id) {
+  document.getElementById('m-search-results').style.display = 'none';
+  const pv = document.getElementById('m-person-view');
+  pv.classList.add('active');
+  pv.innerHTML = '<div class="m-spinner"></div>';
+  try {
+    const [person, activities] = await Promise.all([
+      mApi(`/api/people/${id}`),
+      mApi(`/api/activities?personId=${id}`).catch(()=>[]),
+    ]);
+    const name = `${person.first_name||''} ${person.last_name||''}`.trim();
+    const initials = ((person.first_name||'')[0]||'') + ((person.last_name||'')[0]||'');
+    const acts = Array.isArray(activities) ? activities : (activities.activities || []);
+
+    let html = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <button onclick="mClosePerson()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer">← Back</button>
+        <div style="flex:1;font-weight:700;font-size:15px">${esc(name)}</div>
+      </div>
+      <div class="m-person-header">
+        <div class="m-person-avatar">${esc(initials)}</div>
+        <div style="font-size:17px;font-weight:800">${esc(name)}</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:2px">${esc(person.stage||'Lead')} ${person.tags?.length ? '· ' + person.tags.slice(0,3).join(', ') : ''}</div>
+      </div>
+      <div class="m-person-actions">
+        ${person.phone ? `<button class="m-person-action" onclick="mCall('${person.id}','${esc(person.phone)}','${esc(name)}')" title="Call via CRM">📞</button>` : ''}
+        ${person.phone ? `<button class="m-person-action" onclick="mOpenSms('${person.id}','${esc(person.phone)}','${esc(name)}')" title="Text via CRM">💬</button>` : ''}
+        ${person.email ? `<a href="mailto:${person.email}" class="m-person-action" title="Email">✉️</a>` : ''}
+        <a href="/file/${person.id}" class="m-person-action" title="Open in CRM">🖥</a>
+      </div>`;
+
+    // Info cards
+    html += `<div class="m-card">`;
+    if (person.phone) html += `<div style="font-size:12px;margin-bottom:4px"><span style="color:var(--text3)">Phone:</span> <a onclick="mCall('${person.id}','${esc(person.phone)}','${esc(name)}')" style="color:var(--cyan);text-decoration:none;cursor:pointer">${esc(person.phone)}</a></div>`;
+    if (person.email) html += `<div style="font-size:12px;margin-bottom:4px"><span style="color:var(--text3)">Email:</span> ${esc(person.email)}</div>`;
+    if (person.notes) html += `<div style="font-size:11px;color:var(--text2);margin-top:6px;padding:6px 8px;background:var(--bg3);border-radius:6px">${esc(person.notes).substring(0,200)}</div>`;
+    html += `</div>`;
+
+    // Recent activity
+    html += `<div class="m-card-title" style="margin-bottom:8px">Recent Activity</div>`;
+    if (acts.length) {
+      html += acts.slice(0,15).map(a => {
+        const icon = a.type === 'call' ? '📞' : a.type === 'text' || a.type === 'sms' ? '💬' : a.type === 'email' ? '✉️' : '📝';
+        const date = a.created_at ? new Date(a.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+        const body = (a.body||'').substring(0,100);
+        const dir = a.direction === 'inbound' ? '←' : '→';
+        return `<div class="m-card" style="padding:10px">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <span style="font-size:14px;flex-shrink:0">${icon}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:11px;color:var(--text2);line-height:1.5;word-break:break-word">${esc(body)}</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px">${dir} ${date}${a.duration ? ' · ' + a.duration + 's' : ''}</div>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      html += '<div class="m-empty">No activity yet</div>';
+    }
+    pv.innerHTML = html;
+  } catch(e) { pv.innerHTML = `<div class="m-empty" style="color:var(--red)">${e.message}</div>`; }
+}
+
+function mClosePerson() {
+  document.getElementById('m-person-view').classList.remove('active');
+  document.getElementById('m-person-view').innerHTML = '';
+  document.getElementById('m-search-results').style.display = '';
+}
+
+// ── Showings ─────────────────────────────────────────────────────────
+async function mLoadShowings() {
+  const el = document.getElementById('m-showings-list');
+  try {
+    const dash = await mApi('/api/showings/dashboard');
+    const showings = [...(dash.inProgress||[]), ...(dash.upcoming||[])];
+    if (!showings.length) { el.innerHTML = '<div class="m-empty">No upcoming showings</div>'; return; }
+    el.innerHTML = showings.map(s => {
+      const dt = new Date(s.showing_time);
+      const diff = dt - Date.now();
+      const isActive = diff < 0 && diff > -1800000;
+      const isImminent = diff > 0 && diff < 3600000;
+      const timeStr = dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      const dayStr = dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      const prop = (s.property||'').split(' - ')[0];
+      return `<div class="m-showing-card ${isActive?'in-progress':isImminent?'imminent':''}">
+        <div style="text-align:center;min-width:50px">
+          <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${isActive?'var(--red)':isImminent?'var(--amber)':'var(--text)'}">${timeStr}</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--text3)">${dayStr}</div>
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:13px">${esc(s.guest_name||'Guest')}</div>
+          <div style="font-size:11px;color:var(--text3)">${esc(prop)}</div>
+          ${isActive ? '<div style="font-family:var(--mono);font-size:9px;color:var(--red);margin-top:2px">● IN PROGRESS</div>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = `<div class="m-empty" style="color:var(--red)">${e.message}</div>`; }
+}
+
+// ── Weather ──────────────────────────────────────────────────────────
+async function mLoadWeather() {
+  const el = document.getElementById('m-weather-content');
+  try {
+    const wx = await mApi('/api/weather/dashboard');
+    const c = wx.conditions || {};
+    const alerts = wx.alerts || [];
+    const props = wx.properties || [];
+    let html = '';
+
+    // Conditions
+    html += `<div class="m-card">
+      <div class="m-card-title">Current Conditions</div>
+      <div style="display:flex;gap:16px;align-items:center">
+        <div style="font-family:var(--mono);font-size:32px;font-weight:800;color:${c.temperature!=null&&c.temperature<=32?'var(--cyan)':'var(--text)'}">${c.temperature!=null?c.temperature+'°F':'—'}</div>
+        <div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(c.description||'—')}</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text3)">Wind: ${c.windSpeed||'—'} mph ${c.windGust?'(gusts '+c.windGust+')':''}</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text3)">Humidity: ${c.humidity!=null?c.humidity+'%':'—'}</div>
+        </div>
+      </div>
+    </div>`;
+
+    // Alerts
+    if (alerts.length) {
+      html += `<div class="m-card" style="border-color:rgba(255,140,0,0.3)">
+        <div class="m-card-title amber">Active NWS Alerts (${alerts.length})</div>`;
+      for (const a of alerts) {
+        const color = a.isDamaging ? 'var(--red)' : a.isSevere ? 'var(--amber)' : 'var(--text2)';
+        html += `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="font-weight:700;font-size:13px;color:${color}">${esc(a.event)}</div>
+          ${a.headline ? `<div style="font-size:11px;color:var(--text2);margin-top:2px">${esc(a.headline).substring(0,150)}</div>` : ''}
+          ${a.expires ? `<div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:2px">Until ${new Date(a.expires).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>` : ''}
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="m-card"><div class="m-card-title green">All Clear</div><div style="font-size:12px;color:var(--text2)">No active NWS alerts for central Oklahoma counties.</div></div>`;
+    }
+
+    // Property count
+    html += `<div class="m-card">
+      <div class="m-card-title">Properties Monitored</div>
+      <div style="font-family:var(--mono);font-size:20px;font-weight:800;color:var(--cyan)">${props.length}</div>
+      <div style="font-size:11px;color:var(--text3)">${props.filter(p=>p.status==='danger').length} danger · ${props.filter(p=>p.status==='warning').length} caution · ${props.filter(p=>p.status==='clear').length} clear</div>
+    </div>`;
+
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = `<div class="m-empty" style="color:var(--red)">${e.message}</div>`; }
+}
+
+// ── More tab ─────────────────────────────────────────────────────────
+async function mLoadMore() {
+  try {
+    const settings = await mApi('/api/jareih/settings').catch(()=>({}));
+    const enabled = settings.jireh_inbound_enabled === 'true';
+    document.getElementById('m-jireh-status').textContent = enabled ? 'Answering calls after 4 rings' : 'Disabled — calls go to voicemail';
+    document.getElementById('m-jireh-label').textContent = enabled ? 'ON' : 'OFF';
+    document.getElementById('m-jireh-label').style.color = enabled ? 'var(--green)' : 'var(--red)';
+  } catch(e) {}
+  try {
+    const listings = await mApi('/api/listings');
+    if (listings.length) {
+      document.getElementById('m-listings-full').innerHTML = listings.map(l => `
+        <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700;font-size:12px">${esc(l.title||'Listing')}</div>
+            <div style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--green)">${l.rent}</div>
+          </div>
+          <div style="font-size:10px;color:var(--text3)">${esc(l.address)} · ${l.bedBath} · Min income: $${l.minIncome}/mo</div>
+          <div style="font-size:9px;color:var(--text3);margin-top:2px">${esc(l.petPolicy||'')}</div>
+        </div>
+      `).join('');
+    } else {
+      document.getElementById('m-listings-full').innerHTML = '<div class="m-empty">No listings available</div>';
+    }
+  } catch(e) {}
+}
+
+async function mToggleJireh() {
+  try {
+    const settings = await mApi('/api/jareih/settings');
+    const nowEnabled = settings.jireh_inbound_enabled === 'true';
+    await mApi('/api/jareih/settings', 'POST', { jireh_inbound_enabled: String(!nowEnabled) });
+    mLoadMore();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Twilio Voice — Calls through OKCREAL line ────────────────────────
+let _mTwilioDevice = null;
+let _mTwilioReady = false;
+let _mActiveCall = null;
+let _mCallTimer = null;
+let _mCallSecs = 0;
+let _mMuted = false;
+let _mIncomingConn = null;
+
+async function mInitTwilio() {
+  try {
+    const data = await mApi('/api/twilio/token');
+    if (!data?.token) { console.warn('[Mobile Twilio] No token'); return; }
+    if (_mTwilioDevice) { try { _mTwilioDevice.destroy(); } catch(e) {} }
+    _mTwilioDevice = new Twilio.Device(data.token, {
+      logLevel: 1,
+      codecPreferences: ['opus', 'pcmu'],
+      allowIncomingWhileBusy: true,
+    });
+    _mTwilioDevice.on('registered', () => { _mTwilioReady = true; console.log('[Mobile Twilio] Ready ✅'); });
+    _mTwilioDevice.on('error', err => {
+      _mTwilioReady = false;
+      if (String(err?.message||err).match(/token|expired|31204|31205/)) {
+        setTimeout(() => { _mTwilioDevice = null; mInitTwilio(); }, 3000);
+      }
+    });
+    _mTwilioDevice.on('tokenWillExpire', () => {
+      mApi('/api/twilio/token').then(d => { if (d?.token) _mTwilioDevice.updateToken(d.token); }).catch(()=>{});
+    });
+    _mTwilioDevice.on('incoming', mHandleIncoming);
+    _mTwilioDevice.register();
+  } catch(e) { console.warn('[Mobile Twilio] Init error:', e.message); }
+}
+
+function mHandleIncoming(conn) {
+  _mIncomingConn = conn;
+  const from = conn.parameters?.From || 'Unknown';
+  document.getElementById('m-incoming-name').textContent = from;
+  document.getElementById('m-incoming-number').textContent = from;
+  const overlay = document.getElementById('m-call-incoming');
+  overlay.style.display = 'flex';
+  // Vibrate for incoming call
+  if (navigator.vibrate) navigator.vibrate([300, 200, 300, 200, 300]);
+  // Look up caller
+  mApi(`/api/people?q=${encodeURIComponent(from.replace(/\D/g,'').slice(-10))}&limit=1`).then(results => {
+    if (results?.length) {
+      const p = results[0];
+      document.getElementById('m-incoming-name').textContent = `${p.first_name||''} ${p.last_name||''}`.trim();
+    }
+  }).catch(()=>{});
+  conn.on('disconnect', mHandleCallEnd);
+  conn.on('cancel', () => { overlay.style.display = 'none'; _mIncomingConn = null; });
+}
+
+function mAnswerCall() {
+  if (!_mIncomingConn) return;
+  _mIncomingConn.accept();
+  _mActiveCall = _mIncomingConn;
+  _mIncomingConn = null;
+  document.getElementById('m-call-incoming').style.display = 'none';
+  // Show active call screen
+  const name = document.getElementById('m-incoming-name').textContent;
+  const num = document.getElementById('m-incoming-number').textContent;
+  mShowCallScreen('Connected', name, num);
+  mStartCallTimer();
+}
+
+function mDeclineCall() {
+  if (_mIncomingConn) { _mIncomingConn.reject(); _mIncomingConn = null; }
+  document.getElementById('m-call-incoming').style.display = 'none';
+}
+
+async function mCall(personId, phone, name) {
+  if (!phone) return;
+  if (!_mTwilioDevice || !_mTwilioReady) {
+    mShowCallScreen('Connecting…', name || phone, phone);
+    if (!_mTwilioDevice) await mInitTwilio();
+    // Wait up to 8 seconds for registration
+    const start = Date.now();
+    while (!_mTwilioReady && Date.now() - start < 8000) await new Promise(r => setTimeout(r, 250));
+    if (!_mTwilioReady) { mHideCallScreen(); mToast('Phone not ready — try again', 'error'); return; }
+  }
+  try {
+    mShowCallScreen('Calling…', name || phone, phone);
+    _mActiveCall = await _mTwilioDevice.connect({
+      params: { To: phone, From: '+14052562614', personId: String(personId||''), agentId: String(_user?.id||'') }
+    });
+    mShowCallScreen('Ringing…', name || phone, phone);
+    _mActiveCall.on('accept', () => { mShowCallScreen('Connected', name || phone, phone); mStartCallTimer(); });
+    _mActiveCall.on('disconnect', mHandleCallEnd);
+    _mActiveCall.on('cancel', mHandleCallEnd);
+  } catch(e) { mHideCallScreen(); mToast('Call failed: ' + e.message, 'error'); }
+}
+
+function mShowCallScreen(status, name, number) {
+  document.getElementById('m-call-status').textContent = status;
+  document.getElementById('m-call-name').textContent = name || '—';
+  document.getElementById('m-call-number').textContent = number || '';
+  document.getElementById('m-call-timer').textContent = '00:00';
+  const overlay = document.getElementById('m-call-overlay');
+  overlay.classList.add('active');
+  _mMuted = false;
+  document.getElementById('m-mute-btn').classList.remove('active');
+}
+
+function mHideCallScreen() {
+  document.getElementById('m-call-overlay').classList.remove('active');
+  mStopCallTimer();
+}
+
+function mHandleCallEnd() {
+  _mActiveCall = null;
+  mHideCallScreen();
+  if (navigator.vibrate) navigator.vibrate(100);
+}
+
+function mToggleMute() {
+  if (!_mActiveCall) return;
+  _mMuted = !_mMuted;
+  _mActiveCall.mute(_mMuted);
+  document.getElementById('m-mute-btn').classList.toggle('active', _mMuted);
+  document.getElementById('m-mute-btn').textContent = _mMuted ? '🔇' : '🎙';
+}
+
+function mEndCall() {
+  if (_mActiveCall) { try { _mActiveCall.disconnect(); } catch(e) {} }
+  _mActiveCall = null;
+  mHideCallScreen();
+}
+
+function mStartCallTimer() {
+  _mCallSecs = 0;
+  mStopCallTimer();
+  _mCallTimer = setInterval(() => {
+    _mCallSecs++;
+    const m = String(Math.floor(_mCallSecs / 60)).padStart(2, '0');
+    const s = String(_mCallSecs % 60).padStart(2, '0');
+    document.getElementById('m-call-timer').textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+function mStopCallTimer() {
+  if (_mCallTimer) { clearInterval(_mCallTimer); _mCallTimer = null; }
+}
+
+// ── SMS — Text through OKCREAL line ─────────────────────────────────
+let _mSmsPersonId = null;
+let _mSmsPhone = null;
+let _mSmsName = '';
+
+function mOpenSms(personId, phone, name) {
+  _mSmsPersonId = personId;
+  _mSmsPhone = phone;
+  _mSmsName = name;
+  document.getElementById('m-sms-to').textContent = `To: ${name || phone}`;
+  document.getElementById('m-sms-input').value = '';
+  document.getElementById('m-sms-modal').classList.add('active');
+  setTimeout(() => document.getElementById('m-sms-input').focus(), 200);
+}
+
+function mCloseSms() {
+  document.getElementById('m-sms-modal').classList.remove('active');
+}
+
+async function mSendText() {
+  const body = document.getElementById('m-sms-input').value.trim();
+  if (!body) return;
+  const btn = document.getElementById('m-sms-send');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await mApi('/api/twilio/sms', 'POST', { to: _mSmsPhone, body, personId: _mSmsPersonId });
+    mCloseSms();
+    mToast('Text sent ✓', 'success');
+    // Refresh person view if open
+    if (document.getElementById('m-person-view').classList.contains('active') && _mSmsPersonId) {
+      mOpenPerson(_mSmsPersonId);
+    }
+  } catch(e) { mToast('Send failed: ' + e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Send'; }
+}
+
+// Simple toast for mobile
+function mToast(msg, type) {
+  const t = document.createElement('div');
+  const color = type === 'error' ? 'var(--red)' : type === 'success' ? 'var(--green)' : 'var(--cyan)';
+  t.style.cssText = `position:fixed;top:calc(var(--safe-top) + 50px);left:16px;right:16px;z-index:600;background:var(--bg2);border:1px solid ${color};border-radius:8px;padding:10px 14px;font-size:12px;color:${color};text-align:center;animation:mPulse 0.3s ease;z-index:600`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── SSE for real-time updates ────────────────────────────────────────
+function mStartSSE() {
+  if (!_token) return;
+  const es = new EventSource(`/api/sse?token=${_token}`);
+  es.onmessage = (evt) => {
+    try {
+      const d = JSON.parse(evt.data);
+      if (d.type === 'weather_alert') {
+        const badge = document.getElementById('mnb-weather');
+        badge.style.display = ''; badge.textContent = d.alerts.length;
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      }
+      if (d.type === 'weather_clear') {
+        document.getElementById('mnb-weather').style.display = 'none';
+      }
+      if (d.type === 'showing_in_progress') {
+        if (navigator.vibrate) navigator.vibrate([300]);
+        mLoadDashboard();
+      }
+      if (d.type === 'toast') {
+        mToast(d.message, d.toastType || 'success');
+      }
+    } catch(e) {}
+  };
+  es.onerror = () => { setTimeout(mStartSSE, 10000); es.close(); };
+}
+</script>
+</body>
+</html>
