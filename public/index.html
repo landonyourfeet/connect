@@ -12090,6 +12090,7 @@ let _wxPollTimer = null;
 let _wxActiveTab = 'weather';
 let _wxMap = null;
 let _wxMarkers = [];
+let _wxMapProps = []; // Stores geocoded properties for Emergency Ops
 
 // ── Global Weather Banner ─────────────────────────────────────────────────
 function wxShowGlobalBanner(alerts) {
@@ -12327,6 +12328,10 @@ async function wxRenderMapTab(container) {
   if (statusEl) statusEl.textContent = `${totalMapped} of ${props.length} properties mapped${newEntries.length ? ` (${newEntries.length} newly cached)` : ''}`;
   if (_wxMarkers.length) _wxMap.fitBounds(L.featureGroup(_wxMarkers).getBounds().pad(0.15));
 
+  // Save geocoded props for Emergency Ops
+  _wxMapProps = props.map(p => ({ ...p }));
+
+  // Properties list below map
   wxRenderMapPropsList(props, mapData.alerts || []);
 }
 
@@ -12344,17 +12349,24 @@ function wxAddMarker(p, isDark, colors) {
 }
 
 // ── Emergency Operations Fullscreen ──────────────────────────────────────
-function wxOpenEmergencyOps() {
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+async function wxOpenEmergencyOps() {
   const d = _wxData || {};
   const cond = d.conditions || {};
   const alerts = d.alerts || [];
-  const props = d.properties || [];
   const center = d.center || { lat: 35.4676, lon: -97.5164 };
   const severeAlerts = alerts.filter(a => a.isSevere);
   const damagingAlerts = alerts.filter(a => a.isDamaging);
   const statusText = damagingAlerts.length ? 'ACTIVE EMERGENCY' : severeAlerts.length ? 'SEVERE WEATHER' : 'MONITORING';
   const statusColor = damagingAlerts.length ? '#e8003a' : severeAlerts.length ? '#ff8c00' : '#00e87a';
+
+  // Get geocoded properties — use cached map data, or fetch fresh
+  let props = _wxMapProps.filter(p => p.lat && p.lon);
+  if (!props.length) {
+    try {
+      const mapData = await api('/api/weather/property-map');
+      props = (mapData.properties || []).filter(p => p.lat && p.lon);
+    } catch(e) { props = []; }
+  }
 
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><title>OKCREAL Emergency Operations</title>
