@@ -12662,7 +12662,7 @@ function wxRenderWeatherTab(container) {
         <div style="${mc}font-size:9px;font-weight:700;color:${isToday?'var(--text)':'var(--text-3)'}${isToday?';text-decoration:underline':''}">${isToday?'TODAY':day.dayOfWeek.toUpperCase()}</div>
         <div style="display:flex;justify-content:center;gap:4px;margin:4px 0">
           ${day.high!=null?`<span style="${mc}font-size:14px;font-weight:800;color:${day.high<=32?'#00c8ff':day.high>=90?'var(--red)':'var(--text)'}">${day.high}°</span>`:''}
-          ${day.low!=null?`<span style="${mc}font-size:11px;color:var(--text-3)">${day.low}°</span>`:''}
+          ${day.low!=null?`<span style="${mc}font-size:11px;font-weight:${day.low<=32?'800':'400'};color:${day.low<=32?'#00c8ff':day.low<=36?'#6bb3d9':'var(--text-3)'}">${day.low}°</span>`:''}
         </div>
         ${day.threatLabel ? `<div style="${mc}font-size:7px;font-weight:700;color:${tc};letter-spacing:0.5px;white-space:nowrap">${day.threatLabel}</div>` : `<div style="${mc}font-size:8px;color:var(--text-3)">${esc((day.forecast||'').substring(0,16))}</div>`}
         ${day.precipChance > 0 ? `<div style="${mc}font-size:8px;color:var(--text-3);margin-top:2px">${day.precipChance}% 💧</div>` : ''}
@@ -12675,11 +12675,12 @@ function wxRenderWeatherTab(container) {
     if (hasFreezeAhead) {
       const freezeDays = forecast.filter(f => f.isFreezing || f.isNearFreezing || f.isWintry);
       const freezeNames = freezeDays.map(f => f.dayOfWeek).join(', ');
-      const lowestTemp = Math.min(...freezeDays.map(f => f.high || 999).filter(t => t < 999));
+      const lowestLow = Math.min(...freezeDays.map(f => f.low != null ? f.low : (f.high || 999)));
+      const lowestDisplay = lowestLow < 999 ? lowestLow + '°F' : 'near freezing';
       html += `<div style="margin-top:12px;background:rgba(0,200,255,0.08);border:1px solid rgba(0,200,255,0.3);border-left:3px solid #00c8ff;border-radius:6px;padding:12px 14px">
         <div style="${mc}font-size:9px;letter-spacing:2px;color:#00c8ff;font-weight:700;margin-bottom:6px">❄ FREEZE PREPARATION REQUIRED</div>
         <div style="font-size:12px;color:var(--text-2);line-height:1.6">
-          Freezing or near-freezing conditions expected <strong>${freezeNames}</strong>${lowestTemp < 999 ? ' (low of '+lowestTemp+'°F)' : ''}.
+          Freezing or near-freezing conditions expected <strong>${freezeNames}</strong> (overnight low: <strong>${lowestDisplay}</strong>).
           <strong>Maintenance team action items:</strong>
         </div>
         <div style="font-size:11px;color:var(--text-2);line-height:1.8;margin-top:6px;padding-left:8px">
