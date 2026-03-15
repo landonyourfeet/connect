@@ -6948,21 +6948,15 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
     const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
     const severeAlerts = _weatherCache.alerts.filter(a => a.isSevere && !a.isDamaging);
 
-    // Geocode all properties (cached, so fast after first call)
-    const properties = [];
-    for (const r of propsR.rows) {
+    const properties = propsR.rows.map(r => {
       const name = (r.property || '').split(' - ')[0];
       const addrMatch = (r.property || '').match(/ - (.+)/);
-      const address = addrMatch ? addrMatch[1].trim() : name;
-      const loc = await geocodeAddress(address);
+      const address = addrMatch ? addrMatch[1].trim() : '';
       let status = 'clear';
       if (damagingAlerts.length) status = 'danger';
       else if (severeAlerts.length) status = 'warning';
-      properties.push({
-        name, fullName: r.property, address, units: r.units, tenants: r.tenants,
-        lat: loc?.lat || null, lon: loc?.lon || null, status
-      });
-    }
+      return { name, fullName: r.property, address, units: r.units, tenants: r.tenants, status };
+    });
 
     res.json({
       properties,
