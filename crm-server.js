@@ -1831,6 +1831,99 @@ app.post('/api/twilio/sms-inbound', async (req, res) => {
   }
 });
 
+// ─── SCHEDULED TEXTS + BUSINESS HOURS ──────────────────────────────────────
+const BUSINESS_HOURS = { open: 8, close: 18, tz: 'America/Chicago' }; // 8AM-6PM Central
+
+function isBusinessHours() {
+  const now = new Date();
+  const ct = new Date(now.toLocaleString('en-US', { timeZone: BUSINESS_HOURS.tz }));
+  const hour = ct.getHours();
+  const day = ct.getDay(); // 0=Sun, 6=Sat
+  return day >= 1 && day <= 6 && hour >= BUSINESS_HOURS.open && hour < BUSINESS_HOURS.close;
+}
+
+function getNextBusinessOpen() {
+  const now = new Date();
+  const ct = new Date(now.toLocaleString('en-US', { timeZone: BUSINESS_HOURS.tz }));
+  let target = new Date(ct);
+  const hour = ct.getHours();
+  const day = ct.getDay();
+
+  if (day === 0) { target.setDate(target.getDate() + 1); } // Sun → Mon
+  else if (day === 6 && hour >= BUSINESS_HOURS.close) { target.setDate(target.getDate() + 2); } // Sat after close → Mon
+  else if (hour >= BUSINESS_HOURS.close) { target.setDate(target.getDate() + 1); } // After close → next day
+
+  target.setHours(BUSINESS_HOURS.open, 0, 0, 0);
+  return target;
+}
+
+app.get('/api/sms/business-hours', auth, (req, res) => {
+  res.json({ isOpen: isBusinessHours(), open: BUSINESS_HOURS.open, close: BUSINESS_HOURS.close, tz: BUSINESS_HOURS.tz, nextOpen: getNextBusinessOpen().toISOString() });
+});
+
+app.post('/api/sms/schedule', auth, async (req, res) => {
+  try {
+    const { personId, to, body, scheduledFor } = req.body;
+    if (!personId || !to || !body || !scheduledFor) return res.status(400).json({ error: 'personId, to, body, scheduledFor required' });
+    const r = await pool.query(
+      `INSERT INTO scheduled_texts (person_id, agent_id, to_phone, body, scheduled_for) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [personId, req.agent?.id||null, to, body, new Date(scheduledFor)]
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sms/scheduled', auth, async (req, res) => {
+  try {
+    const { personId } = req.query;
+    const where = personId ? `WHERE person_id=$1 AND status='pending'` : `WHERE status='pending'`;
+    const params = personId ? [personId] : [];
+    const r = await pool.query(`SELECT * FROM scheduled_texts ${where} ORDER BY scheduled_for ASC`, params);
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/sms/scheduled/:id', auth, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM scheduled_texts WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Scheduled text poller — runs every 60s, sends any due texts
+async function pollScheduledTexts() {
+  try {
+    const r = await pool.query(
+      `SELECT * FROM scheduled_texts WHERE status='pending' AND scheduled_for <= NOW()`
+    );
+    for (const st of r.rows) {
+      try {
+        const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        const lineR = await pool.query(`SELECT twilio_number FROM call_lines LIMIT 1`);
+        const fromNum = lineR.rows[0]?.twilio_number || process.env.TWILIO_RESIDENT_NUMBER;
+
+        const msg = await twilioClient.messages.create({
+          to: st.to_phone, from: fromNum, body: st.body,
+          statusCallback: process.env.APP_URL ? `${process.env.APP_URL}/api/twilio/sms-status` : undefined
+        });
+
+        // Log activity
+        await pool.query(
+          `INSERT INTO activities (person_id, agent_id, type, body, direction, sms_status, message_sid) VALUES ($1,$2,'text',$3,'outbound','sent',$4)`,
+          [st.person_id, st.agent_id, st.body, msg.sid]
+        );
+        await pool.query(`UPDATE scheduled_texts SET status='sent', sent_at=NOW() WHERE id=$1`, [st.id]);
+        console.log(`[Scheduled SMS] Sent to ${st.to_phone}: "${st.body.substring(0,40)}..."`);
+
+        broadcastToAll({ type: 'toast', message: `📅 Scheduled text sent to ${st.to_phone.slice(-4)}`, toastType: 'success' });
+      } catch(e) {
+        console.error(`[Scheduled SMS] Failed ${st.id}:`, e.message);
+        await pool.query(`UPDATE scheduled_texts SET status='failed', error=$1 WHERE id=$2`, [e.message, st.id]);
+      }
+    }
+  } catch(e) { console.error('[Scheduled SMS Poll]', e.message); }
+}
+
 // ─── VOICE TWIML ──────────────────────────────────────────────────────────────
 app.post('/api/twilio/voice', async (req, res) => {
   try {
@@ -3135,6 +3228,18 @@ async function initDB() {
     lon DOUBLE PRECISION,
     updated_at TIMESTAMPTZ DEFAULT NOW()
   )`, 'create geocode_cache');
+  await run(`CREATE TABLE IF NOT EXISTS scheduled_texts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    person_id TEXT NOT NULL,
+    agent_id TEXT,
+    to_phone TEXT NOT NULL,
+    body TEXT NOT NULL,
+    scheduled_for TIMESTAMPTZ NOT NULL,
+    status TEXT DEFAULT 'pending',
+    sent_at TIMESTAMPTZ,
+    error TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`, 'create scheduled_texts');
   await run(`CREATE TABLE IF NOT EXISTS work_orders (
     id SERIAL PRIMARY KEY,
     property TEXT NOT NULL,
@@ -8342,6 +8447,10 @@ checkDB().then(() => initDB()).then(() => {
   // AppFolio listings scraper — refresh every 5 minutes, pre-cache on boot
   setInterval(scrapeAppFolioListings, 5 * 60 * 1000);
   setTimeout(scrapeAppFolioListings, 3000); // pre-cache 3s after boot
+
+  // Scheduled text poller — check every 60s for due texts
+  setInterval(pollScheduledTexts, 60 * 1000);
+  setTimeout(pollScheduledTexts, 10000); // first check 10s after boot
 
   // Attach Jareih call WebSocket server
   setupJareihCallWS(httpServer);
