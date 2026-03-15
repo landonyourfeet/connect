@@ -5552,7 +5552,8 @@ app.post('/api/showings/:id/send-feedback-link', auth, async (req, res) => {
 
     const feedbackUrl = `${process.env.APP_URL}/api/showings/${s.id}/public-feedback`;
     const propName = (s.property || '').split(' - ')[0];
-    const body = `Hi ${(s.guest_name||'').split(',')[0].split(' ')[0] || 'there'}! Thanks for touring ${propName} with O.K.C. Real. We'd love your feedback — it only takes 30 seconds: ${feedbackUrl}`;
+    const firstName = (s.guest_name||'').replace(/,.*/, '').split(' ')[0] || 'there';
+    const body = `Hi ${firstName}! Feedback matters a lot! Please leave feedback to help us and others for ${propName}. It only takes 30 seconds — click here: ${feedbackUrl}`;
 
     const fromNumber = process.env.TWILIO_RESIDENT_NUMBER || '+14052562614';
     await twilio.messages.create({ body, from: fromNumber, to: s.phone });
