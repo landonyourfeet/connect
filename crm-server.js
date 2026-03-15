@@ -6856,13 +6856,22 @@ app.get('/api/weather/dashboard', auth, async (req, res) => {
   try {
     await refreshWeatherCache();
 
-    // Get ALL properties from rent roll (every status) + showings
+    // Get ALL properties from rent roll + showings combined
     const propsR = await pool.query(`
-      SELECT property, COUNT(DISTINCT unit)::int AS units,
-             COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
-      FROM rent_roll
-      GROUP BY property
-      ORDER BY property
+      SELECT combined.property,
+             COALESCE(rr.units, 0)::int AS units,
+             COALESCE(rr.tenants, 0)::int AS tenants
+      FROM (
+        SELECT DISTINCT property FROM rent_roll
+        UNION
+        SELECT DISTINCT property FROM showings
+      ) combined
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT unit)::int AS units,
+               COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
+        FROM rent_roll WHERE rent_roll.property = combined.property
+      ) rr ON TRUE
+      ORDER BY combined.property
     `);
 
     const properties = propsR.rows.map(r => {
@@ -6920,9 +6929,20 @@ app.get('/api/weather/property-map', auth, async (req, res) => {
     await refreshWeatherCache();
 
     const propsR = await pool.query(`
-      SELECT property, COUNT(DISTINCT unit)::int AS units,
-             COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
-      FROM rent_roll GROUP BY property ORDER BY property
+      SELECT combined.property,
+             COALESCE(rr.units, 0)::int AS units,
+             COALESCE(rr.tenants, 0)::int AS tenants
+      FROM (
+        SELECT DISTINCT property FROM rent_roll
+        UNION
+        SELECT DISTINCT property FROM showings
+      ) combined
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT unit)::int AS units,
+               COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
+        FROM rent_roll WHERE rent_roll.property = combined.property
+      ) rr ON TRUE
+      ORDER BY combined.property
     `);
 
     const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
@@ -6962,9 +6982,20 @@ app.get('/api/weather/report', auth, async (req, res) => {
   try {
     await refreshWeatherCache();
     const propsR = await pool.query(`
-      SELECT property, COUNT(DISTINCT unit)::int AS units,
-             COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
-      FROM rent_roll GROUP BY property ORDER BY property
+      SELECT combined.property,
+             COALESCE(rr.units, 0)::int AS units,
+             COALESCE(rr.tenants, 0)::int AS tenants
+      FROM (
+        SELECT DISTINCT property FROM rent_roll
+        UNION
+        SELECT DISTINCT property FROM showings
+      ) combined
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT unit)::int AS units,
+               COUNT(DISTINCT CASE WHEN status='Current' THEN tenant_name END)::int AS tenants
+        FROM rent_roll WHERE rent_roll.property = combined.property
+      ) rr ON TRUE
+      ORDER BY combined.property
     `);
     const damagingAlerts = _weatherCache.alerts.filter(a => a.isDamaging);
     const report = {
