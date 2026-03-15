@@ -9224,48 +9224,383 @@ let _rrOccupancy = {}; // property -> { occupied, vacant, total_units } from ren
 const SH_CATS = ['smell','paint/walls','cleanliness','carpet/flooring','appliances','kitchen',
   'bathroom','lighting','layout','curb appeal','parking','noise','neighborhood','price','other'];
 
-function renderShowingsView() {
+let _shDashData = null;
+let _shActiveTab = 'upcoming';
+let _shCountdownTimer = null;
+
+async function renderShowingsView() {
   const root = document.getElementById('showings-root');
   if (!root) return;
-  root.innerHTML = `
-    <div class="sh-header">
-      <div>
-        <div class="sh-title">SHOWINGS</div>
-        <div class="sh-subtitle">PROPERTY TOUR INTELLIGENCE</div>
+  root.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:200px;color:var(--text-3)"><div class="spinner"></div></div>';
+
+  try {
+    _shDashData = await api('/api/showings/dashboard');
+  } catch(e) {
+    root.innerHTML = `<div style="padding:40px;color:var(--red)">${e.message}</div>`;
+    return;
+  }
+
+  const d = _shDashData;
+  const kpi = d.kpi || {};
+  const mc = 'font-family:var(--font-mono);';
+  const cardStyle = 'background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;';
+
+  let html = '';
+
+  // ── Zone 1: Active Showing Alert ──────────────────────────────────────
+  html += `<div id="sh-active-alert"></div>`;
+
+  // ── Zone 2: Countdown + KPI Strip ─────────────────────────────────────
+  html += `<div style="${cardStyle}margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+      <div style="min-width:160px">
+        <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:4px">Next Showing</div>
+        <div id="sh-countdown" style="${mc}font-size:28px;font-weight:800;color:var(--green);line-height:1">—</div>
+        <div id="sh-countdown-detail" style="${mc}font-size:10px;color:var(--text-3);margin-top:4px"></div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-left:auto">
-        <div style="display:flex;gap:8px;align-items:center">
-          <button onclick="openFeedbackReport()" style="background:transparent;border:1px solid #6366f1;color:#6366f1;padding:6px 12px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;border-radius:4px;transition:all 0.15s;white-space:nowrap" onmouseover="this.style.background='rgba(99,102,241,0.15)'" onmouseout="this.style.background='transparent'">
-            📊 FEEDBACK REPORT
-          </button>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
-            <label class="sh-upload-btn" id="rr-upload-lbl" style="background:var(--text-3);font-size:9px;padding:6px 12px">
-              🏘 RENT ROLL
-              <input type="file" accept=".xlsx" style="display:none" onchange="rrUpload(this)">
-            </label>
-            <div id="rr-last-upload-info" style="font-family:var(--font-mono);font-size:8px;color:var(--text-3);letter-spacing:0.06em"></div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
-            <label class="sh-upload-btn" id="sh-upload-lbl">
-              📁 SHOWINGS
-              <input type="file" accept=".xlsx" style="display:none" onchange="shUpload(this)">
-            </label>
-            <div id="sh-last-upload-info" style="font-family:var(--font-mono);font-size:9px;color:var(--text-3);letter-spacing:0.08em;text-align:right"></div>
-          </div>
+      <div style="flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:12px">
+        <div>
+          <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">Today</div>
+          <div style="${mc}font-size:20px;color:#00c8ff">${kpi.today||0}</div>
+        </div>
+        <div>
+          <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">This Week</div>
+          <div style="${mc}font-size:20px;color:var(--text)">${kpi.completed_week||0}</div>
+        </div>
+        <div>
+          <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);text-transform:uppercase;margin-bottom:2px">Upcoming</div>
+          <div style="${mc}font-size:20px;color:var(--green)">${kpi.upcoming_total||0}</div>
+        </div>
+        <div>
+          <div style="${mc}font-size:8px;letter-spacing:2px;color:var(--amber);text-transform:uppercase;margin-bottom:2px">Need Feedback</div>
+          <div style="${mc}font-size:20px;color:var(--amber)">${kpi.pending_feedback||0}</div>
         </div>
       </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <label class="sh-upload-btn" id="rr-upload-lbl" style="background:var(--text-3);font-size:9px;padding:5px 10px">🏘 RENT ROLL<input type="file" accept=".xlsx" style="display:none" onchange="rrUpload(this)"></label>
+        <label class="sh-upload-btn" id="sh-upload-lbl">📁 SHOWINGS<input type="file" accept=".xlsx" style="display:none" onchange="shUpload(this)"></label>
+      </div>
     </div>
-    <div class="sh-body">
-      <div class="sh-props-wrap" id="sh-props-wrap">
-        <div id="sh-props"></div>
-      </div>
-      <div class="sh-panel-wrap" id="sh-panel-wrap" style="display:none">
-        <div id="sh-panel"></div>
-      </div>
-    </div>`;
-  shLoadProps();
+  </div>`;
+
+  // ── Zone 3: Tab Bar ───────────────────────────────────────────────────
+  const tabs = [
+    { id:'upcoming', label:'Upcoming', icon:'📅' },
+    { id:'properties', label:'Properties', icon:'🏠' },
+    { id:'feedback', label:'Feedback', icon:'📝', badge: kpi.pending_feedback },
+    { id:'recommendations', label:'Recommendations', icon:'🤖' },
+  ];
+  html += `<div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:8px" id="sh-tab-bar">`;
+  for (const t of tabs) {
+    const active = t.id === _shActiveTab;
+    const badge = t.badge ? `<span style="background:var(--amber);color:#000;padding:1px 6px;border-radius:10px;font-size:9px;font-weight:700;margin-left:4px">${t.badge}</span>` : '';
+    html += `<button onclick="shSwitchTab('${t.id}')" style="padding:7px 16px;border:none;border-radius:6px 6px 0 0;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;cursor:pointer;transition:all 0.15s;
+      ${active ? 'background:var(--bg-3);color:var(--text);font-weight:700;border-bottom:2px solid var(--red)' : 'background:transparent;color:var(--text-3);font-weight:500'}">
+      ${t.icon} ${t.label}${badge}</button>`;
+  }
+  html += '</div>';
+
+  // ── Zone 4: Tab Content ───────────────────────────────────────────────
+  html += `<div id="sh-tab-content"></div>`;
+
+  // ── Existing property panel (hidden, used when clicking a property) ───
+  html += `<div class="sh-panel-wrap" id="sh-panel-wrap" style="display:none"><div id="sh-panel"></div></div>`;
+
+  root.innerHTML = html;
+
+  // Render active alert + countdown
+  shRenderActiveAlert(d.inProgress);
+  shStartCountdown(kpi.next_showing, d.upcoming?.[0]);
+  shSwitchTab(_shActiveTab);
   shCheckLastUpload();
   rrCheckLastUpload();
+
+  // Poll for active showings every 30s
+  if (_shCountdownTimer) clearInterval(_shCountdownTimer);
+  _shCountdownTimer = setInterval(async () => {
+    try {
+      const fresh = await api('/api/showings/dashboard');
+      _shDashData = fresh;
+      shRenderActiveAlert(fresh.inProgress);
+      shStartCountdown(fresh.kpi?.next_showing, fresh.upcoming?.[0]);
+    } catch(e) {}
+  }, 30000);
+}
+
+function shRenderActiveAlert(inProgress) {
+  const el = document.getElementById('sh-active-alert');
+  if (!el) return;
+  if (!inProgress || !inProgress.length) { el.innerHTML = ''; return; }
+  const s = inProgress[0];
+  const nameHtml = s.connect_person_id
+    ? `<a onclick="openContact('${s.connect_person_id}')" style="color:#fff;cursor:pointer;text-decoration:none;border-bottom:1px dashed rgba(255,255,255,0.5);font-weight:700">${esc(s.guest_name||'Guest')}</a>`
+    : `<span style="font-weight:700">${esc(s.guest_name||'Guest')}</span>`;
+  const prop = (s.property||'').split(' - ')[0].substring(0,30);
+  el.innerHTML = `
+    <div style="background:linear-gradient(90deg,rgba(232,0,58,0.15),rgba(232,0,58,0.08));border:1px solid rgba(232,0,58,0.4);border-radius:8px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;animation:voicePulse 2s ease-in-out infinite">
+      <div style="width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);flex-shrink:0"></div>
+      <div style="flex:1;font-family:var(--font-mono)">
+        <div style="font-size:10px;letter-spacing:2px;color:var(--red);text-transform:uppercase;margin-bottom:2px">Active Tour In Progress</div>
+        <div style="font-size:13px;color:var(--text)">${nameHtml} — ${esc(prop)}${s.unit ? ' · ' + esc(s.unit) : ''} · ${s.showing_type||'In-Person'}</div>
+      </div>
+      ${s.connect_person_id ? `<button onclick="openContact('${s.connect_person_id}')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;cursor:pointer">OPEN LEAD →</button>` : ''}
+    </div>`;
+}
+
+function shStartCountdown(nextTime, nextShowing) {
+  const el = document.getElementById('sh-countdown');
+  const detail = document.getElementById('sh-countdown-detail');
+  if (!el) return;
+
+  function update() {
+    if (!nextTime) { el.textContent = 'NONE'; el.style.color = 'var(--text-3)'; if (detail) detail.textContent = 'No upcoming showings'; return; }
+    const diff = new Date(nextTime).getTime() - Date.now();
+    if (diff <= 0) { el.textContent = 'NOW'; el.style.color = 'var(--red)'; if (detail) detail.textContent = nextShowing ? esc((nextShowing.guest_name||'') + ' — ' + (nextShowing.property||'').split(' - ')[0]) : ''; return; }
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    if (h > 0) { el.textContent = `${h}h ${m}m`; el.style.color = 'var(--green)'; }
+    else if (m > 10) { el.textContent = `${m}m ${s}s`; el.style.color = 'var(--green)'; }
+    else { el.textContent = `${m}m ${s}s`; el.style.color = m < 5 ? 'var(--amber)' : 'var(--green)'; }
+    if (detail && nextShowing) detail.textContent = esc((nextShowing.guest_name||'') + ' — ' + (nextShowing.property||'').split(' - ')[0].substring(0,25));
+  }
+  update();
+  if (window._shCountdownTick) clearInterval(window._shCountdownTick);
+  window._shCountdownTick = setInterval(update, 1000);
+}
+
+function shSwitchTab(tabId) {
+  _shActiveTab = tabId;
+  // Update tab bar active state
+  document.querySelectorAll('#sh-tab-bar button').forEach(btn => {
+    const isActive = btn.textContent.toLowerCase().includes(tabId.substring(0,5));
+    btn.style.background = isActive ? 'var(--bg-3)' : 'transparent';
+    btn.style.color = isActive ? 'var(--text)' : 'var(--text-3)';
+    btn.style.fontWeight = isActive ? '700' : '500';
+    btn.style.borderBottom = isActive ? '2px solid var(--red)' : 'none';
+  });
+  const content = document.getElementById('sh-tab-content');
+  if (!content) return;
+  // Hide property panel when switching tabs
+  const pp = document.getElementById('sh-panel-wrap');
+  if (pp) pp.style.display = 'none';
+
+  if (tabId === 'upcoming') shRenderUpcoming(content);
+  else if (tabId === 'properties') shRenderProperties(content);
+  else if (tabId === 'feedback') shRenderFeedback(content);
+  else if (tabId === 'recommendations') shRenderRecommendations(content);
+}
+
+// ── Tab: Upcoming ─────────────────────────────────────────────────────────
+function shRenderUpcoming(container) {
+  const d = _shDashData;
+  if (!d) { container.innerHTML = ''; return; }
+  const upcoming = d.upcoming || [];
+  const mc = 'font-family:var(--font-mono);';
+
+  if (!upcoming.length) {
+    container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-3)">No upcoming showings scheduled</div>`;
+    return;
+  }
+
+  let html = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+    <tr>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Time</th>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Countdown</th>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Guest</th>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Property</th>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Unit</th>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Type</th>
+      <th style="padding:6px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Feedback</th>
+    </tr>`;
+
+  for (const s of upcoming) {
+    const dt = new Date(s.showing_time);
+    const timeStr = dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    const diff = dt.getTime() - Date.now();
+    const mins = Math.round(diff / 60000);
+    let cdStr, cdColor;
+    if (mins <= 0) { cdStr = 'NOW'; cdColor = 'var(--red)'; }
+    else if (mins < 60) { cdStr = `${mins}m`; cdColor = mins < 15 ? 'var(--red)' : mins < 30 ? 'var(--amber)' : 'var(--green)'; }
+    else if (mins < 1440) { cdStr = `${Math.floor(mins/60)}h ${mins%60}m`; cdColor = 'var(--text-2)'; }
+    else { cdStr = `${Math.floor(mins/1440)}d`; cdColor = 'var(--text-3)'; }
+    const isImminent = mins >= 0 && mins <= 90;
+    const rowBg = isImminent ? 'background:rgba(255,140,0,0.05)' : '';
+    const guestHtml = s.connect_person_id
+      ? `<a onclick="event.stopPropagation();openContact('${s.connect_person_id}')" style="color:var(--text);cursor:pointer;border-bottom:1px dashed var(--border-hi)">${esc(s.guest_name||'—')}</a>`
+      : esc(s.guest_name||'—');
+    const fbBadge = s.feedback_verdict
+      ? `<span style="font-size:9px;font-weight:700;color:${s.feedback_verdict==='go'?'var(--green)':s.feedback_verdict==='no-go'?'var(--red)':'var(--amber)'}">${s.feedback_verdict.toUpperCase()}</span>`
+      : '<span style="font-size:9px;color:var(--text-3)">—</span>';
+
+    html += `<tr style="border-bottom:1px solid var(--border);${rowBg}">
+      <td style="padding:7px 8px;${mc}font-size:11px;color:var(--text-2);white-space:nowrap">${timeStr}</td>
+      <td style="padding:7px 8px;${mc}font-size:11px;font-weight:700;color:${cdColor}">${cdStr}</td>
+      <td style="padding:7px 8px;font-size:12px">${guestHtml}</td>
+      <td style="padding:7px 8px;color:var(--text-2);font-size:11px">${esc((s.property||'').split(' - ')[0].substring(0,25))}</td>
+      <td style="padding:7px 8px;color:var(--text-2);font-size:11px">${esc(s.unit||'—')}</td>
+      <td style="padding:7px 8px;${mc}font-size:10px;color:var(--text-3)">${esc(s.showing_type||'—')}</td>
+      <td style="padding:7px 8px">${fbBadge}</td>
+    </tr>`;
+  }
+  html += '</table></div>';
+  container.innerHTML = html;
+}
+
+// ── Tab: Properties (reuses existing shLoadProps) ─────────────────────────
+function shRenderProperties(container) {
+  container.innerHTML = `<div class="sh-props-wrap" id="sh-props-wrap"><div id="sh-props"></div></div>`;
+  shLoadProps();
+}
+
+// ── Tab: Feedback ─────────────────────────────────────────────────────────
+function shRenderFeedback(container) {
+  const d = _shDashData;
+  if (!d) return;
+  const mc = 'font-family:var(--font-mono);';
+  const pending = d.pendingFeedback || [];
+  const recent = d.recentWithFeedback || [];
+
+  let html = '';
+
+  // Pending feedback section
+  if (pending.length) {
+    html += `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--amber);text-transform:uppercase;margin-bottom:10px">Missing Feedback — Send Link to Prospect</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Date</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Guest</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Property</th>
+          <th style="padding:5px 8px;text-align:right;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Action</th>
+        </tr>`;
+    for (const s of pending.slice(0, 30)) {
+      const dt = s.showing_time ? new Date(s.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+      const guestHtml = s.connect_person_id
+        ? `<a onclick="openContact('${s.connect_person_id}')" style="color:var(--text);cursor:pointer;border-bottom:1px dashed var(--border-hi)">${esc(s.guest_name||'—')}</a>`
+        : esc(s.guest_name||'—');
+      const sentAlready = s.feedback_sent;
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px;${mc}font-size:10px;color:var(--text-3)">${dt}</td>
+        <td style="padding:6px 8px;font-size:12px">${guestHtml}</td>
+        <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc((s.property||'').split(' - ')[0].substring(0,25))}</td>
+        <td style="padding:6px 8px;text-align:right">
+          ${s.phone
+            ? (sentAlready
+              ? `<span style="${mc}font-size:9px;color:var(--text-3)">Link Sent ✓</span>`
+              : `<button onclick="shSendFeedbackLink('${s.id}', this)" style="background:var(--amber);color:#000;border:none;border-radius:4px;padding:4px 10px;${mc}font-size:9px;font-weight:700;letter-spacing:0.05em;cursor:pointer">Send Link</button>`)
+            : `<span style="${mc}font-size:9px;color:var(--text-3)">No phone</span>`}
+        </td>
+      </tr>`;
+    }
+    html += '</table></div></div>';
+  }
+
+  // Recent feedback log
+  const withFb = recent.filter(r => r.verdict);
+  if (withFb.length) {
+    html += `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px">
+      <div style="${mc}font-size:9px;letter-spacing:3px;color:var(--green);text-transform:uppercase;margin-bottom:10px">Recent Tour Feedback</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Date</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Guest</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Property</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Verdict</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Source</th>
+          <th style="padding:5px 8px;text-align:left;${mc}font-size:8px;letter-spacing:2px;color:var(--text-3);border-bottom:1px solid var(--border)">Notes</th>
+        </tr>`;
+    for (const r of withFb.slice(0, 50)) {
+      const dt = r.showing_time ? new Date(r.showing_time).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+      const vColor = r.verdict === 'go' ? 'var(--green)' : r.verdict === 'no-go' ? 'var(--red)' : 'var(--amber)';
+      const vLabel = r.verdict === 'go' ? '✓ GO' : r.verdict === 'no-go' ? '✗ NO-GO' : '? MAYBE';
+      const guestHtml = r.connect_person_id
+        ? `<a onclick="openContact('${r.connect_person_id}')" style="color:var(--text);cursor:pointer;border-bottom:1px dashed var(--border-hi)">${esc(r.guest_name||'—')}</a>`
+        : esc(r.guest_name||'—');
+      const src = r.feedback_source === 'prospect' ? '📱 Prospect' : '✏️ Agent';
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px;${mc}font-size:10px;color:var(--text-3)">${dt}</td>
+        <td style="padding:6px 8px;font-size:12px">${guestHtml}</td>
+        <td style="padding:6px 8px;color:var(--text-2);font-size:11px">${esc((r.property||'').split(' - ')[0].substring(0,22))}</td>
+        <td style="padding:6px 8px"><span style="${mc}font-size:10px;font-weight:700;color:${vColor}">${vLabel}</span></td>
+        <td style="padding:6px 8px;font-size:10px;color:var(--text-3)">${src}</td>
+        <td style="padding:6px 8px;font-size:11px;color:var(--text-2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.notes||'')}">${esc(r.notes||'—')}</td>
+      </tr>`;
+    }
+    html += '</table></div></div>';
+  }
+
+  if (!pending.length && !withFb.length) {
+    html = '<div style="text-align:center;padding:40px;color:var(--text-3)">No feedback data yet. Upload showings and tours will appear here.</div>';
+  }
+  container.innerHTML = html;
+}
+
+async function shSendFeedbackLink(showingId, btn) {
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await api(`/api/showings/${showingId}/send-feedback-link`, 'POST');
+    btn.textContent = 'Sent ✓'; btn.style.background = 'var(--green)'; btn.style.color = '#000';
+    toast('Feedback link sent!', 'success');
+  } catch(e) {
+    btn.textContent = 'Failed'; btn.style.background = 'var(--red)';
+    toast('Failed: ' + e.message, 'error');
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Send Link'; btn.style.background = 'var(--amber)'; }, 3000);
+  }
+}
+
+// ── Tab: Recommendations ──────────────────────────────────────────────────
+async function shRenderRecommendations(container) {
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100px;color:var(--text-3)"><div class="spinner"></div></div>';
+  const mc = 'font-family:var(--font-mono);';
+
+  try {
+    const props = await api('/api/showings/properties');
+    if (!props.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-3)">No properties with showings data</div>'; return; }
+
+    // Only show properties that have feedback
+    const withFeedback = props.filter(p => p.rated > 0);
+    if (!withFeedback.length) { container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-3)">No tour feedback yet — feedback is needed to generate recommendations</div>'; return; }
+
+    let html = `<div style="${mc}font-size:9px;letter-spacing:3px;color:#00c8ff;text-transform:uppercase;margin-bottom:12px">AI Property Recommendations — Feedback Analysis + Market Comps</div>`;
+
+    for (const p of withFeedback) {
+      const propShort = (p.property||'').split(' - ')[0].substring(0,35);
+      html += `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${esc(propShort)}</div>
+            <div style="${mc}font-size:10px;color:var(--text-3)">${p.total} tours · ${p.go||0} go · ${p.maybe||0} maybe · ${p.nogo||0} no-go · ${p.rated} rated</div>
+          </div>
+          <button onclick="shGenRec('${esc(p.property)}', this)" style="background:transparent;border:1px solid #00c8ff;color:#00c8ff;padding:5px 12px;${mc}font-size:9px;letter-spacing:0.08em;cursor:pointer;border-radius:4px;white-space:nowrap">Generate</button>
+        </div>
+        <div id="sh-rec-${CSS.escape(p.property)}" style="display:none;margin-top:10px;font-size:12px;color:var(--text-2);line-height:1.7"></div>
+      </div>`;
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div style="padding:20px;color:var(--red)">${e.message}</div>`;
+  }
+}
+
+async function shGenRec(property, btn) {
+  btn.disabled = true; btn.textContent = 'Analyzing…'; btn.style.opacity = '0.6';
+  const target = document.getElementById('sh-rec-' + CSS.escape(property));
+  if (target) { target.style.display = 'block'; target.innerHTML = '<div style="color:var(--text-3)">Jireh is analyzing feedback and searching nearby market comps…</div>'; }
+
+  try {
+    const r = await api(`/api/showings/property-ai-rec?property=${encodeURIComponent(property)}`);
+    if (target && r.recommendation) {
+      const paragraphs = r.recommendation.split('\n\n').filter(Boolean);
+      target.innerHTML = paragraphs.map(p => `<p style="margin:0 0 12px">${esc(p)}</p>`).join('');
+    } else if (target) {
+      target.innerHTML = '<span style="color:var(--text-3)">No recommendation generated — need more tour feedback.</span>';
+    }
+    btn.textContent = 'Refresh'; btn.disabled = false; btn.style.opacity = '1';
+  } catch(e) {
+    if (target) target.innerHTML = `<span style="color:var(--red)">${e.message}</span>`;
+    btn.textContent = 'Retry'; btn.disabled = false; btn.style.opacity = '1';
+  }
 }
 
 async function shUpload(input) {
