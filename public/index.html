@@ -7065,7 +7065,7 @@ const Jareih = (() => {
       }
       return `<div style="display:flex;align-items:flex-start;gap:8px">
         <span style="font-size:13px;color:${color};flex-shrink:0;margin-top:2px">${icon}</span>
-        <div style="font-size:12.5px;color:var(--text);line-height:1.6;white-space:pre-wrap;flex:1">${esc(m.text)}</div>
+        <div style="font-size:12.5px;color:var(--text);line-height:1.6;${m.html ? '' : 'white-space:pre-wrap;'}flex:1">${m.html || esc(m.text)}</div>
       </div>`;
     }).join('');
     body.scrollTop = body.scrollHeight;
@@ -7205,6 +7205,48 @@ Ara is connecting. The call transcript will appear here live and save to the tim
         case 'navigate': {
           navigate(params.view);
           resultMsg = `Navigated to ${params.view}`;
+          break;
+        }
+        case 'analyze_crm': {
+          const ar = await api('/api/jareih/analyze', 'POST', { query: params.query || cmd });
+          api('/api/jareih/history', 'POST', { command: cmd, result: parsed }).catch(()=>{});
+          if (ar.ok && ar.result) {
+            const r = ar.result;
+            const contacts = r.topContacts || [];
+            let html = '';
+            if (r.headline) html += `<div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:6px">${esc(r.headline)}</div>`;
+            if (r.insight) html += `<div style="font-size:12px;color:var(--text);margin-bottom:8px;line-height:1.5">${esc(r.insight)}</div>`;
+            if (r.listingContext) html += `<div style="font-size:11px;color:var(--text-2);margin-bottom:8px;padding:6px 8px;background:var(--bg-3);border-radius:6px;border:1px solid var(--border)">📋 ${esc(r.listingContext)}</div>`;
+            if (contacts.length) {
+              html += `<div style="font-size:9px;font-family:var(--font-mono);letter-spacing:0.1em;color:var(--text-3);margin:8px 0 4px;text-transform:uppercase">Top ${contacts.length} Contacts</div>`;
+              contacts.forEach((c, i) => {
+                const urgColor = c.urgency === 'high' ? 'var(--red)' : c.urgency === 'medium' ? 'var(--amber)' : 'var(--green)';
+                const click = c.id ? `onclick="openContact('${c.id}')" style="cursor:pointer"` : '';
+                html += `<div ${click} style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);${c.id ? 'cursor:pointer' : ''}">
+                  <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);min-width:16px">${i+1}.</span>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                      <span style="font-size:12px;font-weight:600;color:var(--text)">${esc(c.name||'')}</span>
+                      ${c.stage ? `<span style="font-size:9px;color:var(--text-3);font-family:var(--font-mono)">${esc(c.stage)}</span>` : ''}
+                      ${c.urgency ? `<span style="font-size:8px;font-weight:700;color:${urgColor};font-family:var(--font-mono);letter-spacing:0.05em">${c.urgency.toUpperCase()}</span>` : ''}
+                    </div>
+                    ${c.reason ? `<div style="font-size:11px;color:var(--text-2);margin-top:2px">${esc(c.reason)}</div>` : ''}
+                    ${c.suggestedAction ? `<div style="font-size:10px;color:var(--green);margin-top:2px;font-family:var(--font-mono)">→ ${esc(c.suggestedAction)}</div>` : ''}
+                  </div>
+                </div>`;
+              });
+            }
+            if (r.methodology) html += `<div style="font-size:10px;color:var(--text-3);margin-top:8px;font-style:italic">📊 ${esc(r.methodology)}</div>`;
+            // Use raw HTML bubble instead of plain text
+            _history = _history.filter(m => m.type !== 'typing');
+            setThinking(false); setStatus('READY');
+            const bubble = { role: 'jareih', text: '', type: 'reply', html };
+            _history.push(bubble);
+            renderThread();
+            _pending = null;
+            return; // skip the normal resultMsg flow
+          }
+          resultMsg = ar.result?.headline || 'Analysis complete.';
           break;
         }
         default: resultMsg = 'Done';
