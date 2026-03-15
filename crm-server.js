@@ -1552,6 +1552,40 @@ const initGrok = () => {
   return new OpenAI({ apiKey: process.env.GROK_API_KEY, baseURL: 'https://api.x.ai/v1' });
 };
 
+// xAI Responses API with web_search tool (replaces deprecated search_parameters)
+async function fetchGrokWithSearch(prompt, maxTokens = 600) {
+  if (!process.env.GROK_API_KEY) throw new Error('Grok API key not configured');
+  const resp = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.GROK_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'grok-3',
+      input: [{ role: 'user', content: prompt }],
+      tools: [{ type: 'web_search' }],
+      max_output_tokens: maxTokens,
+    })
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Grok search ${resp.status}: ${errText.substring(0, 200)}`);
+  }
+  const data = await resp.json();
+  // Extract text from output_text or output blocks
+  if (data.output_text) return data.output_text;
+  if (Array.isArray(data.output)) {
+    return data.output
+      .filter(b => b.type === 'message' && b.content)
+      .flatMap(b => b.content)
+      .filter(c => c.type === 'output_text' || c.type === 'text')
+      .map(c => c.text)
+      .join('\n');
+  }
+  return '';
+}
+
 // ─── TWILIO TOKEN ─────────────────────────────────────────────────────────────
 const buildTwilioToken = async (req, res) => {
   try {
@@ -5364,13 +5398,8 @@ PARAGRAPH 2 — COMPETITIVE MARKET ANALYSIS: Search Zillow, Apartments.com, and 
 
 Write ONLY the two paragraphs. No headers, no bullets.`;
 
-    const completion = await grok.chat.completions.create({
-      model: 'grok-3', max_tokens: 600,
-      messages: [{ role: 'user', content: prompt }],
-      search_parameters: { mode: 'on', max_search_results: 5 }
-    });
-
-    const text = completion.choices?.[0]?.message?.content || '';
+    const completion = await fetchGrokWithSearch(prompt);
+    const text = completion || '';
     res.json({ recommendation: text.trim(), total: rows.length, go, nogo, maybe, topIssues });
   } catch(e) {
     console.error('property-ai-rec error:', e.message);
@@ -5411,15 +5440,8 @@ Search for current rental listings within 0.25 miles of "${propertyName}" in Okl
 
 Write ONLY the two paragraphs. No headers, no bullet points, no preamble.`;
 
-    const completion = await grok.chat.completions.create({
-      model: 'grok-3',
-      max_tokens: 600,
-      messages: [{ role: 'user', content: prompt }],
-      search_parameters: { mode: 'on', max_search_results: 5 }
-    });
-
-    const text = completion.choices?.[0]?.message?.content || '';
-    res.json({ recommendation: text.trim() });
+    const text = await fetchGrokWithSearch(prompt);
+    res.json({ recommendation: (text || '').trim() });
 
   } catch(e) {
     console.error('property-recommendation error:', e.message);
