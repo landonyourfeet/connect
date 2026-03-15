@@ -5449,8 +5449,10 @@ function renderContactRecord(person, activities, tasks) {
             <textarea class="compose-input" id="compose-input" placeholder="Add a note… (type @ to mention a teammate)" rows="2"
               oninput="handleComposeInput(event)" onkeydown="handleComposeKeydown(event)"></textarea>
           </div>
-          <div class="compose-footer">
-            <button class="compose-submit" id="compose-submit" onclick="submitCompose()">Save Note</button>
+          <div class="compose-footer" style="display:flex;gap:6px;align-items:stretch">
+            <button class="compose-submit" id="compose-submit" onclick="submitCompose()" style="flex:1">Save Note</button>
+            <button class="compose-submit" id="compose-schedule-btn" onclick="openScheduleModal()" title="Schedule for later"
+              style="display:none;width:40px;flex:none;padding:0;font-size:16px;letter-spacing:0">🕐</button>
           </div>
         </div>
         <div class="timeline-filters">
@@ -5903,23 +5905,50 @@ function setComposeTab(tab) {
   ['note','text','logcall'].forEach(t => document.getElementById('ctab-'+t)?.classList.toggle('active', t === tab));
   const input = document.getElementById('compose-input');
   const btn = document.getElementById('compose-submit');
+  const schedBtn = document.getElementById('compose-schedule-btn');
   if (tab === 'note') { input.placeholder = 'Add a note…'; btn.textContent = 'Save Note'; }
   else if (tab === 'text') { input.placeholder = 'Type a message to send via SMS…'; btn.textContent = 'Send Text'; }
   else { input.placeholder = 'What happened on this call?'; btn.textContent = 'Log Call'; }
+  if (schedBtn) schedBtn.style.display = tab === 'text' ? '' : 'none';
 }
 function openNoteCompose() { setComposeTab('note'); document.getElementById('compose-input')?.focus(); }
 function openTextCompose() {
   window._selectedTextPhone = window._selectedTextPhone || null; setComposeTab('text'); document.getElementById('compose-input')?.focus(); }
 
+// ── After-hours warning + scheduled text support ───────────────────────
+const _afterHoursWarned = new Map(); // personId → timestamp of last warning
+
 async function submitCompose() {
   const content = document.getElementById('compose-input').value.trim();
   if (!content) return;
+  const btn = document.getElementById('compose-submit');
+
+  // After-hours check for SMS only
+  if (composeTab === 'text') {
+    try {
+      const bh = await api('/api/sms/business-hours');
+      if (!bh.isOpen) {
+        const lastWarned = _afterHoursWarned.get(currentPersonId) || 0;
+        const tenMin = 10 * 60 * 1000;
+        if (Date.now() - lastWarned > tenMin) {
+          _afterHoursWarned.set(currentPersonId, Date.now());
+          showAfterHoursWarning(content, bh);
+          return;
+        }
+        // Within 10 min cooldown — let it send (active conversation)
+      }
+    } catch(e) {} // If business hours check fails, allow sending
+  }
+
+  _doSubmitCompose(content);
+}
+
+async function _doSubmitCompose(content) {
   const btn = document.getElementById('compose-submit');
   btn.disabled = true;
 
   try {
     if (composeTab === 'text') {
-      // Use selected phone if picker was used, otherwise fall back to primary
       let toPhone = window._selectedTextPhone || null;
       window._selectedTextPhone = null;
       if (!toPhone) {
@@ -5957,6 +5986,171 @@ async function submitCompose() {
   } finally {
     btn.disabled = false;
   }
+}
+
+function showAfterHoursWarning(content, bh) {
+  const mc = 'font-family:var(--font-mono);';
+  const nextOpen = new Date(bh.nextOpen);
+  const nextStr = nextOpen.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' at ' + nextOpen.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  // Remove existing modal if any
+  document.getElementById('after-hours-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'after-hours-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);animation:fade-in 0.2s ease';
+  modal.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <span style="font-size:24px">🌙</span>
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--text)">After Hours</div>
+          <div style="${mc}font-size:10px;color:var(--text-3);letter-spacing:1px">BUSINESS HOURS: ${bh.open > 12 ? bh.open - 12 : bh.open} AM – ${bh.close > 12 ? bh.close - 12 : bh.close} PM CT</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-2);line-height:1.6;margin-bottom:16px">
+        It's currently outside business hours. Text messages sent now may disturb the recipient. You can schedule this text to send when we open, or send it now if it's urgent.
+      </div>
+      <div style="background:var(--bg-3);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--text-3);max-height:60px;overflow:hidden;text-overflow:ellipsis">
+        "${esc(content.substring(0, 120))}${content.length > 120 ? '…' : ''}"
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button onclick="scheduleTextForOpen('${esc(content.replace(/'/g, "\\'"))}');document.getElementById('after-hours-modal').remove()"
+          style="width:100%;padding:10px;background:#00c8ff;color:#000;border:none;border-radius:6px;${mc}font-size:11px;font-weight:700;cursor:pointer;letter-spacing:0.06em">
+          📅 Schedule for ${nextStr}
+        </button>
+        <button onclick="openScheduleModal();document.getElementById('after-hours-modal').remove()"
+          style="width:100%;padding:10px;background:var(--bg-3);color:var(--text);border:1px solid var(--border);border-radius:6px;${mc}font-size:11px;font-weight:600;cursor:pointer">
+          🕐 Pick a different time
+        </button>
+        <button onclick="_doSubmitCompose('${esc(content.replace(/'/g, "\\'"))}');document.getElementById('after-hours-modal').remove()"
+          style="width:100%;padding:8px;background:transparent;color:var(--text-3);border:1px solid var(--border);border-radius:6px;${mc}font-size:10px;cursor:pointer">
+          Send now anyway
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+async function scheduleTextForOpen(content) {
+  try {
+    const bh = await api('/api/sms/business-hours');
+    let toPhone = window._selectedTextPhone || null;
+    if (!toPhone) {
+      const primary = _personPhones.find(p => p.is_primary && !p.is_bad) || _personPhones.find(p => !p.is_bad);
+      if (primary) toPhone = primary.phone;
+      else {
+        const person = await api(`/api/people/${currentPersonId}`);
+        toPhone = person?.phone;
+      }
+    }
+    if (!toPhone) { toast('No valid phone number', 'error'); return; }
+    await api('/api/sms/schedule', 'POST', {
+      personId: currentPersonId,
+      to: toPhone,
+      body: content,
+      scheduledFor: bh.nextOpen
+    });
+    document.getElementById('compose-input').value = '';
+    const nextOpen = new Date(bh.nextOpen);
+    toast(`📅 Text scheduled for ${nextOpen.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} at ${nextOpen.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`, 'success');
+  } catch(e) { toast('Schedule failed: ' + e.message, 'error'); }
+}
+
+function openScheduleModal() {
+  const content = document.getElementById('compose-input')?.value?.trim();
+  if (!content) { toast('Type a message first', 'error'); return; }
+  const mc = 'font-family:var(--font-mono);';
+
+  document.getElementById('schedule-modal')?.remove();
+
+  // Build time options
+  const now = new Date();
+  const today = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const options = [];
+
+  // Next business morning
+  const nextMorning = new Date(today);
+  if (today.getHours() >= 8) nextMorning.setDate(nextMorning.getDate() + 1);
+  if (nextMorning.getDay() === 0) nextMorning.setDate(nextMorning.getDate() + 1);
+  nextMorning.setHours(8, 0, 0, 0);
+  options.push({ label: 'Tomorrow morning', time: nextMorning, desc: nextMorning.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ', 8:00 AM' });
+
+  // This afternoon (if before noon)
+  if (today.getHours() < 12) {
+    const afternoon = new Date(today); afternoon.setHours(13, 0, 0, 0);
+    options.push({ label: 'This afternoon', time: afternoon, desc: 'Today, 1:00 PM' });
+  }
+
+  // Monday morning (if Thu-Sun)
+  const day = today.getDay();
+  if (day >= 4 || day === 0) {
+    const monday = new Date(today);
+    monday.setDate(monday.getDate() + ((8 - day) % 7));
+    monday.setHours(8, 0, 0, 0);
+    options.push({ label: 'Monday morning', time: monday, desc: monday.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + ', 8:00 AM' });
+  }
+
+  const modal = document.createElement('div');
+  modal.id = 'schedule-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);animation:fade-in 0.2s ease';
+  modal.innerHTML = `
+    <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:15px;font-weight:700;color:var(--text)">📅 Schedule Text Message</div>
+        <button onclick="document.getElementById('schedule-modal').remove()" style="background:none;border:none;color:var(--text-3);font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <div style="background:var(--bg-3);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--text-3);max-height:60px;overflow:hidden">
+        "${esc(content.substring(0, 120))}${content.length > 120 ? '…' : ''}"
+      </div>
+      ${options.map(o => `
+        <button onclick="scheduleTextAt('${o.time.toISOString()}');document.getElementById('schedule-modal').remove()"
+          style="width:100%;padding:10px 14px;margin-bottom:6px;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;transition:all 0.15s"
+          onmouseover="this.style.borderColor='#00c8ff';this.style.background='var(--bg-4)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg-3)'">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">${o.label}</span>
+          <span style="${mc}font-size:10px;color:var(--text-3)">${o.desc}</span>
+        </button>
+      `).join('')}
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <input type="date" id="sched-date" style="flex:1;padding:6px 8px;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px">
+        <input type="time" id="sched-time" value="08:00" style="width:100px;padding:6px 8px;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px">
+        <button onclick="scheduleTextCustom();document.getElementById('schedule-modal').remove()"
+          style="padding:6px 12px;background:#00c8ff;color:#000;border:none;border-radius:6px;${mc}font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">Schedule</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+  // Default date picker to tomorrow
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  document.getElementById('sched-date').value = tomorrow.toISOString().split('T')[0];
+}
+
+async function scheduleTextAt(isoTime) {
+  const content = document.getElementById('compose-input')?.value?.trim();
+  if (!content) return;
+  try {
+    let toPhone = window._selectedTextPhone || null;
+    if (!toPhone) {
+      const primary = _personPhones.find(p => p.is_primary && !p.is_bad) || _personPhones.find(p => !p.is_bad);
+      if (primary) toPhone = primary.phone;
+    }
+    if (!toPhone) { toast('No valid phone number', 'error'); return; }
+    await api('/api/sms/schedule', 'POST', { personId: currentPersonId, to: toPhone, body: content, scheduledFor: isoTime });
+    document.getElementById('compose-input').value = '';
+    const dt = new Date(isoTime);
+    toast(`📅 Scheduled for ${dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} at ${dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`, 'success');
+  } catch(e) { toast('Schedule failed: ' + e.message, 'error'); }
+}
+
+async function scheduleTextCustom() {
+  const d = document.getElementById('sched-date')?.value;
+  const t = document.getElementById('sched-time')?.value || '08:00';
+  if (!d) { toast('Pick a date', 'error'); return; }
+  const iso = new Date(`${d}T${t}:00`).toISOString();
+  await scheduleTextAt(iso);
 }
 
 // ── TASKS ────────────────────────────────────────────────────────────
